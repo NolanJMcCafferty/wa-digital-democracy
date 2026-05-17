@@ -1,0 +1,19 @@
+{
+  "errors": null,
+  "data": {
+    "eventID": "2026051999",
+    "clientID": "9375922947",
+    "startDateTime": "2026-05-18 13:30:00",
+    "title": "House Environment & Energy",
+    "description": "",
+    "eventStatus": "new",
+    "categories": ["Legislative"],
+    "locationName": "Virtual Meeting",
+    "captionPath": null,
+    "streamingURIs": null,
+    "estRuntime": 0,
+    "videoThumbnail": "",
+    "eventNotes": ""
+  },
+  "meta": null
+}

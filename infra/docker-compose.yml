@@ -1,0 +1,33 @@
+# Local development stack for WA Digital Democracy.
+# Per Recommended Tech Stack §"Deployment recommendation": Docker Compose
+# locally; managed Postgres + container hosting in production.
+#
+# Bring up:    docker compose -f infra/docker-compose.yml up -d
+# Stop:        docker compose -f infra/docker-compose.yml down
+# Wipe data:   docker compose -f infra/docker-compose.yml down -v
+#
+# The api/web services are placeholders: they expect binaries built from
+# cmd/wa-dd-api/ and apps/web/ respectively. For now bring up only postgres:
+#
+#   docker compose -f infra/docker-compose.yml up -d postgres
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wa-dd-postgres
+    environment:
+      POSTGRES_USER: wadd
+      POSTGRES_PASSWORD: wadd
+      POSTGRES_DB: wa_dd
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wadd -d wa_dd"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

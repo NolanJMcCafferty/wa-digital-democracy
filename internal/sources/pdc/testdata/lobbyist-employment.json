@@ -1,0 +1,22 @@
+[
+  {
+    "id": "1",
+    "report_number": "2026000001",
+    "lobbyist_id": "L-1234",
+    "lobbyist_name": "Doe, Jane",
+    "employer_id": "E-5678",
+    "employer_name": "Washington Roundtable",
+    "employment_year": "2026",
+    "employment_period": "2026-01-01 to 2026-12-31",
+    "employment_url": "https://web.pdc.wa.gov/example/1"
+  },
+  {
+    "id": "2",
+    "report_number": "2026000002",
+    "lobbyist_id": "L-1235",
+    "lobbyist_name": "Smith, Bob",
+    "employer_id": "E-9999",
+    "employer_name": "ACLU of Washington",
+    "employment_year": "2026"
+  }
+]

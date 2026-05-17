@@ -1,0 +1,20 @@
+{
+  "errors": null,
+  "data": {
+    "eventID": "2025031249",
+    "clientID": "9375922947",
+    "startDateTime": "2025-03-14 11:00:00",
+    "title": "House Housing",
+    "description": "Public hearing on HB 1234.",
+    "eventStatus": "published",
+    "categories": ["Legislative", "House Housing"],
+    "categoriesDetail": [{"categoryID": "abc", "categoryName": "Legislative"}],
+    "locationName": "Olympia, WA",
+    "captionPath": "https://m-download.invintus.com/9375922947/abc.vtt",
+    "streamingURIs": [],
+    "estRuntime": 90,
+    "videoThumbnail": "https://example.com/thumb.jpg",
+    "eventNotes": ""
+  },
+  "meta": null
+}

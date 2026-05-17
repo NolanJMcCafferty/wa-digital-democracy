@@ -1,0 +1,30 @@
+# Build output
+/bin/
+*.exe
+*.test
+*.out
+
+# Phase 0 spike scratch (raw API snapshots; regenerable)
+/data/spike/*.html
+/data/spike/*.json
+
+# Raw object store and processed bundles
+/data/raw/
+/data/processed/
+
+# Secrets
+.env
+.env.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Frontend
+/apps/web/node_modules/
+/apps/web/.next/
+/apps/web/.turbo/
+
+# OS
+.DS_Store

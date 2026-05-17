@@ -1,0 +1,18 @@
+# Human-approved organization matches used by `wa-dd pdc-context` to override
+# fuzzy-matching for the first-page demo. Per Blueprint §Step 7 last paragraph.
+#
+# Format:
+#   matches:
+#     - csi_organization: "Washington Roundtable"
+#       canonical_name:   "Washington Roundtable"
+#       pdc_lobbyist_employer_id: "EMP-12345"   # from xhn7-64im
+#       pdc_committee_or_filer_id: ""           # from PDC committee data
+#       confidence: confirmed                   # confirmed | probable | possible
+#       notes: "Manually verified 2026-XX-XX from data.wa.gov."
+
+matches:
+  - csi_organization: "WSCAI"
+    canonical_name: "Washington State Chapter of the Community Associations Institute"
+    pdc_lobbyist_employer_id: "16346"
+    confidence: confirmed
+    notes: "WSCAI registered with PDC as COMMUNITY ASSOC INSTITUTE (employer_id=16346). Verified 2026-05-15 via data.wa.gov."

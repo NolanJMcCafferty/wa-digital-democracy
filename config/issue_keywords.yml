@@ -1,0 +1,17 @@
+# Issue → keyword sets used by `wa-dd find-candidates`.
+# Per Blueprint §"Recommended first issue/bill" (lines 43–69).
+
+housing:
+  - housing
+  - zoning
+  - rent
+  - tenant
+  - homelessness
+  - affordable housing
+  - transit-oriented development
+  - permitting
+  - land use
+
+# Future buckets (out of scope for first page):
+# climate-energy: [climate, energy, emissions, ...]
+# transportation: [transportation, transit, highways, ferry, ...]

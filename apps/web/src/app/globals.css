@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+/* Sober civic-data palette — high-contrast, prints reasonably, no bright accents.
+   Per Recommended Tech Stack §"Frontend product libraries":
+   semantic HTML first; transcript/timestamps must be real anchor links. */
+:root {
+  --bg: #f8f7f2;
+  --fg: #1f1d18;
+  --muted: #6b6660;
+  --rule: #d9d4ca;
+  --accent: #244a76;
+  --pro: #2c5e3e;
+  --con: #8a2c2c;
+  --other: #6b6660;
+}
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Source Serif Pro", Georgia, "Times New Roman", serif;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+}
+
+body {
+  font-feature-settings: "ss01", "ss02";
+}
+
+/* Print should preserve source URLs (the source panel matters in print). */
+@media print {
+  a[href]:after { content: " (" attr(href) ")"; font-size: 0.85em; color: #444; }
+  .no-print { display: none; }
+}
