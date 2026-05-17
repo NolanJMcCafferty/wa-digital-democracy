@@ -3,14 +3,14 @@
 // Sources (per data-sources/04 TVW Invintus Client.md):
 //
 //   - WordPress REST at https://tvw.org/wp-json/
-//     - GET /tvw/v1/schedule          (currently-airing event list)
-//     - GET /wp/v2/invintus_video     (paginated archive, by post date)
-//     - GET /wp/v2/invintus_video/{wp_post_id}
+//   - GET /tvw/v1/schedule          (currently-airing event list)
+//   - GET /wp/v2/invintus_video     (paginated archive, by post date)
+//   - GET /wp/v2/invintus_video/{wp_post_id}
 //   - Invintus REST at https://api.v3.invintus.com/v2/
-//     - POST /Event/getDetailed       (returns captionPath when available)
+//   - POST /Event/getDetailed       (returns captionPath when available)
 //   - Caption files at the captionPath URL (WebVTT)
 //
-// Phase 0 spike findings (data/spike/REPORT.md):
+// Phase 0 findings (docs/phase0-spike-report.md):
 //
 //   - tvw/v1/schedule ignores its date params; use wp/v2/invintus_video for
 //     historical sampling.

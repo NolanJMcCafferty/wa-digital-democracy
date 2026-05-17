@@ -65,8 +65,8 @@ type RawSink interface {
 	Record(ctx context.Context, f *RawFetch) error
 }
 
-// NopSink discards everything. Useful for tests and the Phase 0 spike (which
-// does not need durable provenance).
+// NopSink discards everything. Useful for tests and read-only exploratory
+// source discovery that does not need durable provenance.
 type NopSink struct{}
 
 func (NopSink) Record(ctx context.Context, f *RawFetch) error { return nil }

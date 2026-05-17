@@ -4,7 +4,7 @@
 DSN ?= postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build vet fmt tidy spike-q1 spike-q2 spike-q3
+.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build vet fmt tidy
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -62,13 +62,3 @@ fmt:
 
 tidy:
 	go mod tidy
-
-# Phase 0 spike shortcuts.
-spike-q1:     ## TVW caption coverage (needs INVINTUS_EMBEDDER_KEY)
-	go run ./cmd/wa-dd-spike/tvw-captions -anchor 2026-03-01 -days 30 -max 200
-
-spike-q2:     ## Committee Schedules → TVW event ID mapping
-	go run ./cmd/wa-dd-spike/sched-tvw-mapping -days 30
-
-spike-q3:     ## CSI history depth
-	go run ./cmd/wa-dd-spike/csi-history

@@ -12,7 +12,7 @@ This repo is the implementation of the MVP defined in
 
 Earlier phases:
 
-- **Phase 0 (feasibility spike):** complete. Findings in `data/spike/REPORT.md`. Headline: TVW captions cover 100% of legislative-committee events sampled, CSI retains the full 2025–26 biennium, and Committee Schedules exposes a direct TVW event-ID mapping for ~75% of returned meetings.
+- **Phase 0 (feasibility spike):** complete. Findings in `docs/phase0-spike-report.md`. Headline: TVW captions cover 100% of legislative-committee events sampled, CSI retains the full 2025–26 biennium, and Committee Schedules exposes a direct TVW event-ID mapping for ~75% of returned meetings. The throwaway spike commands have been removed; durable learnings now live in docs and source connector tests.
 
 ## Stack
 
@@ -41,7 +41,6 @@ make psql          # open a shell against the local DB
 cmd/
   wa-dd/                  # operator CLI (find-candidates, ingest-*, build-bundle)
   wa-dd-api/              # read-only HTTP API for the Next.js frontend
-  wa-dd-spike/            # Phase 0 throwaway programs
 internal/
   sources/{lws,csi,committeeschedules,tvw,pdc}/
                           # connectors (Phase 2): Fetch / StoreRaw / Parse / Normalize
@@ -60,7 +59,9 @@ infra/
 data/
   raw/                    # immutable raw API responses (gitignored)
   processed/              # JSON bundles for rendering (gitignored)
-  spike/                  # Phase 0 outputs
+docs/
+  phase0-spike-report.md          # preserved feasibility findings
+  written-testimony-source-note.md # pending written-testimony access note
 ```
 
 ## Architectural ground rules

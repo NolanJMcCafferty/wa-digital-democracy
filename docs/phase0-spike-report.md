@@ -13,7 +13,7 @@ This report answers the four MVP-blocking unknowns from
 | 1 | TVW caption coverage rate | ✅ done | **100% caption coverage on legislative committees and floor sessions; 90.5% overall. Far above the 40% exit criterion.** |
 | 2 | Committee Schedules → TVW event ID mapping | ✅ partial | **Direct mapping works (~75% of returned meetings); date-filtering needs CSRF/session capture.** |
 | 3 | CSI history depth | ✅ done | **Full 2025-26 biennium retained (back to 2025-01-13).** |
-| 4 | Written-testimony public access | ⏳ manual investigation | Non-blocker — see `written-testimony.md` |
+| 4 | Written-testimony public access | ⏳ manual investigation | Non-blocker — see `written-testimony-source-note.md` |
 
 Three of four answered. The MVP is unblocked: TVW captions are essentially
 universal for the surfaces we care about, the current biennium is fully
@@ -50,7 +50,7 @@ in committee work). Sampled the most recent 200 events posted in that window.
 surfaces the first page cares about. We can build the "What was said?"
 section against captions alone — no need for ASR fallback in v1.
 
-**Raw output:** `data/spike/tvw-captions.json`
+**Raw output:** formerly `data/spike/tvw-captions.json` (throwaway generated output, not preserved).
 
 **Exit criterion (40% legislative-committee coverage):** comfortably cleared.
 
@@ -90,9 +90,7 @@ For first-page work, this is enough: when an LWS meeting is in scope, we can
 search for it directly and expect a TVW event ID about 75% of the time, with
 fallback to date+committee fuzzy match against the TVW schedule API.
 
-**Raw outputs:**
-- `data/spike/sched-tvw-mapping.json`
-- `data/spike/sched-tvw-mapping.html` (raw response snapshot)
+**Raw outputs:** formerly `data/spike/sched-tvw-mapping.json` and `data/spike/sched-tvw-mapping.html` (throwaway generated outputs, not preserved).
 
 ## Q3 — CSI history depth
 
@@ -119,12 +117,12 @@ fallback to date+committee fuzzy match against the TVW schedule API.
 is reachable via CSI. The Housing committees we'd target (House Housing
 committee ID `31633`, Senate Housing `34078`) are present and active.
 
-**Raw output:** `data/spike/csi-history.json`
+**Raw output:** formerly `data/spike/csi-history.json` (throwaway generated output, not preserved).
 
 ## Q4 — Written-testimony public access
 
 **Status:** Pending manual investigation — see
-`data/spike/written-testimony.md` for method.
+`docs/written-testimony-source-note.md` for method.
 
 **Tentative position:** Per spec 02 line 21, "a no-auth bulk endpoint for
 actual text/attachments is not yet confirmed." Current plan is to source

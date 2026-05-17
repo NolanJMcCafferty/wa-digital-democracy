@@ -7,9 +7,9 @@ import (
 )
 
 // search-default.html is a real captured response from
-// POST /committeeschedules/Home/Search/ on 2026-05-15. The Phase 0 spike
+// POST /committeeschedules/Home/Search/ on 2026-05-15. Phase 0 research
 // observed 4 agenda meetings, 3 video modals, and 3 unique TVW event IDs
-// (2026051107, 2026051115, 2026051116) — see data/spike/REPORT.md.
+// (2026051107, 2026051115, 2026051116) — see docs/phase0-spike-report.md.
 func read(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", name))
