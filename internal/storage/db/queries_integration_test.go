@@ -26,8 +26,44 @@ func openTestStore(t *testing.T) *db.Store {
 	return store
 }
 
+type dbCleanup struct {
+	t     *testing.T
+	store *db.Store
+	srIDs []int64
+}
+
+func newDBCleanup(t *testing.T, store *db.Store) *dbCleanup {
+	t.Helper()
+	c := &dbCleanup{t: t, store: store}
+	t.Cleanup(c.run)
+	return c
+}
+
+func (c *dbCleanup) addSourceRecord(id int64) {
+	c.srIDs = append(c.srIDs, id)
+}
+
+func (c *dbCleanup) run() {
+	ctx := context.Background()
+	for _, q := range []string{
+		`DELETE FROM bill_status_change WHERE source_record_id = ANY($1)`,
+		`DELETE FROM transcript_segment WHERE source_record_id = ANY($1)`,
+		`DELETE FROM org_context_record WHERE source_record_id = ANY($1)`,
+		`DELETE FROM testifier WHERE source_record_id = ANY($1)`,
+		`DELETE FROM agenda_item WHERE source_record_id = ANY($1)`,
+		`DELETE FROM hearing WHERE source_record_id = ANY($1)`,
+		`DELETE FROM bill WHERE source_record_id = ANY($1)`,
+		`DELETE FROM tvw_event WHERE source_record_id = ANY($1)`,
+		`DELETE FROM source_record WHERE id = ANY($1)`,
+	} {
+		if _, err := c.store.Pool.Exec(ctx, q, c.srIDs); err != nil {
+			c.t.Errorf("cleanup %q: %v", q, err)
+		}
+	}
+}
+
 // insertProvenance creates a fake source_record we can FK against.
-func insertProvenance(t *testing.T, store *db.Store, system, hash string) int64 {
+func insertProvenance(t *testing.T, store *db.Store, cleanup *dbCleanup, system, hash string) int64 {
 	t.Helper()
 	id, err := store.InsertSourceRecord(context.Background(), db.SourceRecordParams{
 		System:      system,
@@ -41,18 +77,20 @@ func insertProvenance(t *testing.T, store *db.Store, system, hash string) int64 
 	if err != nil {
 		t.Fatalf("source_record: %v", err)
 	}
+	cleanup.addSourceRecord(id)
 	return id
 }
 
 func TestUpsertBill_Idempotent(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "lws", "bill-test-1")
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "lws", "bill-test-1")
 
 	id1, err := store.UpsertBill(ctx, db.UpsertBillParams{
 		Biennium: "9999-99", Prefix: "HB", Number: 9990,
 		Title: "First version", ChamberOrigin: "House",
-		StatusDate: time.Date(2025, 1, 13, 0, 0, 0, 0, time.UTC),
+		StatusDate:     time.Date(2025, 1, 13, 0, 0, 0, 0, time.UTC),
 		SourceRecordID: srID,
 	})
 	if err != nil {
@@ -69,16 +107,13 @@ func TestUpsertBill_Idempotent(t *testing.T) {
 	if id1 != id2 {
 		t.Errorf("ids differ: %d vs %d", id1, id2)
 	}
-	t.Cleanup(func() {
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM bill WHERE id = $1`, id1)
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM source_record WHERE id = $1`, srID)
-	})
 }
 
 func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "csi", "test-csi-1")
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "csi", "test-csi-1")
 
 	// Need a hearing + agenda_item to satisfy FKs.
 	hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
@@ -96,10 +131,6 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agenda: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM hearing WHERE id = $1`, hearingID)
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM source_record WHERE id = $1`, srID)
-	})
 
 	first := []db.InsertTestifierParams{
 		{AgendaItemID: agendaID, RawName: "Alice", Position: "Pro", Testified: true, SourceRecordID: srID},
@@ -130,7 +161,8 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 func TestFindBillNumberMentions(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "tvw", "test-tvw-1")
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "tvw", "test-tvw-1")
 
 	tvwEventID := "test-99999999"
 	if _, err := store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
@@ -138,10 +170,6 @@ func TestFindBillNumberMentions(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert tvw_event: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM tvw_event WHERE tvw_event_id = $1`, tvwEventID)
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM source_record WHERE id = $1`, srID)
-	})
 
 	rows := []db.InsertTranscriptSegmentParams{
 		{TVWEventID: tvwEventID, StartMS: 0, EndMS: 1000, Text: "Welcome to the meeting.", SourceCaptionURL: "u", SourceRecordID: srID},

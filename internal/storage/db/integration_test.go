@@ -5,6 +5,8 @@ package db_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,11 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
+
+func gotHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 // Run with:
 //
@@ -34,6 +41,17 @@ func TestRawSinkRoundTrip(t *testing.T) {
 		t.Fatalf("db open: %v", err)
 	}
 	t.Cleanup(store.Close)
+	t.Cleanup(func() {
+		_, err := store.Pool.Exec(ctx, `
+DELETE FROM source_record
+ WHERE source_system = 'lws'
+   AND source_endpoint IN ('TestService.Ping', 'TestService.Other')
+   AND source_url LIKE 'http://127.0.0.1:%'
+   AND content_hash = $1`, gotHash(`{"hello":"world"}`))
+		if err != nil {
+			t.Errorf("cleanup source_record: %v", err)
+		}
+	})
 
 	root := filepath.Join(t.TempDir(), "raw")
 	objs, err := objectstore.NewFS(root)
