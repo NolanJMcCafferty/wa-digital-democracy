@@ -18,8 +18,8 @@ import (
 
 // Run with:
 //
-//   make migrate-fresh
-//   go test -tags=integration ./internal/storage/db/...
+//	make migrate-fresh
+//	go test -tags=integration ./internal/storage/db/...
 //
 // Reads DSN from WADD_TEST_DSN, defaulting to the docker-compose Postgres.
 func TestRawSinkRoundTrip(t *testing.T) {
@@ -87,17 +87,33 @@ func TestRawSinkRoundTrip(t *testing.T) {
 		t.Fatalf("source_record mismatch: sys=%s ep=%s raw=%s hash=%s", sys, ep, raw, hash)
 	}
 
-	// Repeat call should be idempotent on (system, hash).
+	// Repeat of the same logical request is idempotent.
 	if _, err := c.Do(ctx, httpx.Request{System: "lws", Endpoint: "TestService.Ping", URL: srv.URL}); err != nil {
 		t.Fatalf("second Do: %v", err)
 	}
 	var count int
 	if err := store.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM source_record WHERE content_hash = $1`, got.Hash,
+		`SELECT count(*) FROM source_record WHERE source_system = $1 AND source_endpoint = $2 AND source_url = $3 AND content_hash = $4`,
+		"lws", "TestService.Ping", srv.URL, got.Hash,
 	).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
+		t.Fatalf("count same request: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("source_record count = %d, want 1 (idempotent)", count)
+		t.Fatalf("same-request source_record count = %d, want 1", count)
+	}
+
+	// Different logical requests with identical response bytes must remain
+	// distinct provenance rows; the source_url/source_endpoint are part of the
+	// public evidence trail even when raw object bytes dedupe by hash.
+	if _, err := c.Do(ctx, httpx.Request{System: "lws", Endpoint: "TestService.Other", URL: srv.URL + "?same-body=1"}); err != nil {
+		t.Fatalf("third Do: %v", err)
+	}
+	if err := store.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM source_record WHERE content_hash = $1`, got.Hash,
+	).Scan(&count); err != nil {
+		t.Fatalf("count same hash: %v", err)
+	}
+	if count < 2 {
+		t.Fatalf("same-hash source_record count = %d, want at least 2 distinct provenance rows", count)
 	}
 }

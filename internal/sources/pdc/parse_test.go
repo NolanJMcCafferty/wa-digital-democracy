@@ -61,6 +61,37 @@ func TestNormalizeOrgName(t *testing.T) {
 	}
 }
 
+func TestClient_FetchPageWithSourceReturnsRawFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"1"}]`))
+	}))
+	defer srv.Close()
+
+	sink := &sourceIDSink{id: 42}
+	c := &Client{HTTP: httpx.New(httpx.Config{Sink: sink}), BaseURL: srv.URL}
+	rows, fetch, err := c.FetchPageWithSource(context.Background(), DatasetContributions, Query{Limit: 1})
+	if err != nil {
+		t.Fatalf("FetchPageWithSource: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	if fetch.SourceRecordID != 42 {
+		t.Fatalf("SourceRecordID = %d, want 42", fetch.SourceRecordID)
+	}
+	if fetch.Endpoint != "resource."+DatasetContributions {
+		t.Fatalf("Endpoint = %q", fetch.Endpoint)
+	}
+}
+
+type sourceIDSink struct{ id int64 }
+
+func (s *sourceIDSink) Record(ctx context.Context, f *httpx.RawFetch) error {
+	f.SourceRecordID = s.id
+	return nil
+}
+
 func TestClient_URLEncoding(t *testing.T) {
 	// Capture the request URL the client builds. We use a recorder server
 	// because URL-building is private and we want to verify SoQL params.

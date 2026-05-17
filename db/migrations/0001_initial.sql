@@ -65,7 +65,11 @@ CREATE TABLE source_record (
 CREATE INDEX idx_source_record_system_endpoint ON source_record (source_system, source_endpoint);
 CREATE INDEX idx_source_record_source_id      ON source_record (source_system, source_id);
 CREATE INDEX idx_source_record_fetched_at     ON source_record (fetched_at DESC);
-CREATE UNIQUE INDEX uniq_source_record_hash   ON source_record (source_system, content_hash);
+-- Preserve distinct provenance rows for distinct logical requests even when
+-- two endpoints/URLs return identical bytes. Raw object storage can dedupe by
+-- content hash; source_record must remain source-link accurate.
+CREATE UNIQUE INDEX uniq_source_record_request_hash
+    ON source_record (source_system, source_endpoint, source_url, content_hash, transform_version);
 
 -- ---------------------------------------------------------------------------
 -- bill, legislator, bill_sponsor

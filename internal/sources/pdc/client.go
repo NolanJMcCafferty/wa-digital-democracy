@@ -70,9 +70,17 @@ type Query struct {
 
 // FetchPage fetches one page of rows.
 func (c *Client) FetchPage(ctx context.Context, datasetID string, q Query) ([]Row, error) {
+	rows, _, err := c.FetchPageWithSource(ctx, datasetID, q)
+	return rows, err
+}
+
+// FetchPageWithSource fetches one page of rows and returns the exact raw fetch
+// metadata recorded for this request. Callers that persist normalized rows
+// should thread fetch.SourceRecordID into their provenance FK.
+func (c *Client) FetchPageWithSource(ctx context.Context, datasetID string, q Query) ([]Row, httpx.RawFetch, error) {
 	u, err := c.url(datasetID, q)
 	if err != nil {
-		return nil, err
+		return nil, httpx.RawFetch{}, err
 	}
 	headers := http.Header{}
 	headers.Set("Accept", "application/json")
@@ -84,9 +92,13 @@ func (c *Client) FetchPage(ctx context.Context, datasetID string, q Query) ([]Ro
 		Headers:  headers,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fetch, err
 	}
-	return ParseRows(fetch.Body)
+	rows, err := ParseRows(fetch.Body)
+	if err != nil {
+		return nil, fetch, err
+	}
+	return rows, fetch, nil
 }
 
 // PageAll iterates the dataset in $limit-sized chunks. Caller terminates

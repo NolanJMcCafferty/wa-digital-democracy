@@ -89,8 +89,9 @@ func TestClient_DoNonRetryableErrorReturnsImmediately(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(Config{Sink: NopSink{}, MaxRetries: 5, RetryBackoff: time.Millisecond})
-	_, err := c.Do(context.Background(), Request{System: "t", Endpoint: "e", URL: srv.URL})
+	sink := &recordingSink{}
+	c := New(Config{Sink: sink, MaxRetries: 5, RetryBackoff: time.Millisecond})
+	got, err := c.Do(context.Background(), Request{System: "t", Endpoint: "e", URL: srv.URL})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -99,6 +100,15 @@ func TestClient_DoNonRetryableErrorReturnsImmediately(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "400") {
 		t.Fatalf("error = %v, want substring 400", err)
+	}
+	if got.Status != http.StatusBadRequest || string(got.Body) != "bad" {
+		t.Fatalf("got status/body = %d/%q, want 400/bad", got.Status, got.Body)
+	}
+	if got.SourceRecordID == 0 {
+		t.Fatal("non-retryable HTTP error was not recorded via sink")
+	}
+	if atomic.LoadInt32(&sink.calls) != 1 {
+		t.Fatalf("sink calls = %d, want 1", sink.calls)
 	}
 }
 

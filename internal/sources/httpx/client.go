@@ -51,8 +51,11 @@ type RawFetch struct {
 	SourceRecordID int64
 }
 
-// RawSink is invoked once per successful fetch (HTTP 2xx). Implementations
-// typically write the body to object storage and insert a source_record row.
+// RawSink is invoked once per completed HTTP response, including non-2xx
+// responses. Implementations typically write the body to object storage and
+// insert a source_record row. Network failures with no HTTP response cannot be
+// recorded because there are no raw response bytes.
+//
 // Errors from the sink propagate back to the caller — provenance must not
 // silently fail.
 //
@@ -129,11 +132,11 @@ type Request struct {
 	Body     []byte
 }
 
-// Do performs req, retries transient failures, records the raw response via
-// the configured Sink, and returns the captured RawFetch on success.
+// Do performs req, retries transient failures, records each raw HTTP response
+// via the configured Sink, and returns the final captured RawFetch.
 //
-// On non-retryable HTTP errors (4xx other than 429), the response is still
-// recorded — the body usually contains diagnostic information worth keeping.
+// On HTTP errors, the response is still recorded — the body usually contains
+// diagnostic information worth keeping.
 func (c *Client) Do(ctx context.Context, req Request) (RawFetch, error) {
 	if req.Method == "" {
 		req.Method = http.MethodGet
@@ -149,6 +152,7 @@ func (c *Client) Do(ctx context.Context, req Request) (RawFetch, error) {
 	}
 
 	var lastErr error
+	var lastFetch RawFetch
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := c.cfg.RetryBackoff * (1 << (attempt - 1))
@@ -164,16 +168,22 @@ func (c *Client) Do(ctx context.Context, req Request) (RawFetch, error) {
 		}
 
 		fetch, retry, err := c.attempt(ctx, req)
-		if err == nil {
-			if err := c.cfg.Sink.Record(ctx, &fetch); err != nil {
-				return fetch, fmt.Errorf("raw sink record: %w", err)
+		if fetch.Status != 0 {
+			if sinkErr := c.cfg.Sink.Record(ctx, &fetch); sinkErr != nil {
+				return fetch, fmt.Errorf("raw sink record: %w", sinkErr)
 			}
+			lastFetch = fetch
+		}
+		if err == nil {
 			return fetch, nil
 		}
 		lastErr = err
 		if !retry {
-			return RawFetch{}, err
+			return fetch, err
 		}
+	}
+	if lastFetch.Status != 0 {
+		return lastFetch, fmt.Errorf("after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
 	}
 	return RawFetch{}, fmt.Errorf("after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
 }
