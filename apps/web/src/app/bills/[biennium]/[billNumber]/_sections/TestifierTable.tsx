@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { Position, Testifier } from "@/lib/bundle";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other"];
@@ -10,6 +13,8 @@ const POSITION_STYLE: Record<Position, string> = {
 };
 
 export function TestifierTable({ testifiers }: { testifiers: Testifier[] }) {
+  const [showRegisteredOnly, setShowRegisteredOnly] = useState(false);
+
   const groups: Record<Position, Testifier[]> = {
     Pro: [],
     Con: [],
@@ -22,6 +27,7 @@ export function TestifierTable({ testifiers }: { testifiers: Testifier[] }) {
 
   const total = testifiers.length;
   const testified = testifiers.filter((t) => t.testified).length;
+  const registeredOnly = total - testified;
 
   return (
     <section aria-labelledby="testifiers-heading" className="space-y-4">
@@ -38,19 +44,38 @@ export function TestifierTable({ testifiers }: { testifiers: Testifier[] }) {
         </span>
       </div>
 
+      <label className="flex items-center gap-2 text-sm text-stone-600">
+        <input
+          type="checkbox"
+          checked={showRegisteredOnly}
+          onChange={(e) => setShowRegisteredOnly(e.target.checked)}
+          className="h-4 w-4 rounded border-stone-300 text-stone-700 focus:ring-stone-500"
+        />
+        Include {registeredOnly.toLocaleString()} sign-ins who registered a
+        position but did not testify
+      </label>
+
       <div className="grid grid-cols-3 gap-4">
         {POSITION_ORDER.map((p) => {
-          const rows = groups[p];
+          const all = groups[p];
+          const rows = showRegisteredOnly ? all : all.filter((t) => t.testified);
+          const countLabel = showRegisteredOnly
+            ? rows.length.toLocaleString()
+            : `${rows.length.toLocaleString()} of ${all.length.toLocaleString()}`;
           return (
             <div key={p} className="space-y-2">
               <h3 className="flex items-baseline gap-2 text-sm font-medium uppercase tracking-wider text-stone-600">
                 {p}
                 <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs tabular-nums">
-                  {rows.length}
+                  {countLabel}
                 </span>
               </h3>
               {rows.length === 0 ? (
-                <p className="text-sm text-stone-400">—</p>
+                <p className="text-sm text-stone-400">
+                  {all.length === 0
+                    ? "—"
+                    : "No one testified in person; toggle above to see registered positions."}
+                </p>
               ) : (
                 <ul className="divide-y divide-stone-200 rounded border border-stone-300 bg-white text-sm">
                   {rows.slice(0, 50).map((t, i) => (
