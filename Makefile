@@ -35,15 +35,19 @@ migrate-up:   ## Apply all migrations (uses goose, host psql, or container psql)
 	@if command -v goose >/dev/null; then \
 		goose -dir db/migrations postgres "$(DSN)" up; \
 	else \
-		echo "goose not installed; applying with psql (Up section only)"; \
+		echo "goose not installed; applying with psql (Up sections only)"; \
 		if command -v psql >/dev/null; then \
-			awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' db/migrations/0001_initial.sql \
-			  | grep -vE '^-- \+goose Statement(Begin|End)' \
-			  | PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+			for f in db/migrations/*.sql; do \
+				awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' $$f \
+				  | grep -vE '^-- \+goose Statement(Begin|End)' \
+				  | PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+			done; \
 		elif docker ps --format '{{.Names}}' | grep -qx wa-dd-postgres; then \
-			awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' db/migrations/0001_initial.sql \
-			  | grep -vE '^-- \+goose Statement(Begin|End)' \
-			  | docker exec -i wa-dd-postgres psql -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+			for f in db/migrations/*.sql; do \
+				awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' $$f \
+				  | grep -vE '^-- \+goose Statement(Begin|End)' \
+				  | docker exec -i wa-dd-postgres psql -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+			done; \
 		else \
 			echo "psql not installed and wa-dd-postgres is not running. Run 'make up' first or install psql/goose."; \
 			exit 1; \

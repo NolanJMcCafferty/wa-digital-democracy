@@ -50,7 +50,10 @@ CREATE TYPE testifier_position AS ENUM (
 CREATE TABLE source_record (
     id              BIGSERIAL PRIMARY KEY,
     source_system   TEXT NOT NULL CHECK (source_system IN (
-        'lws', 'committee_schedules', 'csi', 'tvw', 'invintus', 'pdc_socrata'
+        'lws', 'committee_schedules', 'csi', 'tvw', 'invintus', 'pdc_socrata',
+        'datawa_socrata', 'seattle_socrata', 'kingcounty_socrata',
+        'sao_reportsearch', 'seattle_auditor', 'census', 'usaspending',
+        'openfema', 'bls', 'hud', 'epa'
     )),
     source_endpoint TEXT NOT NULL,                 -- e.g. "LegislationService.GetLegislation"
     source_url      TEXT NOT NULL,                 -- canonical URL of the request

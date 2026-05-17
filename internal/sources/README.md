@@ -11,6 +11,18 @@ defined in `~/Documents/v1/wiki/politics/data-sources/0X *.md` files.
 | `committeeschedules` | Committee Schedules ASP.NET app | shipped | search-form date params ignored without CSRF (Phase 0 finding) |
 | `tvw` | TVW WordPress + Invintus REST | shipped | use `wp/v2/invintus_video` not `tvw/v1/schedule` for historical sampling |
 | `pdc` | data.wa.gov Socrata | shipped | preserves raw fields (PDC schema drifted 2024-10-30) |
+| `socrata` | shared Socrata/Tyler API helper | shipped | catalog, metadata, resource query, pagination |
+| `datawa` | general data.wa.gov / DES contracts | initial real client | contract dataset constants, catalog/query via shared Socrata, contract normalization |
+| `seattle` | Seattle Open Data Socrata | initial real client | priority housing/permit/budget dataset constants, query via shared Socrata, permit normalization |
+| `kingcounty` | King County Open Data Socrata | initial real client | priority parcel/election/health/safety dataset constants, query via shared Socrata, parcel normalization |
+| `sao` | WA State Auditor ReportSearch | initial real client | gov/audit types, entity lookup, report search, report PDF URLs |
+| `seattleauditor` | Seattle City Auditor Missionmark dashboard | initial real client | public S3 dashboard JSON + reports page fetch |
+| `census` | Census ACS API | initial real client | ACS table + variable metadata queries |
+| `usaspending` | USAspending API v2 | initial real client | award search + agency reference endpoint |
+| `fema` | OpenFEMA API v2 | initial real client | OData-style entity queries; WA disaster helper |
+| `bls` | BLS public API v2 | initial real client | time-series POST client |
+| `hud` | HUD data/catalog/file surfaces | minimal real fetch client | dataset page and known-file fetcher; structured datasets still need per-source parsers |
+| `epa` | EPA ECHO/EJScreen surfaces | minimal real fetch client | ECHO facility query helper; detailed endpoints still need per-use-case verification |
 
 ## Wiki deltas worth noting
 
