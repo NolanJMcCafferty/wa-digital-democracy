@@ -3,8 +3,15 @@
 
 DSN ?= postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable
 COMPOSE := docker compose -f infra/docker-compose.yml
+ENV_FILE ?= .env.local
+GO ?= go
 
-.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build vet fmt tidy
+ifneq (,$(wildcard $(ENV_FILE)))
+include $(ENV_FILE)
+export
+endif
+
+.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build build-demo vet fmt tidy
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -24,14 +31,23 @@ ps:           ## Show service status
 psql:         ## Open psql shell against local Postgres
 	PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd
 
-migrate-up:   ## Apply all migrations (uses goose if installed; otherwise psql)
+migrate-up:   ## Apply all migrations (uses goose, host psql, or container psql)
 	@if command -v goose >/dev/null; then \
 		goose -dir db/migrations postgres "$(DSN)" up; \
 	else \
 		echo "goose not installed; applying with psql (Up section only)"; \
-		awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' db/migrations/0001_initial.sql \
-		  | grep -vE '^-- \+goose Statement(Begin|End)' \
-		  | PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+		if command -v psql >/dev/null; then \
+			awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' db/migrations/0001_initial.sql \
+			  | grep -vE '^-- \+goose Statement(Begin|End)' \
+			  | PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+		elif docker ps --format '{{.Names}}' | grep -qx wa-dd-postgres; then \
+			awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' db/migrations/0001_initial.sql \
+			  | grep -vE '^-- \+goose Statement(Begin|End)' \
+			  | docker exec -i wa-dd-postgres psql -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
+		else \
+			echo "psql not installed and wa-dd-postgres is not running. Run 'make up' first or install psql/goose."; \
+			exit 1; \
+		fi; \
 	fi
 
 migrate-down: ## Roll back the last migration
@@ -48,17 +64,21 @@ migrate-fresh: nuke up    ## Wipe DB and re-migrate
 	@$(MAKE) migrate-up
 
 test:         ## Run unit tests
-	go test ./...
+	$(GO) test ./...
 
 build:        ## Build all binaries into ./bin
 	mkdir -p bin
-	go build -o bin/ ./cmd/...
+	$(GO) build -o bin/ ./cmd/...
+
+build-demo: build ## Build the selected first-page demo bundle using $(ENV_FILE)
+	@test -n "$$INVINTUS_EMBEDDER_KEY" || { echo "INVINTUS_EMBEDDER_KEY is required; copy .env.example to .env.local and fill it in."; exit 1; }
+	./bin/wa-dd build-bundle --config config/selected_demo.yml
 
 vet:
-	go vet ./...
+	$(GO) vet ./...
 
 fmt:
 	gofmt -w .
 
 tidy:
-	go mod tidy
+	$(GO) mod tidy

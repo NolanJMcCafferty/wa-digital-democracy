@@ -3,7 +3,9 @@
 //
 // Per data-sources/05:
 //   - Endpoint pattern: GET https://data.wa.gov/resource/<dataset_id>.json
-//   - Optional X-App-Token / $$app_token query param.
+//   - Optional X-App-Token / $$app_token query param. Leave blank until
+//     broader ingestion hits throttling; public reads work without it for the
+//     first-page MVP demo.
 //   - Pagination: $limit + $offset; iterate until len(page) < $limit.
 //
 // First-page MVP cares about three datasets (Blueprint lines 334–347):
@@ -50,7 +52,7 @@ type Row map[string]any
 type Client struct {
 	HTTP     *httpx.Client
 	BaseURL  string
-	AppToken string // optional; sent as $$app_token query param
+	AppToken string // optional; sent as $$app_token query param when throttling requires it
 }
 
 // New returns a Client.

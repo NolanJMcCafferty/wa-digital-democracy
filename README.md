@@ -28,12 +28,21 @@ The first-page architecture is "Go produces a JSON bundle; Next.js renders the b
 ## Local dev
 
 ```sh
-make up            # start Postgres in Docker
-make migrate-up    # apply schema (uses goose if installed; falls back to psql)
-make test          # run Go tests
-make build         # build the wa-dd CLI and wa-dd-api server
-make psql          # open a shell against the local DB
+cp .env.example .env.local  # fill in local-only secrets; .env.local is gitignored
+make up                     # start Postgres in Docker
+make migrate-up             # apply schema (uses goose, host psql, or container psql)
+make build-demo             # build the selected first-page JSON bundle
+make test                   # run Go tests
+make build                  # build the wa-dd CLI and wa-dd-api server
+make psql                   # open a shell against the local DB
 ```
+
+`make build-demo` loads `.env.local` by default. Set `ENV_FILE=/path/to/file`
+to use a different local environment file.
+
+`INVINTUS_EMBEDDER_KEY` is required for TVW/Invintus caption ingestion.
+`SOCRATA_APP_TOKEN` is optional for data.wa.gov/PDC reads; leave it blank
+unless/until broader PDC ingestion starts hitting Socrata/Tyler throttling.
 
 ## Layout
 
