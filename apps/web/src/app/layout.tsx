@@ -24,6 +24,9 @@ export default function RootLayout({
               <a href="/issues/housing" className="hover:text-stone-900">
                 Housing
               </a>
+              <a href="/issues/education" className="hover:text-stone-900">
+                Education
+              </a>
               <a href="/issues/transportation" className="hover:text-stone-900">
                 Transportation
               </a>
