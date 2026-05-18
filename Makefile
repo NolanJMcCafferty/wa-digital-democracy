@@ -9,13 +9,15 @@ GO ?= go
 GOOSE ?= $(GO) run -modfile=tools/goose/go.mod github.com/pressly/goose/v3/cmd/goose
 SCHEMASPY_IMAGE ?= schemaspy/schemaspy:latest
 SCHEMASPY_OUT ?= docs/db/schemaspy
+COVERAGE_THRESHOLD ?= 50.0
+COVERAGE_PKGS ?= ./internal/sources/... ./internal/candidate ./internal/config
 
 ifneq (,$(wildcard $(ENV_FILE)))
 include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,6 +68,14 @@ db-docs-open: db-docs ## Generate and open SchemaSpy docs in the default browser
 
 test:         ## Run unit tests
 	$(GO) test ./...
+
+coverage:     ## Enforce unit test coverage threshold for core packages
+	@tmp=$$(mktemp); \
+	$(GO) test $(COVERAGE_PKGS) -coverprofile=$$tmp -covermode=atomic; \
+	coverage=$$($(GO) tool cover -func=$$tmp | awk '/^total:/ { sub(/%/, "", $$3); print $$3 }'); \
+	rm -f $$tmp; \
+	echo "Total unit test coverage: $${coverage}% (required: $(COVERAGE_THRESHOLD)%)"; \
+	awk -v coverage="$$coverage" -v threshold="$(COVERAGE_THRESHOLD)" 'BEGIN { if (coverage + 0 < threshold + 0) { printf "Coverage %.1f%% is below required %.1f%%\n", coverage, threshold; exit 1 } }'
 
 build:        ## Build all binaries into ./bin
 	mkdir -p bin
