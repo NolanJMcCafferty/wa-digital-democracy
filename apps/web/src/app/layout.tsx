@@ -36,7 +36,6 @@ export default function RootLayout({
               <a href="/sources" className="hover:text-stone-900">
                 Sources
               </a>
-              <span>First-page MVP</span>
             </nav>
           </div>
         </header>

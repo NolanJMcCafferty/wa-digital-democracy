@@ -27,18 +27,6 @@ export default async function HomePage() {
   ]);
   return (
     <div className="space-y-8">
-      <div className="space-y-3">
-        <h1 className="text-3xl font-bold tracking-tight">First-page demos</h1>
-        <p className="text-stone-600">
-          The MVP renders one source-linked bill-hearing brief at a time. Each
-          bundle below was assembled by{" "}
-          <code className="rounded bg-stone-200 px-1.5 py-0.5 text-sm">
-            wa-dd build-bundle
-          </code>{" "}
-          from live LWS, CSI, TVW/Invintus, and PDC data.
-        </p>
-      </div>
-
       <SearchBox results={searchResults} />
 
       <section aria-labelledby="issues-heading" className="space-y-3">
