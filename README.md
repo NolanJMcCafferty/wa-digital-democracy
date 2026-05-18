@@ -6,14 +6,6 @@ testimony, video, money, and lobbying — modeled on CalMatters Digital Democrac
 This repo is the implementation of the MVP defined in
 `~/Documents/v1/wiki/politics/Washington Digital Democracy - First Page Implementation Blueprint.md`.
 
-## Status
-
-**Phase 1 (repo scaffold + shared infra):** in progress.
-
-Earlier phases:
-
-- **Phase 0 (feasibility spike):** complete. Findings in `docs/phase0-spike-report.md`. Headline: TVW captions cover 100% of legislative-committee events sampled, CSI retains the full 2025–26 biennium, and Committee Schedules exposes a direct TVW event-ID mapping for ~75% of returned meetings. The throwaway spike commands have been removed; durable learnings now live in docs and source connector tests.
-
 ## Stack
 
 Per `~/Documents/v1/wiki/politics/Washington Digital Democracy - Recommended Tech Stack.md`:
@@ -120,14 +112,6 @@ Re-running is cheap in DB writes — `source_record` dedups on
 `(system, endpoint, url, content_hash, transform_version)` and just
 bumps `fetched_at` for unchanged content — but every run still re-hits
 every upstream API at the configured rate (5 req/sec default).
-
-### One-off curated bundles
-
-`wa-dd build-bundle --config config/selected_demo.yml` is still
-available for the original single-bill demo path (Phase 2's EHB 1501
-verification). It's not part of the daily chain. Use it when you want
-to force a full pipeline run for a single hand-pinned bill — for
-example, regression-testing a parser fix.
 
 ## Layout
 
