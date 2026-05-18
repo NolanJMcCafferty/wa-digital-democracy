@@ -346,46 +346,24 @@ SELECT te.caption_url,
 	if b.Transcript.BillSegmentEnd <= b.Transcript.BillSegmentStart {
 		return nil
 	}
-	const winQ = `
-WITH ordered AS (
-  SELECT ts.start_ms,
-         ts.end_ms,
-         CASE
-           WHEN LAG(ts.end_ms) OVER (ORDER BY ts.start_ms) IS NULL THEN 1
-           WHEN ts.start_ms - LAG(ts.end_ms) OVER (ORDER BY ts.start_ms) > 120000 THEN 1
-           ELSE 0
-         END AS new_window
-    FROM transcript_segment ts
-    JOIN agenda_item a ON a.id = ts.agenda_item_id
-   WHERE a.csi_agenda_item_id = $1
-), grouped AS (
-  SELECT start_ms,
-         end_ms,
-         SUM(new_window) OVER (ORDER BY start_ms) AS window_id
-    FROM ordered
-)
-SELECT MIN(start_ms), MAX(end_ms)
-  FROM grouped
- GROUP BY window_id
- ORDER BY MIN(start_ms);`
-	winRows, err := store.Pool.Query(ctx, winQ, demo.Agenda.CSIAgendaItemID)
+	// Read the windows that SegmentTranscript decided on, rather than
+	// re-deriving them in SQL with a different gap threshold. The
+	// segmenter's defaultBillSegmentPaddingMS and the in-SQL 120000ms
+	// disagreed, which caused window counts to flip in the band where
+	// only one of them split a span.
+	stored, err := store.ListAgendaItemWindowsByAgendaItem(ctx, demo.Agenda.CSIAgendaItemID)
 	if err != nil {
 		return err
 	}
-	for winRows.Next() {
-		var w TranscriptWindow
-		if err := winRows.Scan(&w.StartMS, &w.EndMS); err != nil {
-			winRows.Close()
-			return err
-		}
-		b.Transcript.Windows = append(b.Transcript.Windows, w)
+	for _, w := range stored {
+		b.Transcript.Windows = append(b.Transcript.Windows, TranscriptWindow{
+			StartMS: w.StartMS,
+			EndMS:   w.EndMS,
+		})
 	}
-	if err := winRows.Err(); err != nil {
-		winRows.Close()
-		return err
-	}
-	winRows.Close()
 	if len(b.Transcript.Windows) == 0 && startMS != nil && endMS != nil {
+		// Fallback for hearings ingested before the persisted-window
+		// migration: synthesize a single window from the head bounds.
 		b.Transcript.Windows = append(b.Transcript.Windows, TranscriptWindow{StartMS: *startMS, EndMS: *endMS})
 	}
 

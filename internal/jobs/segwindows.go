@@ -1,5 +1,23 @@
 package jobs
 
+// Bill-discussion segmentation lives here as a pure function so the
+// segmenter can be unit-tested without a database. The single source
+// of truth for "this cue mentions bill X" is DetectBillDiscussionWindows
+// + the regex it uses (billDiscussionMentionPattern below). Downstream
+// consumers — the bundle assembler, search-result deep-links, future
+// transcript-highlighting UI — should:
+//
+//   1. Read agenda_item_window rows that SegmentTranscript persisted, or
+//   2. Call DetectBillDiscussionWindows with the same inputs,
+//
+// rather than running their own regex against transcript_segment.text.
+// Two implementations of "matches the bill" inevitably drift, and
+// rendered windows that disagree with the segmenter's persisted windows
+// have already bitten this codebase once (the old in-SQL window-detect
+// query in bundle.go used a 120s gap threshold, while the segmenter
+// used 180s — bills with mention gaps in that band rendered with a
+// different window count than they were tagged with). Don't repeat it.
+
 import (
 	"fmt"
 	"regexp"
@@ -73,17 +91,52 @@ func DetectBillDiscussionWindows(cues []segmentCue, billPrefix string, billNumbe
 	return mergeOverlappingWindows(windows)
 }
 
+// billDiscussionMentionPattern returns a case-insensitive regex that
+// matches every common spoken or abbreviated form of a bill mention.
+//
+// Coverage:
+//   - All bare prefixes WA legislators use: HB, SB, HJR, SJR, HCR, SCR,
+//     HJM, SJM (the same set our prefix normalizer recognizes).
+//   - The substituted/engrossed chrome an LWS bill carries as it moves
+//     through the legislature: optional "E" (engrossed), optional "2"
+//     or "3" (Nth substitute), optional "S" (substitute). So "ESHB",
+//     "2SSB", "E2SHB" all match the same bare prefix.
+//   - The spoken English long form ("house bill", "senate concurrent
+//     resolution", etc.) including the "engrossed substitute …" chrome.
+//
+// Whitespace between the prefix and the digits is optional so
+// "HB1234" (no space) matches alongside "HB 1234".
+//
+// SegmentTranscript is the canonical source for "this cue mentions the
+// bill" — search-result highlighting and other downstream consumers
+// should read agenda_item_window or call DetectBillDiscussionWindows
+// rather than running their own regex, which would otherwise drift.
 func billDiscussionMentionPattern(prefix string, number int) string {
 	chamberWord := map[string]string{
-		"HB": "house bill", "SB": "senate bill",
-		"HJR": "house joint resolution", "SJR": "senate joint resolution",
+		"HB":  "house bill",
+		"SB":  "senate bill",
+		"HJR": "house joint resolution",
+		"SJR": "senate joint resolution",
+		"HCR": "house concurrent resolution",
+		"SCR": "senate concurrent resolution",
+		"HJM": "house joint memorial",
+		"SJM": "senate joint memorial",
 	}
-	cw, ok := chamberWord[prefix]
 	num := fmt.Sprintf("%d", number)
-	if !ok {
-		return fmt.Sprintf(`(?i)\b%s\s*%s\b`, prefix, num)
+	cw, known := chamberWord[prefix]
+
+	// Prefix half: optional engrossment / Nth-substitute / substitute
+	// chrome before the bare prefix. Same shape as
+	// internal/sources/lws/normalize.go:baseBillPrefix's input grammar.
+	abbrev := fmt.Sprintf(`E?[23]?S?%s`, prefix)
+
+	if !known {
+		return fmt.Sprintf(`(?i)\b%s\s*%s\b`, abbrev, num)
 	}
-	return fmt.Sprintf(`(?i)\b(%s|%s)\s*%s\b`, prefix, cw, num)
+	// Spoken half: optional "engrossed (substitute|second substitute|…)
+	// (substitute)?" prefix before the long chamber form.
+	spoken := fmt.Sprintf(`(?:engrossed\s+)?(?:(?:second|third|2nd|3rd)\s+)?(?:substitute\s+)?%s`, cw)
+	return fmt.Sprintf(`(?i)\b(?:%s|%s)\s*%s\b`, abbrev, spoken, num)
 }
 
 func normalizeCueText(s string) string {
