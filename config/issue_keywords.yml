@@ -12,6 +12,26 @@ housing:
   - permitting
   - land use
 
+education:
+  - education
+  - school
+  - schools
+  - student
+  - students
+  - teacher
+  - teachers
+  - superintendent
+  - OSPI
+  - higher education
+  - university
+  - college
+  - community college
+  - special education
+  - early learning
+  - childcare
+  - child care
+  - school funding
+
 transportation:
   - transportation
   - transit
