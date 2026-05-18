@@ -35,6 +35,7 @@ make build-demo             # build the selected first-page JSON bundle
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
 make psql                   # open a shell against the local DB
+make db-docs                # generate SchemaSpy HTML docs for the local schema
 make api                    # run the HTTP API the Next.js frontend reads from (:8080)
 ```
 
@@ -56,6 +57,18 @@ cd apps/web && pnpm dev                     # Next.js on :3000
 Override the API URL the frontend hits with `WADD_API_URL` (default
 `http://localhost:8080`) — useful when running the API on a non-default
 port or against a remote dev DB.
+
+### Database docs
+
+Generate browsable SchemaSpy documentation for the local Postgres schema:
+
+```sh
+make db-docs
+```
+
+Open `docs/db/schemaspy/index.html` after generation. The generated HTML is
+ignored by git; the committed config lives in `docs/db/schemaspy.properties`.
+Use `make db-docs-open` to generate and open the docs in the default browser.
 
 ## Daily batch
 

@@ -3,16 +3,19 @@
 
 DSN ?= postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable
 COMPOSE := docker compose -f infra/docker-compose.yml
+COMPOSE_NETWORK ?= infra_default
 ENV_FILE ?= .env.local
 GO ?= go
 GOOSE ?= $(GO) run -modfile=tools/goose/go.mod github.com/pressly/goose/v3/cmd/goose
+SCHEMASPY_IMAGE ?= schemaspy/schemaspy:latest
+SCHEMASPY_OUT ?= docs/db/schemaspy
 
 ifneq (,$(wildcard $(ENV_FILE)))
 include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -41,6 +44,17 @@ migrate-down: ## Roll back the last migration with project-pinned goose
 migrate-fresh: nuke up    ## Wipe DB and re-migrate
 	@sleep 2
 	@$(MAKE) migrate-up
+
+db-docs: up   ## Generate SchemaSpy HTML docs for the local Postgres schema
+	@mkdir -p $(SCHEMASPY_OUT)
+	docker run --rm \
+		--network $(COMPOSE_NETWORK) \
+		-v "$(CURDIR)/$(SCHEMASPY_OUT):/output" \
+		-v "$(CURDIR)/docs/db/schemaspy.properties:/schemaspy.properties:ro" \
+		$(SCHEMASPY_IMAGE)
+
+db-docs-open: db-docs ## Generate and open SchemaSpy docs in the default browser
+	@xdg-open "$(CURDIR)/$(SCHEMASPY_OUT)/index.html" >/dev/null 2>&1 || echo "Open $(CURDIR)/$(SCHEMASPY_OUT)/index.html"
 
 test:         ## Run unit tests
 	$(GO) test ./...

@@ -26,5 +26,8 @@
 /apps/web/.next/
 /apps/web/.turbo/
 
+# Generated database docs
+/docs/db/schemaspy/
+
 # OS
 .DS_Store
