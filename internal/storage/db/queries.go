@@ -599,6 +599,42 @@ func defaultStr(s, def string) string {
 	return s
 }
 
+// ListedBill is the row shape returned by ListIngestedBills — the fields
+// the bills-index API endpoint surfaces. BillID is the generated column
+// (e.g. "HB 1501") so callers don't have to recompose it.
+type ListedBill struct {
+	Biennium string
+	Prefix   string
+	Number   int
+	BillID   string
+	Title    string
+}
+
+// ListIngestedBills returns every bill row in stable display order
+// (newest biennium first, then prefix, then number). Filters out the
+// occasional placeholder row with number=0 from broken upserts.
+func (s *Store) ListIngestedBills(ctx context.Context) ([]ListedBill, error) {
+	const q = `
+SELECT biennium, prefix, number, bill_number, COALESCE(title, '')
+  FROM bill
+ WHERE number > 0
+ ORDER BY biennium DESC, prefix, number;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list bills: %w", err)
+	}
+	defer rows.Close()
+	out := []ListedBill{}
+	for rows.Next() {
+		var b ListedBill
+		if err := rows.Scan(&b.Biennium, &b.Prefix, &b.Number, &b.BillID, &b.Title); err != nil {
+			return nil, fmt.Errorf("scan listed bill: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func nullStringArray(a []string) any {
 	if a == nil {
 		return []string{}

@@ -153,25 +153,34 @@ export default async function HomePage() {
 
       {bundles.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No bundles found. Run{" "}
+          No bills found. Run{" "}
           <code className="rounded bg-stone-200 px-1.5 py-0.5">
             wa-dd build-bundle
           </code>{" "}
-          to produce one.
+          (or{" "}
+          <code className="rounded bg-stone-200 px-1.5 py-0.5">
+            make daily-bundles
+          </code>
+          ) to ingest one.
         </p>
       ) : (
         <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
           {bundles.map((b) => (
-            <li key={b.path} className="px-4 py-3">
+            <li key={`${b.biennium}-${b.billPrefix}-${b.billNumber}`} className="px-4 py-3">
               <Link
                 href={`/bills/${b.biennium}/${b.billPrefix}${b.billNumber}`}
                 className="flex flex-col gap-1 hover:bg-stone-50"
               >
                 <span className="font-medium text-stone-900">
-                  {b.billPrefix} {b.billNumber}
+                  {b.billId}
+                  {b.title ? (
+                    <span className="ml-2 font-normal text-stone-600">
+                      — {b.title}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="text-sm text-stone-500">
-                  Biennium {b.biennium} · {b.path}
+                  Biennium {b.biennium}
                 </span>
               </Link>
             </li>

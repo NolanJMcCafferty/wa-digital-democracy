@@ -1,18 +1,30 @@
 import "server-only";
-import { promises as fs } from "fs";
-import path from "path";
 import type { Bundle, OrgContext, Organization, Position, Sponsor } from "./bundle";
 
-// Bundle filenames are produced by Go: data/processed/bundles/wa_<biennium>_<prefix><number>.json
-// Example: data/processed/bundles/wa_2025-26_HB1501.json
+// The Next.js bill-detail page is a Server Component, so its fetch runs
+// in the Node runtime and does NOT pass through next.config.ts rewrites.
+// We hit the Go API by absolute URL. The rewrite still proxies any
+// future client-side fetches under /api/v1/* through the same origin.
+const API_BASE = process.env.WADD_API_URL ?? "http://localhost:8080";
 
-const BUNDLE_DIR = path.resolve(process.cwd(), "..", "..", "data", "processed", "bundles");
+// Match daily-ingest cadence with margin. Override per-call by passing a
+// different `next` option if a section ever needs sub-minute freshness.
+const DEFAULT_REVALIDATE = 60;
 
 export type BundleListEntry = {
-  path: string;
   biennium: string;
   billPrefix: string;
   billNumber: number;
+  billId: string;
+  title: string;
+};
+
+type listResponseItem = {
+  biennium: string;
+  bill_prefix: string;
+  bill_number: number;
+  bill_id: string;
+  title?: string;
 };
 
 export type HearingBundleEntry = BundleListEntry & {
@@ -77,28 +89,20 @@ export type OrganizationBundleEntry = {
 };
 
 export async function listLocalBundles(): Promise<BundleListEntry[]> {
-  let names: string[] = [];
-  try {
-    names = await fs.readdir(BUNDLE_DIR);
-  } catch {
-    return [];
+  const res = await fetch(`${API_BASE}/api/v1/bills`, {
+    next: { revalidate: DEFAULT_REVALIDATE },
+  });
+  if (!res.ok) {
+    throw new Error(`listLocalBundles: ${API_BASE}/api/v1/bills returned ${res.status}`);
   }
-  const out: BundleListEntry[] = [];
-  for (const n of names) {
-    if (!n.startsWith("wa_") || !n.endsWith(".json")) continue;
-    // wa_<biennium>_<prefix><number>.json
-    const stem = n.slice(3, -5); // "2025-26_HB1501"
-    const m = stem.match(/^([\d]{4}-[\d]{2})_([A-Z]+)([\d]+)$/);
-    if (!m) continue;
-    out.push({
-      path: path.join("data/processed/bundles", n),
-      biennium: m[1],
-      billPrefix: m[2],
-      billNumber: parseInt(m[3], 10),
-    });
-  }
-  out.sort((a, b) => (a.biennium === b.biennium ? a.billNumber - b.billNumber : a.biennium.localeCompare(b.biennium)));
-  return out;
+  const items = (await res.json()) as listResponseItem[];
+  return items.map((b) => ({
+    biennium: b.biennium,
+    billPrefix: b.bill_prefix,
+    billNumber: b.bill_number,
+    billId: b.bill_id,
+    title: b.title ?? "",
+  }));
 }
 
 export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
@@ -385,15 +389,13 @@ export function slugify(s: string): string {
 export async function loadBundle(
   biennium: string,
   billPrefix: string,
-  billNumber: number
+  billNumber: number,
 ): Promise<Bundle | null> {
-  const filename = `wa_${biennium}_${billPrefix}${billNumber}.json`;
-  const filepath = path.join(BUNDLE_DIR, filename);
-  try {
-    const raw = await fs.readFile(filepath, "utf-8");
-    return JSON.parse(raw) as Bundle;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
+  const url = `${API_BASE}/api/v1/bills/${biennium}/${billPrefix}${billNumber}/first-page`;
+  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`loadBundle ${url} returned ${res.status}`);
   }
+  return (await res.json()) as Bundle;
 }

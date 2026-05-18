@@ -17,6 +17,30 @@ func read(t *testing.T, name string) []byte {
 	return b
 }
 
+func TestBaseBillPrefix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"HB", "HB"},
+		{"SB", "SB"},
+		{"SHB", "HB"},
+		{"2SHB", "HB"},
+		{"3SHB", "HB"},
+		{"ESHB", "HB"},
+		{"E2SHB", "HB"},
+		{"SSB", "SB"},
+		{"2SSB", "SB"},
+		{"ESSB", "SB"},
+		{"E2SSB", "SB"},
+		{"HJR", "HJR"},
+		{"ESHJR", "HJR"},
+		{"WTF", "WTF"}, // unknown shape preserved
+	}
+	for _, c := range cases {
+		if got := baseBillPrefix(c.in); got != c.want {
+			t.Errorf("baseBillPrefix(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestParseGetLegislation_Real(t *testing.T) {
 	leg, err := ParseGetLegislation(read(t, "get-legislation.xml"))
 	if err != nil {

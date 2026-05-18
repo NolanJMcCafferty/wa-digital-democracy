@@ -119,7 +119,15 @@ type Source struct {
 
 // Build assembles a Bundle for the configured demo from Postgres state.
 func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bundle, error) {
-	b := &Bundle{GeneratedAt: time.Now().UTC()}
+	// Initialize collection fields to non-nil empty slices so the bundle's
+	// JSON serializes to [] rather than null when a section has no data —
+	// the frontend treats these as arrays unconditionally.
+	b := &Bundle{
+		GeneratedAt:   time.Now().UTC(),
+		Testifiers:    []Testifier{},
+		Organizations: []Organization{},
+		Sources:       []Source{},
+	}
 
 	if err := loadBill(ctx, store, demo, b); err != nil {
 		return nil, fmt.Errorf("bill: %w", err)

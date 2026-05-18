@@ -112,6 +112,12 @@ func NormalizeHearings(in []Hearing) []NormalizedHearing {
 }
 
 // splitBillID parses "HB 1234" → ("HB", 1234). Returns ("",0) on failure.
+//
+// LWS reports BillID as the bill's *current* form, including engrossment
+// and substitution chrome ("ESSB 6054", "2SHB 1859"). The bill's identity
+// — the chamber+number that humans cite and that public bill URLs use —
+// is the bare form, so we strip the chrome here to keep one row per bill
+// across the legislative cycle.
 func splitBillID(billID string) (string, int) {
 	parts := strings.Fields(billID)
 	if len(parts) != 2 {
@@ -121,7 +127,29 @@ func splitBillID(billID string) (string, int) {
 	if err != nil {
 		return "", 0
 	}
-	return parts[0], n
+	return baseBillPrefix(parts[0]), n
+}
+
+// baseBillPrefix removes engrossment ("E"), Nth-substitute ("2"/"3"), and
+// substitute ("S") chrome from a bill prefix.
+//
+//	"HB"    → "HB"     (already bare)
+//	"SHB"   → "HB"     (Substitute House Bill)
+//	"2SHB"  → "HB"     (Second Substitute House Bill)
+//	"ESHB"  → "HB"     (Engrossed Substitute House Bill)
+//	"E2SSB" → "SB"     (Engrossed Second Substitute Senate Bill)
+//	"HJR"   → "HJR"    (House Joint Resolution — not a bill)
+//
+// Anything that doesn't end in a known base type ("HB"/"SB"/"HJR"/"SJR"/
+// "HCR"/"SCR"/"HJM"/"SJM") is returned unchanged so unknown shapes stay
+// observable rather than getting silently rewritten.
+func baseBillPrefix(prefix string) string {
+	for _, base := range []string{"HB", "SB", "HJR", "SJR", "HCR", "SCR", "HJM", "SJM"} {
+		if strings.HasSuffix(prefix, base) {
+			return base
+		}
+	}
+	return prefix
 }
 
 // parseLWSDate parses LWS's "2025-01-13T00:00:00" timestamps. Trailing

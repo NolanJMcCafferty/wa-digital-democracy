@@ -35,6 +35,7 @@ make build-demo             # build the selected first-page JSON bundle
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
 make psql                   # open a shell against the local DB
+make api                    # run the HTTP API the Next.js frontend reads from (:8080)
 ```
 
 `make build-demo` loads `.env.local` by default. Set `ENV_FILE=/path/to/file`
@@ -43,6 +44,55 @@ to use a different local environment file.
 `INVINTUS_EMBEDDER_KEY` is required for TVW/Invintus caption ingestion.
 `SOCRATA_APP_TOKEN` is optional for data.wa.gov/PDC reads; leave it blank
 unless/until broader PDC ingestion starts hitting Socrata/Tyler throttling.
+
+The frontend reads from the API, so a full local loop is:
+
+```sh
+make up                                     # Postgres
+make api &                                  # Go API on :8080
+cd apps/web && pnpm dev                     # Next.js on :3000
+```
+
+Override the API URL the frontend hits with `WADD_API_URL` (default
+`http://localhost:8080`) — useful when running the API on a non-default
+port or against a remote dev DB.
+
+## Daily batch
+
+`make daily-bundles` rebuilds bundles for every entry in
+`config/selected_bills.yml`. The frontend reads bills via the Go API
+(`make api`), which queries the same Postgres rows the daily run
+populates — so a successful batch refresh is what makes the page fresh.
+The on-disk bundles in `data/processed/bundles/` are kept as snapshots
+for offline inspection and as a debugging fallback; the frontend does
+not read them.
+
+To populate the list:
+
+1. `go run ./cmd/wa-dd find-candidates --issue housing` (or another keyword
+   set in `config/issue_keywords.yml`). This writes
+   `data/processed/candidates.json` and prints a copy-paste-ready table.
+2. Pick 5–10 candidates with TVW captions and paste each one's IDs into
+   `config/selected_bills.yml` under `bills:` (the file's header comment
+   has the schema). Bills without a `tvw.event_id` are rejected at load
+   time — TVW is required for transcript ingestion.
+3. `INVINTUS_EMBEDDER_KEY=… make daily-bundles`.
+
+Per-bill failures are isolated: one bad entry won't stop the rest. After
+the run, `data/processed/bundles/_run.json` summarizes which bills
+succeeded, which failed (with the error), and how long each took. The
+process exits non-zero if any bill failed so cron flags it.
+
+For a daily refresh, add a crontab entry on the operator's machine, e.g.:
+
+```cron
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily-bundles >> /tmp/wa-dd-daily.log 2>&1
+```
+
+Re-running is cheap in DB writes — `source_record` dedups on
+`(system, endpoint, url, content_hash, transform_version)` and just bumps
+`fetched_at` for unchanged content — but every run still re-hits every API
+at 2 req/sec, so 5–10 bills is the right scope here.
 
 ## Layout
 

@@ -50,6 +50,7 @@ SUBCOMMANDS:
   ingest-tvw         Pull TVW/Invintus event detail + VTT
   match-hearing      Compute meeting<->TVW match for a candidate
   build-bundle       Assemble the JSON bundle for a selected demo
+  build-bundles      Build bundles for every entry in selected_bills.yml (daily batch)
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -76,6 +77,8 @@ func main() {
 		runStub(cmd, args, "phase 3")
 	case "build-bundle":
 		os.Exit(runBuildBundle(args))
+	case "build-bundles":
+		os.Exit(runBuildBundles(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -247,27 +250,54 @@ func runBuildBundle(args []string) int {
 		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "==> demo: %s (%s, agenda %s)\n",
-		demo.BillID(), demo.Biennium, demo.Agenda.CSIAgendaItemID)
 
-	store, err := db.Open(ctx, *dsn)
+	deps, cleanup, err := newBuildDeps(ctx, *dsn, *rawDir, *rateLimit)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: db open: %v\n", err)
+		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
 		return 1
 	}
-	defer store.Close()
+	defer cleanup()
 
-	objs, err := objectstore.NewFS(*rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: objectstore: %v\n", err)
+	logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
+	logf(fmt.Sprintf("==> demo: %s (%s, agenda %s)",
+		demo.BillID(), demo.Biennium, demo.Agenda.CSIAgendaItemID))
+
+	if _, err := buildOne(ctx, deps, demo, *outDir, logf); err != nil {
+		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
 		return 1
+	}
+	return 0
+}
+
+// buildDeps groups the long-lived process-wide dependencies that build-bundle
+// and build-bundles share. Construct once per process via newBuildDeps.
+type buildDeps struct {
+	store      *db.Store
+	httpClient *httpx.Client
+	pdcClient  *pdc.Client
+	lwsClient  *lws.Client
+	csiClient  *csi.Client
+	tvwClient  *tvw.Client
+}
+
+func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*buildDeps, func(), error) {
+	store, err := db.Open(ctx, dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db open: %w", err)
+	}
+	cleanup := func() { store.Close() }
+
+	objs, err := objectstore.NewFS(rawDir)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("objectstore: %w", err)
 	}
 	sink := db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"}
 
 	embedderKey := os.Getenv("INVINTUS_EMBEDDER_KEY")
 	if embedderKey == "" {
-		fmt.Fprintln(os.Stderr, "build-bundle: INVINTUS_EMBEDDER_KEY is required for the TVW step")
-		return 1
+		cleanup()
+		return nil, nil, fmt.Errorf("INVINTUS_EMBEDDER_KEY is required for the TVW step")
 	}
 
 	httpClient := httpx.New(httpx.Config{
@@ -277,41 +307,51 @@ func runBuildBundle(args []string) int {
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
 		HostRateLimit: map[string]float64{
-			"app.leg.wa.gov":         *rateLimit,
-			"wslwebservices.leg.wa.gov": *rateLimit,
-			"tvw.org":                *rateLimit,
-			"api.v3.invintus.com":    *rateLimit,
-			"data.wa.gov":            *rateLimit,
+			"app.leg.wa.gov":           rateLimit,
+			"wslwebservices.leg.wa.gov": rateLimit,
+			"tvw.org":                  rateLimit,
+			"api.v3.invintus.com":      rateLimit,
+			"data.wa.gov":              rateLimit,
 		},
 	})
 
+	return &buildDeps{
+		store:      store,
+		httpClient: httpClient,
+		pdcClient:  pdc.New(httpClient, os.Getenv("SOCRATA_APP_TOKEN")),
+		lwsClient:  lws.New(httpClient),
+		csiClient:  csi.New(httpClient),
+		tvwClient:  tvw.New(httpClient, embedderKey),
+	}, cleanup, nil
+}
+
+// buildOne runs the full ingest+bundle pipeline for a single bill and writes
+// the bundle JSON to outDir. Returns the absolute path of the written bundle.
+// All errors are wrapped with the bill identifier so callers can log per-bill
+// status without re-decoding.
+func buildOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, outDir string, logf func(string)) (string, error) {
 	pipeline := &jobs.Pipeline{
-		Store: store,
-		LWS:   lws.New(httpClient),
-		CSI:   csi.New(httpClient),
-		TVW:   tvw.New(httpClient, embedderKey),
-		PDC:   pdc.New(httpClient, os.Getenv("SOCRATA_APP_TOKEN")),
+		Store: deps.store,
+		LWS:   deps.lwsClient,
+		CSI:   deps.csiClient,
+		TVW:   deps.tvwClient,
+		PDC:   deps.pdcClient,
 		Demo:  demo,
 	}
 	ids := jobs.NewIDs()
-
-	logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
 	if err := pipeline.Run(ctx, logf, ids); err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
-		return 1
+		return "", err
 	}
 
 	logf("==> assembling bundle")
-	bundle, err := firstpage.Build(ctx, store, demo)
+	bundle, err := firstpage.Build(ctx, deps.store, demo)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
-		return 1
+		return "", err
 	}
 	outName := fmt.Sprintf("wa_%s_%s%d.json", demo.Biennium, demo.BillPrefix, demo.BillNumber)
-	outPath := filepath.Join(*outDir, outName)
+	outPath := filepath.Join(outDir, outName)
 	if err := writeJSON(outPath, bundle); err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: write: %v\n", err)
-		return 1
+		return "", fmt.Errorf("write: %w", err)
 	}
 	logf(fmt.Sprintf("wrote %s", outPath))
 	logf(fmt.Sprintf("  testifiers=%d  segments=%d  organizations=%d  sources=%d",
@@ -322,6 +362,115 @@ func runBuildBundle(args []string) int {
 		for _, l := range bundle.KnownLimitations {
 			logf("    - " + l)
 		}
+	}
+	return outPath, nil
+}
+
+// runBuildBundles implements `wa-dd build-bundles`: the daily-batch driver.
+// Reads config/selected_bills.yml, runs buildOne per entry, isolates per-bill
+// errors, and writes a run-summary JSON next to the bundles. Exits non-zero if
+// any bill failed so cron mail flags the run.
+func runBuildBundles(args []string) int {
+	fs := flag.NewFlagSet("build-bundles", flag.ContinueOnError)
+	var (
+		cfgPath   = fs.String("config", "config/selected_bills.yml", "path to selected_bills.yml")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundles are written")
+		rateLimit = fs.Float64("rate", 2.0, "max requests/sec per legislative host")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	bills, err := config.LoadSelectedBills(*cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "build-bundles: %v\n", err)
+		return 1
+	}
+
+	deps, cleanup, err := newBuildDeps(ctx, *dsn, *rawDir, *rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "build-bundles: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	type result struct {
+		Bill        string `json:"bill"`
+		Status      string `json:"status"` // "ok" | "failed"
+		DurationMS  int64  `json:"duration_ms"`
+		BundlePath  string `json:"bundle_path,omitempty"`
+		Error       string `json:"error,omitempty"`
+	}
+	results := make([]result, 0, len(bills.Bills))
+	startedAt := time.Now()
+	failures := 0
+
+	for i := range bills.Bills {
+		demo := &bills.Bills[i]
+		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(bills.Bills), demo.BillID())
+		fmt.Fprintf(os.Stderr, "==> %s starting\n", prefix)
+
+		logf := func(s string) { fmt.Fprintf(os.Stderr, "    %s\n", s) }
+		t0 := time.Now()
+		bundlePath, err := buildOne(ctx, deps, demo, *outDir, logf)
+		dur := time.Since(t0)
+		if err != nil {
+			failures++
+			fmt.Fprintf(os.Stderr, "    %s FAIL (%s): %v\n", prefix, dur.Round(time.Millisecond), err)
+			results = append(results, result{
+				Bill:       demo.BillID(),
+				Status:     "failed",
+				DurationMS: dur.Milliseconds(),
+				Error:      err.Error(),
+			})
+			// Honor cancellation — don't keep iterating after Ctrl-C / SIGTERM.
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "    %s ok (%s)\n", prefix, dur.Round(time.Millisecond))
+		results = append(results, result{
+			Bill:       demo.BillID(),
+			Status:     "ok",
+			DurationMS: dur.Milliseconds(),
+			BundlePath: filepath.Base(bundlePath),
+		})
+	}
+
+	summary := struct {
+		StartedAt  time.Time `json:"started_at"`
+		FinishedAt time.Time `json:"finished_at"`
+		Total      int       `json:"total"`
+		Succeeded  int       `json:"succeeded"`
+		Failed     int       `json:"failed"`
+		Results    []result  `json:"results"`
+	}{
+		StartedAt:  startedAt,
+		FinishedAt: time.Now(),
+		Total:      len(results),
+		Succeeded:  len(results) - failures,
+		Failed:     failures,
+		Results:    results,
+	}
+	summaryPath := filepath.Join(*outDir, "_run.json")
+	if err := writeJSON(summaryPath, summary); err != nil {
+		fmt.Fprintf(os.Stderr, "build-bundles: write _run.json: %v\n", err)
+		// Don't mask a successful batch with a write-summary failure.
+		if failures == 0 {
+			return 1
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "==> done: %d ok, %d failed (%s)\n",
+		summary.Succeeded, summary.Failed, summary.FinishedAt.Sub(summary.StartedAt).Round(time.Millisecond))
+	if failures > 0 {
+		return 1
 	}
 	return 0
 }

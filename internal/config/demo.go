@@ -101,6 +101,35 @@ func (d SelectedDemo) Validate() error {
 	return nil
 }
 
+// SelectedBills mirrors config/selected_bills.yml: a list of SelectedDemo
+// entries that the daily batch (`wa-dd build-bundles`) iterates over.
+type SelectedBills struct {
+	Bills []SelectedDemo `yaml:"bills"`
+}
+
+// LoadSelectedBills reads and validates selected_bills.yml. Each bill is
+// validated independently; the first invalid entry stops the load and
+// includes its index in the error so the operator can locate it.
+func LoadSelectedBills(path string) (*SelectedBills, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read selected_bills: %w", err)
+	}
+	var b SelectedBills
+	if err := yaml.Unmarshal(body, &b); err != nil {
+		return nil, fmt.Errorf("parse selected_bills: %w", err)
+	}
+	if len(b.Bills) == 0 {
+		return nil, fmt.Errorf("selected_bills.yml: no bills listed under `bills:`")
+	}
+	for i, d := range b.Bills {
+		if err := d.Validate(); err != nil {
+			return nil, fmt.Errorf("selected_bills.yml: bills[%d]: %w", i, err)
+		}
+	}
+	return &b, nil
+}
+
 // ReviewedMatch is one row in config/reviewed_matches.yml.
 type ReviewedMatch struct {
 	CSIOrganization      string `yaml:"csi_organization"`
