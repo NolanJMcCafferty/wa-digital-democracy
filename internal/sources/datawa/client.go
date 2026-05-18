@@ -71,6 +71,27 @@ type Contract struct {
 	NormalizationWarning []string
 }
 
+type MasterContractSale struct {
+	SourceDatasetID      string
+	SourceRowID          string
+	CustomerType         string
+	CustomerName         string
+	ContractNumber       string
+	ContractTitle        string
+	VendorName           string
+	ReportYear           int
+	Q1SalesReported      string
+	Q2SalesReported      string
+	Q3SalesReported      string
+	Q4SalesReported      string
+	TotalSalesReported   string
+	OMWBE                string
+	VeteranOwned         string
+	SmallBusiness        string
+	DiverseOptions       string
+	NormalizationWarning []string
+}
+
 func (c *Client) FetchAgencyContracts(ctx context.Context, fiscalYear int, q socrata.Query) ([]socrata.Row, error) {
 	rows, _, err := c.FetchAgencyContractsWithSource(ctx, fiscalYear, q)
 	return rows, err
@@ -82,6 +103,10 @@ func (c *Client) FetchAgencyContractsWithSource(ctx context.Context, fiscalYear 
 		return nil, httpx.RawFetch{}, strconv.ErrSyntax
 	}
 	return c.FetchPageWithSource(ctx, datasetID, q)
+}
+
+func (c *Client) FetchMasterContractSalesWithSource(ctx context.Context, q socrata.Query) ([]socrata.Row, httpx.RawFetch, error) {
+	return c.FetchPageWithSource(ctx, DatasetMasterContractSales, q)
 }
 
 func NormalizeContract(datasetID string, fiscalYear int, row socrata.Row) Contract {
@@ -117,6 +142,34 @@ func NormalizeContract(datasetID string, fiscalYear int, row socrata.Row) Contra
 	}
 }
 
+func NormalizeMasterContractSale(row socrata.Row) MasterContractSale {
+	year, yearWarn := parseIntField(first(row, "year", "report_year"), "year")
+	q1 := first(row, "q1_sales_reported", "q1_sales")
+	q2 := first(row, "q2_sales_reported", "q2_sales")
+	q3 := first(row, "q3_sales_reported", "q3_sales")
+	q4 := first(row, "q4_sales_reported", "q4_sales")
+	return MasterContractSale{
+		SourceDatasetID:      DatasetMasterContractSales,
+		SourceRowID:          first(row, ":id", "sid", "id"),
+		CustomerType:         first(row, "customer_type"),
+		CustomerName:         first(row, "customer_name"),
+		ContractNumber:       first(row, "contract_number"),
+		ContractTitle:        first(row, "contract_title"),
+		VendorName:           first(row, "vendor_name", "vendor"),
+		ReportYear:           year,
+		Q1SalesReported:      q1,
+		Q2SalesReported:      q2,
+		Q3SalesReported:      q3,
+		Q4SalesReported:      q4,
+		TotalSalesReported:   sumMoneyStrings(q1, q2, q3, q4),
+		OMWBE:                first(row, "omwbe"),
+		VeteranOwned:         first(row, "vet_owned", "veteran_owned"),
+		SmallBusiness:        first(row, "small_business"),
+		DiverseOptions:       first(row, "diverse_options"),
+		NormalizationWarning: compact(yearWarn),
+	}
+}
+
 func StableRowID(row socrata.Row) string {
 	body, _ := json.Marshal(row)
 	sum := sha256.Sum256(body)
@@ -144,6 +197,34 @@ func toString(v any) string {
 	default:
 		return ""
 	}
+}
+
+func parseIntField(raw, field string) (int, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, ""
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, "invalid_" + field + ":" + raw
+	}
+	return n, ""
+}
+
+func sumMoneyStrings(xs ...string) string {
+	var total float64
+	for _, x := range xs {
+		x = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(x), "$", ""), ",", "")
+		if x == "" {
+			continue
+		}
+		v, err := strconv.ParseFloat(x, 64)
+		if err != nil {
+			return ""
+		}
+		total += v
+	}
+	return strconv.FormatFloat(total, 'f', 2, 64)
 }
 
 func parseContractDate(raw string) (*time.Time, string) {
