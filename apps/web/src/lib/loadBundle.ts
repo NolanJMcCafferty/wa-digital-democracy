@@ -17,6 +17,13 @@ export type BundleListEntry = {
   billNumber: number;
   billId: string;
   title: string;
+  chamberOrigin?: string;
+  currentStatus?: string;
+  statusBucket?: "in_progress" | "passed" | "failed" | "";
+  leadSponsor?: string;        // "Senator Reed" — back-compat label
+  leadDisplay?: string;        // "Julia Reed" when first/last present
+  leadParty?: string;          // "D" | "R"
+  leadSlug?: string;
 };
 
 type listResponseItem = {
@@ -25,7 +32,67 @@ type listResponseItem = {
   bill_number: number;
   bill_id: string;
   title?: string;
+  chamber_origin?: string;
+  current_status?: string;
+  status_bucket?: "in_progress" | "passed" | "failed" | "";
+  lead_sponsor?: string;
+  lead_display?: string;
+  lead_party?: string;
+  lead_slug?: string;
 };
+
+type billsResponse = {
+  bills: listResponseItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  facets: {
+    Prefixes?: string[];
+    Chambers?: string[];
+    Parties?: string[];
+    Statuses?: string[];
+  };
+};
+
+export type BillSearchFilters = {
+  q?: string;
+  prefix?: string;
+  chamber?: string;
+  party?: string;
+  status?: string;
+  page?: number; // 1-indexed; converted to offset when fetching
+  limit?: number;
+};
+
+export type BillSearchResult = {
+  bills: BundleListEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  facets: {
+    prefixes: string[];
+    chambers: string[];
+    parties: string[];
+    statuses: string[];
+  };
+};
+
+function mapBillItem(b: listResponseItem): BundleListEntry {
+  return {
+    biennium: b.biennium,
+    billPrefix: b.bill_prefix,
+    billNumber: b.bill_number,
+    billId: b.bill_id,
+    title: b.title ?? "",
+    chamberOrigin: b.chamber_origin,
+    currentStatus: b.current_status,
+    statusBucket: b.status_bucket,
+    leadSponsor: b.lead_sponsor,
+    leadDisplay: b.lead_display,
+    leadParty: b.lead_party,
+    leadSlug: b.lead_slug,
+  };
+}
 
 export type HearingBundleEntry = BundleListEntry & {
   csiAgendaItemId: string;
@@ -96,21 +163,58 @@ export type OrganizationBundleEntry = {
   }>;
 };
 
+// listLocalBundles returns the full set of bills (up to the API's
+// hard cap of billsMaxLimit=100 per request, so we ask for the max).
+// The home page uses this for an aggregate count; pages that need
+// pagination + filters should use searchBills below.
 export async function listLocalBundles(): Promise<BundleListEntry[]> {
-  const res = await fetch(`${API_BASE}/api/v1/bills`, {
+  // Ask for a single page large enough to cover the count metric on
+  // the home page; pages that actually render rows should call
+  // searchBills with proper pagination.
+  const res = await fetch(`${API_BASE}/api/v1/bills?limit=100`, {
     cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`listLocalBundles: ${API_BASE}/api/v1/bills returned ${res.status}`);
   }
-  const items = (await res.json()) as listResponseItem[];
-  return items.map((b) => ({
-    biennium: b.biennium,
-    billPrefix: b.bill_prefix,
-    billNumber: b.bill_number,
-    billId: b.bill_id,
-    title: b.title ?? "",
-  }));
+  const body = (await res.json()) as billsResponse;
+  return body.bills.map(mapBillItem);
+}
+
+// searchBills is the paginated, filtered fetch that backs the /bills
+// page. Returns the page of matching rows + total count + facet
+// summary; the caller renders pagination from total/limit/offset.
+export async function searchBills(filters: BillSearchFilters): Promise<BillSearchResult> {
+  const params = new URLSearchParams();
+  if (filters.q) params.set("q", filters.q);
+  if (filters.prefix) params.set("prefix", filters.prefix);
+  if (filters.chamber) params.set("chamber", filters.chamber);
+  if (filters.party) params.set("party", filters.party);
+  if (filters.status) params.set("status", filters.status);
+  const limit = filters.limit ?? 50;
+  params.set("limit", String(limit));
+  const page = Math.max(1, filters.page ?? 1);
+  const offset = (page - 1) * limit;
+  if (offset > 0) params.set("offset", String(offset));
+
+  const url = `${API_BASE}/api/v1/bills?${params.toString()}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`searchBills: ${url} returned ${res.status}`);
+  }
+  const body = (await res.json()) as billsResponse;
+  return {
+    bills: body.bills.map(mapBillItem),
+    total: body.total,
+    limit: body.limit,
+    offset: body.offset,
+    facets: {
+      prefixes: body.facets.Prefixes ?? [],
+      chambers: body.facets.Chambers ?? [],
+      parties: body.facets.Parties ?? [],
+      statuses: body.facets.Statuses ?? [],
+    },
+  };
 }
 
 type hearingResponseItem = {

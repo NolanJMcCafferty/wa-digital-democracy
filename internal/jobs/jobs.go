@@ -4,7 +4,7 @@
 //
 // Steps:
 //
-//  1. IngestBill            LWS bundle → bill, legislator, bill_sponsor, status timeline
+//  1. IngestBill            LWS bundle → bill, bill_sponsor, status timeline
 //  2. EnrichSchedules       (skipped at runtime when operator provides TVW event ID)
 //  3. IngestCSI              CSI agenda + testifiers → hearing, agenda_item, testifier
 //  4. IngestTVW              Invintus event detail + VTT → tvw_event, transcript_segment

@@ -22,11 +22,13 @@ export default async function HearingPage({
 }) {
   const { csiAgendaItemId } = await params;
   const bundle = await loadHearingBundle(csiAgendaItemId);
-  if (!bundle) notFound();
+  if (!bundle || !bundle.hearing) notFound();
 
+  const hearing = bundle.hearing;
+  const transcript = bundle.transcript ?? {};
   const testified = bundle.testifiers.filter((t) => t.testified).length;
   const registeredOnly = bundle.testifiers.length - testified;
-  const segments = bundle.transcript.segments ?? [];
+  const segments = transcript.segments ?? [];
   const billSlug = bundle.bill.bill_id.replace(/\s+/g, "");
 
   return (
@@ -37,10 +39,10 @@ export default async function HearingPage({
             Hearing brief
           </p>
           <h1 className="text-3xl font-bold tracking-tight text-stone-900">
-            {bundle.hearing.agenda_item_label || bundle.bill.title || bundle.bill.bill_id}
+            {hearing.agenda_item_label || bundle.bill.title || bundle.bill.bill_id}
           </h1>
           <p className="text-stone-600">
-            {bundle.hearing.committee_name} · {formatDateTime(bundle.hearing.meeting_datetime)}
+            {hearing.committee_name} · {formatDateTime(hearing.meeting_datetime)}
           </p>
         </div>
 
@@ -58,9 +60,9 @@ export default async function HearingPage({
           >
             View bill page →
           </Link>
-          {bundle.hearing.tvw_url ? (
+          {hearing.tvw_url ? (
             <a
-              href={bundle.hearing.tvw_url}
+              href={hearing.tvw_url}
               target="_blank"
               rel="noreferrer"
               className="rounded border border-stone-300 bg-white px-3 py-1.5 text-stone-800 hover:bg-stone-50"
@@ -71,7 +73,7 @@ export default async function HearingPage({
         </div>
       </section>
 
-      <HearingCard hearing={bundle.hearing} />
+      <HearingCard hearing={hearing} />
 
       <section aria-labelledby="agenda-heading" className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
         <h2 id="agenda-heading" className="text-xl font-semibold text-stone-900">
@@ -88,7 +90,7 @@ export default async function HearingPage({
             </Link>
           </dd>
           <dt className="text-stone-500">CSI agenda item</dt>
-          <dd className="font-mono text-stone-800">{bundle.hearing.csi_agenda_item_id}</dd>
+          <dd className="font-mono text-stone-800">{hearing.csi_agenda_item_id}</dd>
           <dt className="text-stone-500">Position records</dt>
           <dd className="text-stone-800">
             {bundle.testifiers.length.toLocaleString()} signed in; {testified.toLocaleString()} testified; {registeredOnly.toLocaleString()} registered a position without testifying.
@@ -97,7 +99,7 @@ export default async function HearingPage({
             <>
               <dt className="text-stone-500">Matched transcript window</dt>
               <dd className="text-stone-800 tabular-nums">
-                {formatMS(bundle.transcript.bill_segment_start_ms ?? 0)} – {formatMS(bundle.transcript.bill_segment_end_ms ?? 0)}
+                {formatMS(transcript.bill_segment_start_ms ?? 0)} – {formatMS(transcript.bill_segment_end_ms ?? 0)}
               </dd>
             </>
           ) : null}
@@ -107,8 +109,8 @@ export default async function HearingPage({
       <TestifierTable testifiers={bundle.testifiers} />
 
       <TranscriptSection
-        transcript={bundle.transcript}
-        tvwEventId={bundle.hearing.tvw_event_id ?? ""}
+        transcript={transcript}
+        tvwEventId={hearing.tvw_event_id ?? ""}
       />
 
       <OrganizationsSection organizations={bundle.organizations} />

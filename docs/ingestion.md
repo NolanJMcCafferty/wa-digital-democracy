@@ -60,7 +60,9 @@ enrich.
   `IngestBill` step.
 - `IngestBill` makes 4 LWS SOAP calls per bill:
   - `GetLegislation` → `bill` row + current status snapshot
-  - `GetSponsors` → `legislator` + `bill_sponsor` rows
+  - `GetSponsors` → `bill_sponsor` rows, resolved against the roster
+    loaded by `ingest-legislators`; missing sponsor IDs are warned and
+    skipped
   - `GetLegislativeStatusChangesByBillNumber` → `bill_status_change` rows
   - `GetHearings` → `hearing` rows (one per LWS-reported hearing)
 - Per-bill failure isolation; one bad bill doesn't poison the run.
@@ -139,10 +141,14 @@ hearing on average and finished in ~17 seconds.
   conference happening in the same chamber on the same day).
 - **±15 min CSI meeting window**: tighter than the ±2 hour TVW window
   because CSI publishes meeting times to the minute.
-- **Bill-number regex constrained to real bill prefixes** (HB/SB/HJR/
-  SJR/HCR/SCR/HJM/SJM with optional E/S/2S/3S chrome): rejects
-  non-bill agenda items like `SGA 9280` (gubernatorial appointment)
-  even when the digit pattern matches.
+- **Bill-number regex constrained to ingested legislative prefixes**
+  (HB/SB/HJR/SJR/HCR/SCR/HJM/SJM with optional E/S/2S/3S chrome, plus
+  SGA): rejects unrelated numeric labels while still matching the
+  bill-like rows LWS stores in Postgres.
+- **SGA discovery skip:** gubernatorial appointments are kept as
+  metadata rows, but `discover-hearings` does not process their hearings
+  because CSI does not expose SGA appointments as testimony agenda items
+  in the sign-in data this pipeline ingests.
 
 **Failure modes observed in smoke:**
 
@@ -164,7 +170,11 @@ list-meetings range, not loosen the time window.
   (= CSI's meeting_family_id) and `tvw_event_id` (when found).
 - `agenda_item` rows inserted with the three CSI IDs.
 - A summary at `data/processed/_discovery.json` with per-hearing
-  duration, status (`ok` / `no-tvw` / `failed`), and error.
+  duration, status (`ok` / `no-tvw` / `no-csi-meeting` /
+  `no-agenda-item` / `no-committee` / `failed`), and error.
+  The `no-*` statuses are expected source mismatches and do not make
+  the command exit nonzero; `failed` is reserved for operational errors
+  such as unexpected upstream, parser, or database failures.
 
 **Cost:** dominated by `ListAgendaItems` — typically one call per
 unique CSI meeting in the biennium. Empirically ~few minutes for a
@@ -250,8 +260,8 @@ interact with these tables:
 | Table | Populated by | Notes |
 |---|---|---|
 | `bill` | `IngestBill` | UPSERT on `(biennium, prefix, number)`. Bill prefix is normalized to bare form (`HB`/`SB`/`HJR`/etc.) — engrossment and substitution chrome (`E`/`2S`/`SS`) is stripped at ingest time so a bill doesn't fork into multiple rows as it moves through the legislature. |
-| `legislator` | `IngestBill` | UPSERT on `lws_sponsor_id`. |
-| `bill_sponsor` | `IngestBill` | UPSERT on `(bill_id, legislator_id, sponsor_type)` DO NOTHING. |
+| `legislator` | `ingest-legislators` | UPSERT on `lws_sponsor_id`. This pass owns legislator identity/profile fields. |
+| `bill_sponsor` | `IngestBill` | UPSERT on `(bill_id, legislator_id, sponsor_type)` DO NOTHING. Sponsor IDs missing from the roster are warned and skipped. |
 | `bill_status_change` | `IngestBill` | UPSERT on `(bill_id, action_date, history_line)` DO NOTHING. |
 | `hearing` | `IngestBill` (creates), `Discoverer.Commit` (enriches), `IngestCSI` (touches), `IngestTVW` (sets tvw fields) | Soft-key on `(chamber, committee_name, meeting_datetime)`. UPDATE uses COALESCE so partial enrichment is safe. |
 | `agenda_item` | `Discoverer.Commit` (creates), `IngestCSI` (touches) | UPSERT on `csi_agenda_item_id`. |

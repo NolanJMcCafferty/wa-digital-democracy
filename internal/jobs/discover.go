@@ -50,11 +50,11 @@ type DiscoveryDeps struct {
 type Discoverer struct {
 	deps DiscoveryDeps
 
-	committees      map[string][]csi.Committee // chamber → committees
-	meetings        map[string][]csi.Meeting   // committee_id → meetings
-	agendaItems     map[string][]csi.AgendaItem // meeting_family_id → items
+	committees      map[string][]csi.Committee   // chamber → committees
+	meetings        map[string][]csi.Meeting     // committee_id → meetings
+	agendaItems     map[string][]csi.AgendaItem  // meeting_family_id → items
 	tvwPostsByDay   map[string][]tvw.WPVideoPost // YYYY-MM-DD → posts
-	committeeMisses map[string]bool             // log-once per (chamber|name)
+	committeeMisses map[string]bool              // log-once per (chamber|name)
 }
 
 func NewDiscoverer(deps DiscoveryDeps) *Discoverer {
@@ -71,12 +71,12 @@ func NewDiscoverer(deps DiscoveryDeps) *Discoverer {
 // DiscoveryResult is what one DiscoverOne call produced. Empty fields
 // indicate sub-step misses; the caller decides how strict to be.
 type DiscoveryResult struct {
-	CSICommitteeID       string
-	CSIMeetingFamilyID   string
-	CSIAgendaItemID      string
+	CSICommitteeID        string
+	CSIMeetingFamilyID    string
+	CSIAgendaItemID       string
 	CSIAgendaItemFamilyID string
-	AgendaItemLabel      string
-	TVWEventID           string
+	AgendaItemLabel       string
+	TVWEventID            string
 }
 
 // DiscoverOne walks the four-step lookup for a single hearing and
@@ -235,13 +235,12 @@ func (d *Discoverer) meetingsFor(ctx context.Context, chamber, committeeID strin
 // billNumberInLabel extracts the leading bill number from a CSI agenda
 // item label like "EHB 1501 CIC unit owner inquiries" → 1501.
 //
-// Matches only legitimate bill-type prefixes (HB, SB, HJR, SJR, HCR,
-// SCR, HJM, SJM) with optional engrossment ("E"), Nth-substitute
-// ("2"/"3"), and substitute ("S") chrome. Things like "SGA 9280"
-// (gubernatorial appointment) are deliberately excluded — they're not
-// bills and the operator wouldn't have a bill row to join against.
+// Matches legislative prefixes we ingest into the bill table. Bills and
+// resolutions can carry optional engrossment ("E"), Nth-substitute
+// ("2"/"3"), and substitute ("S") chrome; gubernatorial appointments
+// (SGA) appear without that chrome.
 var billNumberInLabel = regexp.MustCompile(
-	`\b(?:E?[23]?S?(?:HB|SB|HJR|SJR|HCR|SCR|HJM|SJM))\s*(\d{3,5})\b`)
+	`\b(?:E?[23]?S?(?:HB|SB|HJR|SJR|HCR|SCR|HJM|SJM)|SGA)\s*(\d{3,5})\b`)
 
 // matchAgendaItem picks the agenda item on a meeting whose label
 // contains the bill number. Multiple matches → first; none → error.
@@ -377,4 +376,3 @@ func normalizeCommitteeName(s string) string {
 	res := strings.TrimSpace(string(out))
 	return res
 }
-

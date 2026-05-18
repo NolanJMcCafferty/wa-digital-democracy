@@ -97,9 +97,8 @@ type UpsertLegislatorParams struct {
 	OfficialURL  string
 
 	// Optional roster fields populated by ingest-legislators (LWS
-	// SponsorService). IngestBill leaves these empty; the upsert
-	// preserves whatever the roster pass already wrote so the bill
-	// pipeline can't clobber the richer data.
+	// SponsorService). Bill ingestion does not call this upsert; sponsor
+	// joins resolve against roster-owned legislator rows instead.
 	FirstName string
 	LastName  string
 	Email     string
@@ -136,6 +135,19 @@ RETURNING id;`
 		return 0, fmt.Errorf("upsert legislator: %w", err)
 	}
 	return id, nil
+}
+
+func (s *Store) FindLegislatorIDByLWSSponsorID(ctx context.Context, lwsSponsorID string) (int64, bool, error) {
+	const q = `SELECT id FROM legislator WHERE lws_sponsor_id = $1;`
+	var id int64
+	err := s.Pool.QueryRow(ctx, q, lwsSponsorID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("find legislator by lws sponsor id: %w", err)
+	}
+	return id, true, nil
 }
 
 func (s *Store) UpsertBillSponsor(ctx context.Context, billID, legislatorID int64, sponsorType string) error {
@@ -726,40 +738,237 @@ func defaultStr(s, def string) string {
 	return s
 }
 
-// ListedBill is the row shape returned by ListIngestedBills — the fields
-// the bills-index API endpoint surfaces. BillID is the generated column
-// (e.g. "HB 1501") so callers don't have to recompose it.
+// ListedBill is the row shape the bills-index API endpoint surfaces.
+// Lead-sponsor and status fields can be empty when the bill_sponsor /
+// bill_status_change joins miss (rare for ingested bills, but the
+// `Primary` sponsor isn't always populated).
 type ListedBill struct {
-	Biennium string
-	Prefix   string
-	Number   int
-	BillID   string
-	Title    string
+	Biennium      string
+	Prefix        string
+	Number        int
+	BillID        string // generated column, e.g. "HB 1501"
+	Title         string
+	ChamberOrigin string // "House" | "Senate"
+	CurrentStatus string
+	StatusDate    time.Time
+	LeadSponsor   string // legislator.name e.g. "Senator Reed" — empty when no Primary sponsor
+	LeadFirstName string
+	LeadLastName  string
+	LeadParty     string // "D" | "R"
+	LeadSlug      string // computed in API handler; left empty here
+}
+
+// BillSearchParams are the filter knobs SearchBills accepts. Empty
+// strings are no-ops. The handler is responsible for clamping limit
+// and offset to safe ranges.
+type BillSearchParams struct {
+	Query   string // matches title or bill_number (ILIKE)
+	Prefix  string // exact match on bill.prefix (HB, SB, HJR, …)
+	Chamber string // "House" | "Senate"
+	Party   string // "D" | "R" — filters on lead sponsor's party
+	Status  string // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
+	Sponsor string // legislator slug; matches the Primary sponsor only
+	Limit   int
+	Offset  int
+}
+
+// BillSearchFacets carries the distinct values we render in the
+// sidebar so the UI doesn't hard-code lists. Counts here are over the
+// full unfiltered set; the API handler attaches them once per query.
+type BillSearchFacets struct {
+	Prefixes []string // ordered: HB, SB, HJR, SJR, HCR, SCR, HJM, SJM, then alphabetical
+	Chambers []string // House, Senate
+	Parties  []string // D, R, …
+	Statuses []string // in_progress, passed, failed
 }
 
 // ListIngestedBills returns every bill row in stable display order
 // (newest biennium first, then prefix, then number). Filters out the
 // occasional placeholder row with number=0 from broken upserts.
+//
+// Returns the same shape as SearchBills with no filters but no total
+// count — kept for back-compat with callers that don't paginate.
 func (s *Store) ListIngestedBills(ctx context.Context) ([]ListedBill, error) {
-	const q = `
-SELECT biennium, prefix, number, bill_number, COALESCE(title, '')
-  FROM bill
- WHERE number > 0
- ORDER BY biennium DESC, prefix, number;`
-	rows, err := s.Pool.Query(ctx, q)
+	hits, _, err := s.SearchBills(ctx, BillSearchParams{Limit: 100000, Offset: 0})
+	return hits, err
+}
+
+// SearchBills is the paginated, filtered query backing /api/v1/bills.
+// Returns (hits, total, err). total is the count of matches across all
+// pages (not just the page returned), so the frontend can render
+// numbered pagination without a second query.
+func (s *Store) SearchBills(ctx context.Context, p BillSearchParams) ([]ListedBill, int, error) {
+	if p.Limit <= 0 {
+		p.Limit = 50
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+
+	// Build the WHERE fragment dynamically. Push a value once, take its
+	// $N index, use it any number of times in the matching fragment.
+	args := []any{}
+	where := []string{"b.number > 0"}
+	push := func(v any) int {
+		args = append(args, v)
+		return len(args)
+	}
+	if q := strings.TrimSpace(p.Query); q != "" {
+		idx := push(q)
+		where = append(where, fmt.Sprintf(
+			"(b.title ILIKE '%%' || $%d || '%%' OR b.bill_number ILIKE '%%' || $%d || '%%')", idx, idx))
+	}
+	if p.Prefix != "" {
+		idx := push(p.Prefix)
+		where = append(where, fmt.Sprintf("b.prefix = $%d", idx))
+	}
+	if p.Chamber != "" {
+		idx := push(p.Chamber)
+		where = append(where, fmt.Sprintf("b.chamber_origin = $%d", idx))
+	}
+	if p.Party != "" {
+		idx := push(p.Party)
+		where = append(where, fmt.Sprintf("primary_sponsor.party = $%d", idx))
+	}
+	if p.Sponsor != "" {
+		// Sponsor filter not yet wired: bill_sponsor doesn't carry a
+		// stable slug column. The handler ignores this branch for now.
+		_ = push
+	}
+	if p.Status != "" {
+		// Bucket the free-text current_status into the three CalMatters-style
+		// status families. The bucketing is intentionally lossy: the source
+		// field is a one-line legislative history sentence ("Effective date
+		// 6/11/2026.", "By resolution, returned to House Rules Committee for
+		// third reading.", etc.) so we look for keywords.
+		switch p.Status {
+		case "passed":
+			where = append(where, "(b.current_status ILIKE '%effective date%' OR b.current_status ILIKE '%governor signed%' OR b.current_status ILIKE '%chapter %2026 laws%')")
+		case "failed":
+			where = append(where, "(b.current_status ILIKE '%died%' OR b.current_status ILIKE '%vetoed%' OR b.current_status ILIKE '%not passed%')")
+		case "in_progress":
+			// Default bucket — anything that doesn't look passed/failed.
+			where = append(where,
+				"NOT (b.current_status ILIKE '%effective date%' OR b.current_status ILIKE '%governor signed%' OR b.current_status ILIKE '%chapter %2026 laws%' OR b.current_status ILIKE '%died%' OR b.current_status ILIKE '%vetoed%' OR b.current_status ILIKE '%not passed%')")
+		}
+	}
+
+	whereSQL := strings.Join(where, " AND ")
+
+	// One join to the legislator that's the Primary sponsor (DISTINCT
+	// ON keeps it to one row per bill if there are duplicate Primary
+	// rows from re-ingestion).
+	const baseFROM = `
+FROM bill b
+LEFT JOIN LATERAL (
+  SELECT l.name, COALESCE(l.first_name, '') AS first_name,
+         COALESCE(l.last_name, '') AS last_name,
+         COALESCE(l.party, '') AS party,
+         COALESCE(l.lws_sponsor_id, '') AS lws_sponsor_id
+    FROM bill_sponsor bs
+    JOIN legislator l ON l.id = bs.legislator_id
+   WHERE bs.bill_id = b.id AND bs.sponsor_type = 'Primary'
+   ORDER BY l.id
+   LIMIT 1
+) primary_sponsor ON TRUE`
+
+	// Count total matches once (not per page).
+	countQ := "SELECT COUNT(*) " + baseFROM + " WHERE " + whereSQL
+	var total int
+	if err := s.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count bills: %w", err)
+	}
+
+	// Selection page.
+	args = append(args, p.Limit, p.Offset)
+	q := `
+SELECT b.biennium, b.prefix, b.number, b.bill_number,
+       COALESCE(b.title, ''),
+       COALESCE(b.chamber_origin, ''),
+       COALESCE(b.current_status, ''),
+       b.status_date,
+       COALESCE(primary_sponsor.name, ''),
+       COALESCE(primary_sponsor.first_name, ''),
+       COALESCE(primary_sponsor.last_name, ''),
+       COALESCE(primary_sponsor.party, '')
+` + baseFROM + ` WHERE ` + whereSQL + `
+ ORDER BY b.biennium DESC, b.prefix, b.number
+ LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
+	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list bills: %w", err)
+		return nil, 0, fmt.Errorf("search bills: %w", err)
 	}
 	defer rows.Close()
 	out := []ListedBill{}
 	for rows.Next() {
 		var b ListedBill
-		if err := rows.Scan(&b.Biennium, &b.Prefix, &b.Number, &b.BillID, &b.Title); err != nil {
-			return nil, fmt.Errorf("scan listed bill: %w", err)
+		var statusDate pgtype.Date
+		if err := rows.Scan(&b.Biennium, &b.Prefix, &b.Number, &b.BillID, &b.Title,
+			&b.ChamberOrigin, &b.CurrentStatus, &statusDate,
+			&b.LeadSponsor, &b.LeadFirstName, &b.LeadLastName, &b.LeadParty); err != nil {
+			return nil, 0, fmt.Errorf("scan bill: %w", err)
+		}
+		if statusDate.Valid {
+			b.StatusDate = statusDate.Time
 		}
 		out = append(out, b)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// ListBillSearchFacets returns the distinct prefix/chamber/party/status
+// values present in the bill table, for the sidebar facet list.
+func (s *Store) ListBillSearchFacets(ctx context.Context) (BillSearchFacets, error) {
+	var f BillSearchFacets
+
+	// Prefixes — keep only the first 12 to avoid degenerate noise; the
+	// schema allows arbitrary text but in practice WA has ~10 distinct.
+	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT prefix FROM bill WHERE number > 0 AND prefix <> '' ORDER BY prefix`)
+	if err != nil {
+		return f, fmt.Errorf("facets prefix: %w", err)
+	}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Prefixes = append(f.Prefixes, p)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `SELECT DISTINCT chamber_origin FROM bill WHERE chamber_origin IS NOT NULL AND chamber_origin <> '' ORDER BY chamber_origin`)
+	if err != nil {
+		return f, fmt.Errorf("facets chamber: %w", err)
+	}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Chambers = append(f.Chambers, c)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `SELECT DISTINCT party FROM legislator WHERE party IS NOT NULL AND party <> '' ORDER BY party`)
+	if err != nil {
+		return f, fmt.Errorf("facets party: %w", err)
+	}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Parties = append(f.Parties, p)
+	}
+	rows.Close()
+
+	// Statuses are bucketed in SearchBills, not stored. Return the
+	// three buckets as fixed labels.
+	f.Statuses = []string{"in_progress", "passed", "failed"}
+	return f, nil
 }
 
 func nullStringArray(a []string) any {
@@ -1342,7 +1551,10 @@ type HearingForDiscovery struct {
 // ListHearingsForDiscovery returns hearings whose CSI/TVW IDs are still
 // blank for bills in the given biennium. These are the candidates for
 // auto-discovery. Hearings already enriched (have either a TVW event ID
-// or a Committee Schedules agenda ID) are skipped.
+// or a Committee Schedules agenda ID) are skipped. Gubernatorial
+// appointments (SGA) are also skipped: LWS stores them as bill-like rows,
+// but CSI does not expose them as testimony agenda items in the data this
+// pipeline ingests.
 func (s *Store) ListHearingsForDiscovery(ctx context.Context, biennium string) ([]HearingForDiscovery, error) {
 	const q = `
 SELECT h.id, b.id, b.prefix, b.number,
@@ -1353,6 +1565,7 @@ SELECT h.id, b.id, b.prefix, b.number,
  WHERE b.biennium = $1
    AND h.tvw_event_id IS NULL
    AND h.committee_schedule_agenda_id IS NULL
+   AND b.prefix <> 'SGA'
  ORDER BY h.meeting_datetime DESC;`
 	rows, err := s.Pool.Query(ctx, q, biennium)
 	if err != nil {

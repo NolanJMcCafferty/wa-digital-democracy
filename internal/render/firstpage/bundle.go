@@ -16,16 +16,21 @@ import (
 )
 
 // Bundle is the JSON payload Phase 5 renders.
+//
+// Hearing-dependent sections (Hearing, Testifiers, Transcript, Organizations)
+// are pointer/optional because metadata-only ingest (`wa-dd ingest-session`)
+// produces bills without any agenda_item rows. The frontend hides those
+// sections when absent.
 type Bundle struct {
-	GeneratedAt      time.Time      `json:"generated_at"`
-	Bill             Bill           `json:"bill"`
-	Status           Status         `json:"status"`
-	Hearing          Hearing        `json:"hearing"`
-	Testifiers       []Testifier    `json:"testifiers"`
-	Transcript       Transcript     `json:"transcript"`
-	Organizations    []Organization `json:"organizations"`
-	Sources          []Source       `json:"sources"`
-	KnownLimitations []string       `json:"known_limitations,omitempty"`
+	GeneratedAt      time.Time       `json:"generated_at"`
+	Bill             Bill            `json:"bill"`
+	Status           Status          `json:"status"`
+	Hearing          *Hearing        `json:"hearing,omitempty"`
+	Testifiers       []Testifier     `json:"testifiers"`
+	Transcript       *Transcript     `json:"transcript,omitempty"`
+	Organizations    []Organization  `json:"organizations"`
+	Sources          []Source        `json:"sources"`
+	KnownLimitations []string        `json:"known_limitations,omitempty"`
 }
 
 type Bill struct {
@@ -124,6 +129,9 @@ type Source struct {
 }
 
 // Build assembles a Bundle for the configured demo from Postgres state.
+// Requires a CSI agenda item id on the demo — this path is for the curated
+// hearing-bound view. For metadata-only bills (no agenda item), call
+// BuildByBill instead.
 func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bundle, error) {
 	// Initialize collection fields to non-nil empty slices so the bundle's
 	// JSON serializes to [] rather than null when a section has no data —
@@ -158,6 +166,68 @@ func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bu
 	return b, nil
 }
 
+// BuildByBill assembles a Bundle for any bill row in Postgres, regardless of
+// whether it has an associated hearing/agenda_item. The metadata-only
+// ingest-session pass produces these bills, so the bill-detail page must
+// render with just snapshot + status + sponsors when no hearing exists.
+//
+// When a hearing _does_ exist, this falls through to the same loaders as
+// Build by reading the most recent agenda_item for the bill.
+func BuildByBill(
+	ctx context.Context,
+	store *db.Store,
+	biennium, prefix string,
+	number int,
+) (*Bundle, error) {
+	b := &Bundle{
+		GeneratedAt:   time.Now().UTC(),
+		Testifiers:    []Testifier{},
+		Organizations: []Organization{},
+		Sources:       []Source{},
+	}
+
+	demo := &config.SelectedDemo{
+		Biennium:   biennium,
+		BillPrefix: prefix,
+		BillNumber: number,
+	}
+	if err := loadBill(ctx, store, demo, b); err != nil {
+		if errors.Is(err, ErrBillNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("bill: %w", err)
+	}
+
+	hearingDemo, err := LookupSelectedDemo(ctx, store, biennium, prefix, number)
+	if err != nil {
+		if !errors.Is(err, ErrBillNotFound) {
+			return nil, fmt.Errorf("hearing lookup: %w", err)
+		}
+		// No hearing yet — leave hearing/testifiers/transcript/orgs empty.
+		b.KnownLimitations = computeLimitations(b)
+		return b, nil
+	}
+
+	if err := loadHearingAndAgenda(ctx, store, hearingDemo, b); err != nil {
+		return nil, fmt.Errorf("hearing: %w", err)
+	}
+	if err := loadTestifiers(ctx, store, hearingDemo, b); err != nil {
+		return nil, fmt.Errorf("testifiers: %w", err)
+	}
+	if err := loadTranscript(ctx, store, hearingDemo, b); err != nil {
+		return nil, fmt.Errorf("transcript: %w", err)
+	}
+	if err := loadOrganizations(ctx, store, hearingDemo, b); err != nil {
+		return nil, fmt.Errorf("organizations: %w", err)
+	}
+	if err := loadSources(ctx, store, b); err != nil {
+		return nil, fmt.Errorf("sources: %w", err)
+	}
+
+	b.KnownLimitations = computeLimitations(b)
+	return b, nil
+}
+
 func loadBill(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
 	const q = `
 SELECT id, biennium, bill_number, title, description, chamber_origin,
@@ -178,7 +248,7 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		&currentStatus, &statusDate, &officialURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("no bill row for %s in %s — did ingest-bill run?", demo.BillID(), demo.Biennium)
+		return fmt.Errorf("%w: %s in %s", ErrBillNotFound, demo.BillID(), demo.Biennium)
 	}
 	if err != nil {
 		return err
@@ -263,7 +333,7 @@ SELECT h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
 	if err != nil {
 		return err
 	}
-	b.Hearing = Hearing{
+	b.Hearing = &Hearing{
 		CommitteeName:     commName,
 		CommitteeAcronym:  deref(commAcronym),
 		Chamber:           chamber,
@@ -336,6 +406,7 @@ SELECT te.caption_url,
 	if err != nil {
 		return err
 	}
+	b.Transcript = &Transcript{}
 	b.Transcript.CaptionURL = deref(captionURL)
 	if startMS != nil {
 		b.Transcript.BillSegmentStart = *startMS
@@ -477,7 +548,7 @@ SELECT context_type, source_dataset_id, summary_fields, source_url, match_confid
 // Per the wiki: "every public fact needs provenance" — the source panel
 // is part of the product, not engineering metadata.
 func loadSources(ctx context.Context, store *db.Store, b *Bundle) error {
-	if b.Hearing.CSIAgendaItemID == "" {
+	if b.Hearing == nil || b.Hearing.CSIAgendaItemID == "" {
 		return nil
 	}
 	const q = `
@@ -522,11 +593,15 @@ func computeLimitations(b *Bundle) []string {
 	if len(b.Status.Timeline) == 0 {
 		out = append(out, "Status timeline not available — LWS may have returned no history changes.")
 	}
+	if b.Hearing == nil {
+		out = append(out, "No hearing has been ingested for this bill yet.")
+		return out
+	}
 	if b.Hearing.TVWEventID == "" {
 		out = append(out, "TVW event not linked to this hearing.")
 	}
-	if len(b.Transcript.Segments) == 0 {
-		if b.Transcript.CaptionURL == "" {
+	if b.Transcript == nil || len(b.Transcript.Segments) == 0 {
+		if b.Transcript == nil || b.Transcript.CaptionURL == "" {
 			out = append(out, "No captions available for this hearing's TVW event.")
 		} else {
 			out = append(out, "No transcript segments matched this bill discussion (manual transcript_override may help).")

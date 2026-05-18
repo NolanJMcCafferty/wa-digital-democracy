@@ -12,8 +12,9 @@ import (
 )
 
 // IngestBill fetches the LWS bill bundle for the demo bill, persists raw
-// XML via the RawSink, and upserts bill / legislator / bill_sponsor /
-// bill_status_change.
+// XML via the RawSink, and upserts bill / bill_sponsor /
+// bill_status_change. Legislator rows are owned by ingest-legislators;
+// sponsor joins resolve against that roster and skip missing members.
 func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	biennium := p.Demo.Biennium
 	billNumber := strconv.Itoa(p.Demo.BillNumber)
@@ -53,8 +54,9 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	}
 	ids.BillID = id
 
-	// 2. GetSponsors → legislator + bill_sponsor.
-	body, srSp, err := lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetSponsors", map[string]string{
+	// 2. GetSponsors → bill_sponsor. The legislator table is owned by
+	// ingest-legislators, so missing sponsor IDs are warning-only skips.
+	body, _, err = lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetSponsors", map[string]string{
 		"biennium": biennium,
 		"billId":   billID,
 	})
@@ -65,19 +67,24 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	if err != nil {
 		return err
 	}
-	for _, s := range sps {
-		legID, err := p.Store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
-			LWSSponsorID: s.ID,
-			Name:         s.LongName,
-			Chamber:      s.Agency,
-		})
+	missingSponsors := 0
+	for _, s := range lws.NormalizeSponsors(sps) {
+		legID, ok, err := p.Store.FindLegislatorIDByLWSSponsorID(ctx, s.LWSSponsorID)
 		if err != nil {
 			return err
 		}
-		_ = srSp // referenced only for lint
-		if err := p.Store.UpsertBillSponsor(ctx, ids.BillID, legID, s.Type); err != nil {
+		if !ok {
+			missingSponsors++
+			fmt.Fprintf(stderrSink, "  warn: %s sponsor %s %q missing from legislator roster; skipping bill_sponsor\n",
+				billID, s.LWSSponsorID, s.LongName)
+			continue
+		}
+		if err := p.Store.UpsertBillSponsor(ctx, ids.BillID, legID, s.SponsorType); err != nil {
 			return err
 		}
+	}
+	if missingSponsors > 0 {
+		fmt.Fprintf(stderrSink, "  warn: %s skipped %d sponsor(s) missing from legislator roster\n", billID, missingSponsors)
 	}
 
 	// 3. GetLegislativeStatusChangesByBillNumber → status timeline.

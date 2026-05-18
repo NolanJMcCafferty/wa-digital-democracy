@@ -10,7 +10,7 @@ func TestStripChamberPrefix(t *testing.T) {
 		{"House", "House Housing", "Housing"},
 		{"Senate", "Senate Ways & Means", "Ways & Means"},
 		{"Joint", "Joint Transportation", "Transportation"},
-		{"Senate", "Housing", "Housing"}, // already bare
+		{"Senate", "Housing", "Housing"},       // already bare
 		{"House", "Senate Housing", "Housing"}, // wrong chamber prefix still stripped
 		{"Senate", "", ""},
 	}
@@ -51,7 +51,7 @@ func TestBillNumberInLabel(t *testing.T) {
 		{"ESSB 6054 Wildfire home hardening/CICs", "6054"},
 		{"SB 6200 Tenant cooling devices", "6200"},
 		{"SHB 2354 Common interest communities", "2354"},
-		{"SGA 9280 AARON T. MCGRATH", ""}, // SGA has no leading bill prefix matching our pattern; want empty.
+		{"SGA 9280 AARON T. MCGRATH", "9280"},
 		{"Just words", ""},
 	}
 	for _, c := range cases {

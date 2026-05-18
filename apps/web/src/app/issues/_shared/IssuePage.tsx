@@ -35,7 +35,7 @@ export async function IssuePage({ config }: { config: IssuePageConfig }) {
       acc.bills += 1;
       acc.testifiers += b.testifiers.length;
       acc.testified += b.testifiers.filter((t) => t.testified).length;
-      acc.transcriptSegments += b.transcript.segments?.length ?? 0;
+      acc.transcriptSegments += b.transcript?.segments?.length ?? 0;
       acc.organizations += b.organizations.length;
       acc.sources += b.sources.length;
       for (const t of b.testifiers) acc.positions[t.position] += 1;
@@ -138,10 +138,10 @@ export async function IssuePage({ config }: { config: IssuePageConfig }) {
                           {b.status.current ?? "Status unavailable"}
                         </p>
                         <p className="text-xs text-stone-500">
-                          {b.testifiers.length.toLocaleString()} sign-ins · {b.transcript.segments?.length ?? 0} transcript excerpts · {b.sources.length} sources
+                          {b.testifiers.length.toLocaleString()} sign-ins · {b.transcript?.segments?.length ?? 0} transcript excerpts · {b.sources.length} sources
                         </p>
                       </div>
-                      {b.hearing.csi_agenda_item_id ? (
+                      {b.hearing?.csi_agenda_item_id ? (
                         <Link
                           href={`/hearings/${b.hearing.csi_agenda_item_id}`}
                           className="text-sm text-blue-700 underline hover:text-blue-900"
@@ -221,8 +221,8 @@ function bundleMatchesIssue(bundle: Bundle, config: IssuePageConfig): boolean {
     bundle.bill.bill_id,
     bundle.bill.title,
     bundle.bill.description,
-    bundle.hearing.agenda_item_label,
-    bundle.hearing.committee_name,
+    bundle.hearing?.agenda_item_label,
+    bundle.hearing?.committee_name,
     ...bundle.organizations.map((o) => o.canonical_name),
   ]
     .filter(Boolean)

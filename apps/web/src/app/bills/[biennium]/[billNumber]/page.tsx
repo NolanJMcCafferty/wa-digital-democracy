@@ -29,32 +29,25 @@ export default async function BillHearingPage({
   const bundle = await loadBundle(biennium, parsed.prefix, parsed.number);
   if (!bundle) notFound();
 
+  const hearing = bundle.hearing;
   return (
     <article className="space-y-12">
-      {/* Section 1 + 2: bill snapshot + plain-English summary share a card. */}
       <BillSnapshot bill={bundle.bill} />
 
-      {/* Section 3: status timeline. */}
       <StatusTimeline status={bundle.status} />
 
-      {/* Section 4: hearing card. */}
-      <HearingCard hearing={bundle.hearing} />
+      {hearing ? (
+        <>
+          <HearingCard hearing={hearing} />
+          <TestifierTable testifiers={bundle.testifiers} />
+          <TranscriptSection
+            transcript={bundle.transcript ?? {}}
+            tvwEventId={hearing.tvw_event_id ?? ""}
+          />
+          <OrganizationsSection organizations={bundle.organizations} />
+        </>
+      ) : null}
 
-      {/* Section 5: "What happened?" — for v1 we lean on the transcript section. */}
-
-      {/* Section 6: testifier list grouped Pro/Con/Other. */}
-      <TestifierTable testifiers={bundle.testifiers} />
-
-      {/* Section 7: transcript excerpts with TVW deep links. */}
-      <TranscriptSection
-        transcript={bundle.transcript}
-        tvwEventId={bundle.hearing.tvw_event_id ?? ""}
-      />
-
-      {/* Section 8 + 9: organizations + money/lobbying context. */}
-      <OrganizationsSection organizations={bundle.organizations} />
-
-      {/* Section 10: source + confidence panel. Always last. */}
       <SourcePanel
         sources={bundle.sources}
         knownLimitations={bundle.known_limitations}

@@ -5,9 +5,12 @@ export type Bundle = {
   generated_at: string;
   bill: Bill;
   status: Status;
-  hearing: Hearing;
+  // Hearing-dependent sections are absent for metadata-only bills (every
+  // bill ingested via `wa-dd ingest-session` without a curated hearing
+  // mapping). The bill-detail page hides these when undefined.
+  hearing?: Hearing;
   testifiers: Testifier[];
-  transcript: Transcript;
+  transcript?: Transcript;
   organizations: Organization[];
   sources: Source[];
   known_limitations?: string[];
