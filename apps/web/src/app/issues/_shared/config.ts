@@ -1,6 +1,39 @@
 import type { IssuePageConfig } from "./IssuePage";
 
 export const ISSUE_PAGE_CONFIGS = [
+
+  {
+    slug: "health",
+    title: "Health",
+    description:
+      "A first issue-level view over Washington health legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for public health, health care access, insurance, behavioral health, hospitals, long-term care, workforce, Medicaid, and health accountability data.",
+    emptyLabel: "health",
+    keywords: [
+      "health",
+      "health care",
+      "healthcare",
+      "public health",
+      "hospital",
+      "hospitals",
+      "insurance",
+      "medicaid",
+      "behavioral health",
+      "mental health",
+      "substance use",
+      "long-term care",
+      "nursing",
+      "provider",
+      "providers",
+      "prescription drugs",
+      "pharmacy",
+      "reproductive health",
+      "department of health",
+      "doh",
+      "health care authority",
+      "hca",
+      "dshs",
+    ],
+  },
   {
     slug: "housing",
     title: "Housing",
