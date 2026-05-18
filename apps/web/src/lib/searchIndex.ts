@@ -1,0 +1,93 @@
+import "server-only";
+
+import type { Bundle } from "./bundle";
+import {
+  listHearingBundles,
+  listLegislatorBundles,
+  listLocalBundles,
+  listOrganizationBundles,
+  loadBundle,
+} from "./loadBundle";
+
+export type SearchResult = {
+  type: "Bill" | "Hearing" | "Organization" | "Legislator";
+  title: string;
+  subtitle: string;
+  href: string;
+  searchText: string;
+};
+
+export async function buildSearchIndex(): Promise<SearchResult[]> {
+  const [bundles, hearings, organizations, legislators] = await Promise.all([
+    listLocalBundles(),
+    listHearingBundles(),
+    listOrganizationBundles(),
+    listLegislatorBundles(),
+  ]);
+  const loadedBundles = (
+    await Promise.all(
+      bundles.map((b) => loadBundle(b.biennium, b.billPrefix, b.billNumber))
+    )
+  ).filter((b): b is Bundle => Boolean(b));
+
+  return [
+    ...loadedBundles.map((b) =>
+      withSearchText({
+        type: "Bill" as const,
+        title: `${b.bill.bill_id} — ${b.bill.title ?? "Untitled bill"}`,
+        subtitle: `${b.bill.biennium} · ${b.status.current ?? "Status unavailable"}`,
+        href: `/bills/${b.bill.biennium}/${b.bill.bill_id.replace(/\s+/g, "")}`,
+        keywords: `${b.bill.description ?? ""} ${(b.bill.sponsors ?? [])
+          .map((s) => s.name)
+          .join(" ")}`,
+      })
+    ),
+    ...hearings.map((h) =>
+      withSearchText({
+        type: "Hearing" as const,
+        title: h.title,
+        subtitle: `${h.committeeName} · ${h.billId}`,
+        href: `/hearings/${h.csiAgendaItemId}`,
+        keywords: `${h.meetingDatetime} CSI ${h.csiAgendaItemId}`,
+      })
+    ),
+    ...organizations.map((o) =>
+      withSearchText({
+        type: "Organization" as const,
+        title: o.canonicalName,
+        subtitle: `${o.testifierCount.toLocaleString()} linked testifier${
+          o.testifierCount === 1 ? "" : "s"
+        } · ${o.contextCount.toLocaleString()} context record${
+          o.contextCount === 1 ? "" : "s"
+        }`,
+        href: `/organizations/${o.slug}`,
+        keywords: `${o.aliases.join(" ")} ${o.matchNotes ?? ""}`,
+      })
+    ),
+    ...legislators.map((l) =>
+      withSearchText({
+        type: "Legislator" as const,
+        title: l.name,
+        subtitle: `${l.chamber ?? "Chamber unknown"} · ${l.appearances.length.toLocaleString()} sponsored bill${
+          l.appearances.length === 1 ? "" : "s"
+        }`,
+        href: `/legislators/${l.slug}`,
+        keywords: l.appearances
+          .map((a) => `${a.billId} ${a.billTitle ?? ""} ${a.sponsorType ?? ""}`)
+          .join(" "),
+      })
+    ),
+  ];
+}
+
+function withSearchText(
+  result: Omit<SearchResult, "searchText"> & { keywords: string }
+): SearchResult {
+  return {
+    type: result.type,
+    title: result.title,
+    subtitle: result.subtitle,
+    href: result.href,
+    searchText: `${result.title} ${result.subtitle} ${result.keywords}`.toLowerCase(),
+  };
+}

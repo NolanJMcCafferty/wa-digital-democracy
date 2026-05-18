@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { SearchBox } from "./SearchBox";
+import { buildSearchIndex } from "@/lib/searchIndex";
 import {
   listHearingBundles,
   listLegislatorBundles,
@@ -16,11 +18,12 @@ const ISSUE_PAGES = [
 ];
 
 export default async function HomePage() {
-  const [bundles, hearings, organizations, legislators] = await Promise.all([
+  const [bundles, hearings, organizations, legislators, searchResults] = await Promise.all([
     listLocalBundles(),
     listHearingBundles(),
     listOrganizationBundles(),
     listLegislatorBundles(),
+    buildSearchIndex(),
   ]);
   return (
     <div className="space-y-8">
@@ -35,6 +38,8 @@ export default async function HomePage() {
           from live LWS, CSI, TVW/Invintus, and PDC data.
         </p>
       </div>
+
+      <SearchBox results={searchResults} />
 
       <section aria-labelledby="issues-heading" className="space-y-3">
         <div className="flex items-baseline justify-between gap-4">
