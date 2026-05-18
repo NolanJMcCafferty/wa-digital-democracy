@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { listHearingBundles, listLocalBundles } from "@/lib/loadBundle";
+import {
+  listHearingBundles,
+  listLocalBundles,
+  listOrganizationBundles,
+} from "@/lib/loadBundle";
 
 const ISSUE_PAGES = [
   {
@@ -11,9 +15,10 @@ const ISSUE_PAGES = [
 ];
 
 export default async function HomePage() {
-  const [bundles, hearings] = await Promise.all([
+  const [bundles, hearings, organizations] = await Promise.all([
     listLocalBundles(),
     listHearingBundles(),
+    listOrganizationBundles(),
   ]);
   return (
     <div className="space-y-8">
@@ -60,6 +65,26 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
+
+      {organizations.length > 0 ? (
+        <div className="rounded border border-stone-300 bg-white p-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-stone-900">Organizations</h2>
+              <p className="text-sm text-stone-600">
+                Browse reviewed organization matches and their source-linked
+                public-record context.
+              </p>
+            </div>
+            <Link
+              href="/organizations"
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+            >
+              View organizations →
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       {hearings.length > 0 ? (
         <div className="rounded border border-stone-300 bg-white p-4">

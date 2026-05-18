@@ -1,5 +1,7 @@
+import Link from "next/link";
 import type { Organization, OrgContext } from "@/lib/bundle";
 import { confidenceLabel } from "@/lib/format";
+import { slugify } from "@/lib/loadBundle";
 
 export function OrganizationsSection({
   organizations,
@@ -30,7 +32,12 @@ export function OrganizationsSection({
             >
               <div className="mb-2 flex items-baseline justify-between gap-3">
                 <h3 className="text-lg font-semibold text-stone-900">
-                  {o.canonical_name}
+                  <Link
+                    href={`/organizations/${slugify(o.canonical_name)}`}
+                    className="text-blue-700 underline hover:text-blue-900"
+                  >
+                    {o.canonical_name}
+                  </Link>
                 </h3>
                 <span className="text-xs uppercase tracking-wider text-stone-500">
                   {confidenceLabel(o.match_confidence)}

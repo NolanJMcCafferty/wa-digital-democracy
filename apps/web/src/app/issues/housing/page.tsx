@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { listHearingBundles, listLocalBundles, loadBundle } from "@/lib/loadBundle";
+import {
+  listHearingBundles,
+  listLocalBundles,
+  loadBundle,
+  slugify,
+} from "@/lib/loadBundle";
 import { formatDateTime } from "@/lib/format";
 import type { Bundle, Position } from "@/lib/bundle";
 
@@ -187,7 +192,12 @@ export default async function HousingIssuePage() {
               <ul className="space-y-3 text-sm">
                 {Array.from(orgs.entries()).map(([name, o]) => (
                   <li key={name} className="rounded border border-stone-200 bg-stone-50 p-3">
-                    <div className="font-medium text-stone-900">{name}</div>
+                    <Link
+                      href={`/organizations/${slugify(name)}`}
+                      className="font-medium text-blue-700 underline hover:text-blue-900"
+                    >
+                      {name}
+                    </Link>
                     <div className="mt-1 text-stone-600">
                       {o.count.toLocaleString()} linked testifier{o.count === 1 ? "" : "s"} · {o.contexts.toLocaleString()} PDC context record{o.contexts === 1 ? "" : "s"} · {o.confidence}
                     </div>
