@@ -9,7 +9,7 @@ type NormalizedTestifier struct {
 	RawOrganization     string
 	Position            string // canonical "Pro" | "Con" | "Other" | "Unknown"
 	Testified           bool
-	TimeSignedIn        any // time.Time or zero — left as any to play nice with sqlc-generated NULL types
+	TimeSignedIn        any // time.Time or zero
 }
 
 // Normalize maps a Testifier into the DB's NormalizedTestifier shape. The

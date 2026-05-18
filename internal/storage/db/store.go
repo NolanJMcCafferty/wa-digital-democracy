@@ -4,8 +4,6 @@
 // InsertSourceRecord helper, and a RawSink adapter that bridges
 // httpx.RawFetch -> object storage + source_record row.
 //
-// Once schemas stabilize we will introduce sqlc-generated query bindings
-// under this same package.
 package db
 
 import (

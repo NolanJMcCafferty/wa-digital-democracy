@@ -1,5 +1,5 @@
 // Package jobs implements the eight build-pipeline steps from the Blueprint
-// (lines 551–712). Each step is idempotent and uses sqlc-style upserts so
+// (lines 551–712). Each step is idempotent and uses idempotent upserts so
 // re-running build-bundle for the same demo converges to the same DB state.
 //
 // Steps:

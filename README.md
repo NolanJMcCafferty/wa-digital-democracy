@@ -10,7 +10,7 @@ This repo is the implementation of the MVP defined in
 
 Per `~/Documents/v1/wiki/politics/Washington Digital Democracy - Recommended Tech Stack.md`:
 
-- **Backend / ingestion:** Go (`net/http` + `chi`, `pgx`, `sqlc`, `goose`).
+- **Backend / ingestion:** Go (`net/http` + `chi`, `pgx`, `goose`).
 - **Frontend:** Next.js + React + TypeScript + Tailwind + shadcn-style components.
 - **Database:** Postgres (+ PostGIS later) with JSONB and `pg_trgm`.
 - **Raw storage:** local filesystem under `data/raw/` for prototype; S3/R2 in production.
@@ -127,7 +127,6 @@ internal/
                           # pgx wrapper, source_record helpers, filesystem object store
 db/
   migrations/             # goose-style SQL migrations
-  queries/                # sqlc query files
 config/
   issue_keywords.yml
   selected_demo.yml       # operator-edited; pins the bill/hearing rendered
