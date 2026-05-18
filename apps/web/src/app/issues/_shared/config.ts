@@ -22,6 +22,31 @@ export const ISSUE_PAGE_CONFIGS = [
     ],
   },
 
+
+  {
+    slug: "climate",
+    title: "Climate",
+    description:
+      "A first issue-level view over Washington climate legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for emissions, clean energy, environmental justice, climate resilience, carbon markets, and agency accountability data.",
+    emptyLabel: "climate",
+    keywords: [
+      "climate",
+      "emissions",
+      "greenhouse gas",
+      "clean energy",
+      "renewable",
+      "carbon",
+      "cap-and-invest",
+      "climate commitment act",
+      "environmental justice",
+      "resilience",
+      "wildfire",
+      "drought",
+      "ev",
+      "electric vehicle",
+      "energy efficiency",
+    ],
+  },
   {
     slug: "education",
     title: "Education",
