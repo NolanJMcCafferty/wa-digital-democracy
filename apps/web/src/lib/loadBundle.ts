@@ -1,7 +1,7 @@
 import "server-only";
 import { promises as fs } from "fs";
 import path from "path";
-import type { Bundle, OrgContext, Organization, Position } from "./bundle";
+import type { Bundle, OrgContext, Organization, Position, Sponsor } from "./bundle";
 
 // Bundle filenames are produced by Go: data/processed/bundles/wa_<biennium>_<prefix><number>.json
 // Example: data/processed/bundles/wa_2025-26_HB1501.json
@@ -21,6 +21,23 @@ export type HearingBundleEntry = BundleListEntry & {
   committeeName: string;
   meetingDatetime: string;
   billId: string;
+};
+
+export type LegislatorBundleEntry = {
+  slug: string;
+  name: string;
+  chamber?: string;
+  appearances: Array<{
+    biennium: string;
+    billId: string;
+    billPrefix: string;
+    billNumber: number;
+    billTitle?: string;
+    sponsorType?: string;
+    hearingTitle?: string;
+    csiAgendaItemId?: string;
+    meetingDatetime?: string;
+  }>;
 };
 
 export type OrganizationBundleEntry = {
@@ -101,6 +118,47 @@ export async function loadHearingBundle(csiAgendaItemId: string): Promise<Bundle
     }
   }
   return null;
+}
+
+export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> {
+  const entries = await listLocalBundles();
+  const legislators = new Map<string, LegislatorBundleEntry>();
+  for (const entry of entries) {
+    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
+    if (!bundle) continue;
+    for (const sponsor of bundle.bill.sponsors ?? []) {
+      const slug = slugify(sponsor.name);
+      const existing = legislators.get(slug) ?? {
+        slug,
+        name: sponsor.name,
+        chamber: sponsor.chamber,
+        appearances: [],
+      };
+      if (!existing.chamber && sponsor.chamber) existing.chamber = sponsor.chamber;
+      existing.appearances.push({
+        biennium: bundle.bill.biennium,
+        billId: bundle.bill.bill_id,
+        billPrefix: entry.billPrefix,
+        billNumber: entry.billNumber,
+        billTitle: bundle.bill.title,
+        sponsorType: sponsor.sponsor_type,
+        hearingTitle: bundle.hearing.agenda_item_label,
+        csiAgendaItemId: bundle.hearing.csi_agenda_item_id,
+        meetingDatetime: bundle.hearing.meeting_datetime,
+      });
+      legislators.set(slug, existing);
+    }
+  }
+  return Array.from(legislators.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function loadLegislatorBundle(slug: string): Promise<LegislatorBundleEntry | null> {
+  const legislators = await listLegislatorBundles();
+  return legislators.find((l) => l.slug === slug) ?? null;
+}
+
+export function legislatorSlug(s: Sponsor): string {
+  return slugify(s.name);
 }
 
 export async function listOrganizationBundles(): Promise<OrganizationBundleEntry[]> {

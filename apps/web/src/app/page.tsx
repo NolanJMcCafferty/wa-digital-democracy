@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   listHearingBundles,
+  listLegislatorBundles,
   listLocalBundles,
   listOrganizationBundles,
 } from "@/lib/loadBundle";
@@ -15,10 +16,11 @@ const ISSUE_PAGES = [
 ];
 
 export default async function HomePage() {
-  const [bundles, hearings, organizations] = await Promise.all([
+  const [bundles, hearings, organizations, legislators] = await Promise.all([
     listLocalBundles(),
     listHearingBundles(),
     listOrganizationBundles(),
+    listLegislatorBundles(),
   ]);
   return (
     <div className="space-y-8">
@@ -81,6 +83,26 @@ export default async function HomePage() {
               className="text-sm text-blue-700 underline hover:text-blue-900"
             >
               View organizations →
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {legislators.length > 0 ? (
+        <div className="rounded border border-stone-300 bg-white p-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-stone-900">Legislators</h2>
+              <p className="text-sm text-stone-600">
+                Browse sponsor pages generated from LWS sponsor records in the
+                local bill bundles.
+              </p>
+            </div>
+            <Link
+              href="/legislators"
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+            >
+              View legislators →
             </Link>
           </div>
         </div>

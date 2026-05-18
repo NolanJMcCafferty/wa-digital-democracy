@@ -1,4 +1,6 @@
+import Link from "next/link";
 import type { Bill } from "@/lib/bundle";
+import { legislatorSlug } from "@/lib/loadBundle";
 
 export function BillSnapshot({ bill }: { bill: Bill }) {
   return (
@@ -29,7 +31,12 @@ export function BillSnapshot({ bill }: { bill: Bill }) {
           <span className="font-medium text-stone-700">Sponsors:</span>
           {bill.sponsors.map((s) => (
             <span key={`${s.name}-${s.sponsor_type}`}>
-              {s.name}
+              <Link
+                href={`/legislators/${legislatorSlug(s)}`}
+                className="text-blue-700 underline hover:text-blue-900"
+              >
+                {s.name}
+              </Link>
               {s.sponsor_type === "Primary" ? (
                 <span className="ml-1 inline-block rounded bg-stone-200 px-1.5 py-0.5 text-xs font-medium uppercase tracking-wider text-stone-700">
                   Primary
