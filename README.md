@@ -36,6 +36,7 @@ make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
 make psql                   # open a shell against the local DB
 make db-docs                # generate SchemaSpy HTML docs for the local schema
+make analytics              # start optional Metabase analytics UI on :3001
 make api                    # run the HTTP API the Next.js frontend reads from (:8080)
 ```
 
@@ -69,6 +70,17 @@ make db-docs
 Open `docs/db/schemaspy/index.html` after generation. The generated HTML is
 ignored by git; the committed config lives in `docs/db/schemaspy.properties`.
 Use `make db-docs-open` to generate and open the docs in the default browser.
+
+### Local analytics
+
+Start the optional Metabase analytics UI:
+
+```sh
+make analytics
+```
+
+Then open `http://localhost:3001`. See `docs/metabase.md` for first-run setup
+and starter dashboard ideas.
 
 ## Daily batch
 

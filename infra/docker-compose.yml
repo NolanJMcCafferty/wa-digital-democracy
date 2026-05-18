@@ -6,10 +6,13 @@
 # Stop:        docker compose -f infra/docker-compose.yml down
 # Wipe data:   docker compose -f infra/docker-compose.yml down -v
 #
-# The api/web services are placeholders: they expect binaries built from
-# cmd/wa-dd-api/ and apps/web/ respectively. For now bring up only postgres:
+# Bring up Postgres only:
 #
 #   docker compose -f infra/docker-compose.yml up -d postgres
+#
+# Bring up optional local BI/analytics tooling:
+#
+#   docker compose -f infra/docker-compose.yml --profile analytics up -d metabase
 
 services:
   postgres:
@@ -29,5 +32,35 @@ services:
       timeout: 5s
       retries: 5
 
+  metabase:
+    image: metabase/metabase:v0.60.x
+    container_name: wa-dd-metabase
+    profiles: ["analytics"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Use the same local Postgres instance for Metabase application metadata.
+      # For this prototype/dev stack, Metabase creates its own schema in wa_dd.
+      # Do not use this layout for production.
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: wa_dd
+      MB_DB_PORT: 5432
+      MB_DB_USER: wadd
+      MB_DB_PASS: wadd
+      MB_DB_HOST: postgres
+      MB_DB_SCHEMA: metabase
+      JAVA_TIMEZONE: America/Los_Angeles
+    ports:
+      - "3001:3000"
+    volumes:
+      - metabase_plugins:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres_data:
+  metabase_plugins:

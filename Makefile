@@ -15,7 +15,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -31,6 +31,14 @@ nuke:         ## Stop containers AND wipe volumes
 
 ps:           ## Show service status
 	$(COMPOSE) ps
+
+analytics:    ## Start optional local Metabase analytics UI on :3001
+	$(COMPOSE) --profile analytics up -d metabase
+
+metabase: analytics ## Alias for analytics
+
+metabase-open: analytics ## Start Metabase and open it in the default browser
+	@xdg-open http://localhost:3001 >/dev/null 2>&1 || echo "Open http://localhost:3001"
 
 psql:         ## Open psql shell against local Postgres
 	PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd
