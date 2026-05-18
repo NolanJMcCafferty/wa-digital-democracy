@@ -133,19 +133,19 @@ ON CONFLICT (bill_id, legislator_id, sponsor_type) DO NOTHING;`
 // ---------------------------------------------------------------------------
 
 type UpsertHearingParams struct {
-	BillID                       *int64
-	CommitteeName                string
-	CommitteeAcronym             string
-	Chamber                      string
-	MeetingDateTime              time.Time
-	Location                     string
-	LWSMeetingID                 string
-	CommitteeScheduleAgendaID    string
-	CommitteeScheduleVideoID     string
-	TVWEventID                   string
-	OfficialAgendaURL            string
-	TVWURL                       string
-	SourceRecordID               int64
+	BillID                    *int64
+	CommitteeName             string
+	CommitteeAcronym          string
+	Chamber                   string
+	MeetingDateTime           time.Time
+	Location                  string
+	LWSMeetingID              string
+	CommitteeScheduleAgendaID string
+	CommitteeScheduleVideoID  string
+	TVWEventID                string
+	OfficialAgendaURL         string
+	TVWURL                    string
+	SourceRecordID            int64
 }
 
 // UpsertHearing inserts a hearing; uses (chamber, meeting_datetime,
@@ -208,14 +208,14 @@ WHERE id = $1;`
 }
 
 type UpsertAgendaItemParams struct {
-	HearingID              int64
-	BillID                 *int64
-	Label                  string
-	CSIMeetingFamilyID     string
-	CSIAgendaItemFamilyID  string
-	CSIAgendaItemID        string
-	OrderIndex             int
-	SourceRecordID         int64
+	HearingID             int64
+	BillID                *int64
+	Label                 string
+	CSIMeetingFamilyID    string
+	CSIAgendaItemFamilyID string
+	CSIAgendaItemID       string
+	OrderIndex            int
+	SourceRecordID        int64
 }
 
 // UpsertAgendaItem inserts/updates keyed on csi_agenda_item_id.
@@ -375,14 +375,67 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8::speaker_confidence,$9,$10);`
 // AssignSegmentsToAgendaItem sets agenda_item_id on segments whose start
 // falls within [start_ms, end_ms]. Used by Step 5 (transcript segmentation).
 func (s *Store) AssignSegmentsToAgendaItem(ctx context.Context, tvwEventID string, agendaItemID int64, startMS, endMS int) (int64, error) {
-	const q = `
-UPDATE transcript_segment SET agenda_item_id = $2
- WHERE tvw_event_id = $1 AND start_ms >= $3 AND start_ms <= $4;`
-	tag, err := s.Pool.Exec(ctx, q, tvwEventID, agendaItemID, startMS, endMS)
+	return s.AssignSegmentsToAgendaItemWindows(ctx, tvwEventID, agendaItemID, [][2]int{{startMS, endMS}})
+}
+
+// AssignSegmentsToAgendaItemWindows sets agenda_item_id on segments whose start
+// falls inside any supplied [start_ms, end_ms] window. It clears prior tags for
+// the agenda item in the same TVW event first so re-segmentation is idempotent.
+func (s *Store) AssignSegmentsToAgendaItemWindows(ctx context.Context, tvwEventID string, agendaItemID int64, windows [][2]int) (int64, error) {
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `UPDATE transcript_segment SET agenda_item_id = NULL WHERE tvw_event_id = $1 AND agenda_item_id = $2`, tvwEventID, agendaItemID); err != nil {
+		return 0, err
+	}
+
+	var total int64
+	const q = `
+UPDATE transcript_segment SET agenda_item_id = $2
+ WHERE tvw_event_id = $1 AND start_ms >= $3 AND start_ms <= $4;`
+	for _, w := range windows {
+		if w[1] <= w[0] {
+			continue
+		}
+		tag, err := tx.Exec(ctx, q, tvwEventID, agendaItemID, w[0], w[1])
+		if err != nil {
+			return 0, err
+		}
+		total += tag.RowsAffected()
+	}
+	return total, tx.Commit(ctx)
+}
+
+// TranscriptCue is a minimal transcript segment used by the segmentation step.
+type TranscriptCue struct {
+	StartMS int
+	EndMS   int
+	Text    string
+}
+
+// ListTranscriptCues returns ordered caption cues for a TVW event.
+func (s *Store) ListTranscriptCues(ctx context.Context, tvwEventID string) ([]TranscriptCue, error) {
+	const q = `
+SELECT start_ms, end_ms, text FROM transcript_segment
+ WHERE tvw_event_id = $1
+ ORDER BY start_ms ASC;`
+	rows, err := s.Pool.Query(ctx, q, tvwEventID)
+	if err != nil {
+		return nil, fmt.Errorf("list transcript cues: %w", err)
+	}
+	defer rows.Close()
+	var out []TranscriptCue
+	for rows.Next() {
+		var c TranscriptCue
+		if err := rows.Scan(&c.StartMS, &c.EndMS, &c.Text); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // FindBillNumberMentions returns segment start_ms values where the
@@ -430,12 +483,12 @@ func billMentionPattern(prefix string, number int) string {
 // ---------------------------------------------------------------------------
 
 type UpsertOrganizationParams struct {
-	CanonicalName            string
-	Aliases                  []string
-	PDCLobbyistEmployerID    string
-	PDCCommitteeOrFilerID    string
-	MatchConfidence          string // org_match_confidence enum
-	MatchNotes               string
+	CanonicalName         string
+	Aliases               []string
+	PDCLobbyistEmployerID string
+	PDCCommitteeOrFilerID string
+	MatchConfidence       string // org_match_confidence enum
+	MatchNotes            string
 }
 
 func (s *Store) UpsertOrganization(ctx context.Context, p UpsertOrganizationParams) (int64, error) {
@@ -790,16 +843,16 @@ SELECT o.id, o.canonical_name, o.aliases,
 
 // OrganizationAppearance is one (org, agenda_item) row.
 type OrganizationAppearance struct {
-	Biennium         string
-	BillID           string
-	BillPrefix       string
-	BillNumber       int
-	CSIAgendaItemID  string
-	HearingTitle     string
-	CommitteeName    string
-	MeetingDateTime  time.Time
-	Position         string
-	TestifierCount   int
+	Biennium        string
+	BillID          string
+	BillPrefix      string
+	BillNumber      int
+	CSIAgendaItemID string
+	HearingTitle    string
+	CommitteeName   string
+	MeetingDateTime time.Time
+	Position        string
+	TestifierCount  int
 }
 
 // GetOrganizationAppearances returns every (agenda_item, org) appearance
@@ -1040,7 +1093,7 @@ SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
 // has run on the row).
 type TranscriptSearchHit struct {
 	ID              int64
-	BillID          string    // "HB 1501" — empty when bill join misses
+	BillID          string // "HB 1501" — empty when bill join misses
 	Biennium        string
 	BillPrefix      string
 	BillNumber      int

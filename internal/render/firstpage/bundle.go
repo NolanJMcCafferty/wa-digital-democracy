@@ -17,24 +17,24 @@ import (
 
 // Bundle is the JSON payload Phase 5 renders.
 type Bundle struct {
-	GeneratedAt time.Time `json:"generated_at"`
-	Bill        Bill      `json:"bill"`
-	Status      Status    `json:"status"`
-	Hearing     Hearing   `json:"hearing"`
-	Testifiers  []Testifier `json:"testifiers"`
-	Transcript  Transcript  `json:"transcript"`
-	Organizations []Organization `json:"organizations"`
-	Sources []Source `json:"sources"`
-	KnownLimitations []string `json:"known_limitations,omitempty"`
+	GeneratedAt      time.Time      `json:"generated_at"`
+	Bill             Bill           `json:"bill"`
+	Status           Status         `json:"status"`
+	Hearing          Hearing        `json:"hearing"`
+	Testifiers       []Testifier    `json:"testifiers"`
+	Transcript       Transcript     `json:"transcript"`
+	Organizations    []Organization `json:"organizations"`
+	Sources          []Source       `json:"sources"`
+	KnownLimitations []string       `json:"known_limitations,omitempty"`
 }
 
 type Bill struct {
-	Biennium      string `json:"biennium"`
-	BillID        string `json:"bill_id"`           // "HB 1234"
-	Title         string `json:"title,omitempty"`
-	Description   string `json:"description,omitempty"`
-	ChamberOrigin string `json:"chamber_origin,omitempty"`
-	OfficialURL   string `json:"official_url,omitempty"`
+	Biennium      string    `json:"biennium"`
+	BillID        string    `json:"bill_id"` // "HB 1234"
+	Title         string    `json:"title,omitempty"`
+	Description   string    `json:"description,omitempty"`
+	ChamberOrigin string    `json:"chamber_origin,omitempty"`
+	OfficialURL   string    `json:"official_url,omitempty"`
 	Sponsors      []Sponsor `json:"sponsors,omitempty"`
 }
 
@@ -45,9 +45,9 @@ type Sponsor struct {
 }
 
 type Status struct {
-	Current     string         `json:"current,omitempty"`
-	StatusDate  *time.Time     `json:"status_date,omitempty"`
-	Timeline    []StatusEntry  `json:"timeline,omitempty"`
+	Current    string        `json:"current,omitempty"`
+	StatusDate *time.Time    `json:"status_date,omitempty"`
+	Timeline   []StatusEntry `json:"timeline,omitempty"`
 }
 
 type StatusEntry struct {
@@ -56,32 +56,38 @@ type StatusEntry struct {
 }
 
 type Hearing struct {
-	CommitteeName    string    `json:"committee_name"`
-	CommitteeAcronym string    `json:"committee_acronym,omitempty"`
-	Chamber          string    `json:"chamber"`
-	MeetingDateTime  time.Time `json:"meeting_datetime"`
-	Location         string    `json:"location,omitempty"`
-	OfficialAgendaURL string   `json:"official_agenda_url,omitempty"`
-	TVWURL           string    `json:"tvw_url,omitempty"`
-	TVWEventID       string    `json:"tvw_event_id,omitempty"`
-	AgendaItemLabel  string    `json:"agenda_item_label,omitempty"`
-	CSIAgendaItemID  string    `json:"csi_agenda_item_id,omitempty"`
+	CommitteeName     string    `json:"committee_name"`
+	CommitteeAcronym  string    `json:"committee_acronym,omitempty"`
+	Chamber           string    `json:"chamber"`
+	MeetingDateTime   time.Time `json:"meeting_datetime"`
+	Location          string    `json:"location,omitempty"`
+	OfficialAgendaURL string    `json:"official_agenda_url,omitempty"`
+	TVWURL            string    `json:"tvw_url,omitempty"`
+	TVWEventID        string    `json:"tvw_event_id,omitempty"`
+	AgendaItemLabel   string    `json:"agenda_item_label,omitempty"`
+	CSIAgendaItemID   string    `json:"csi_agenda_item_id,omitempty"`
 }
 
 type Testifier struct {
-	RawName         string    `json:"raw_name"`
-	RawOrganization string    `json:"raw_organization,omitempty"`
-	Position        string    `json:"position"`
-	Testified       bool      `json:"testified"`
+	RawName         string     `json:"raw_name"`
+	RawOrganization string     `json:"raw_organization,omitempty"`
+	Position        string     `json:"position"`
+	Testified       bool       `json:"testified"`
 	TimeSignedIn    *time.Time `json:"time_signed_in,omitempty"`
-	OrganizationID  *int64    `json:"organization_id,omitempty"`
+	OrganizationID  *int64     `json:"organization_id,omitempty"`
 }
 
 type Transcript struct {
-	CaptionURL       string             `json:"caption_url,omitempty"`
-	BillSegmentStart int                `json:"bill_segment_start_ms,omitempty"`
-	BillSegmentEnd   int                `json:"bill_segment_end_ms,omitempty"`
+	CaptionURL       string              `json:"caption_url,omitempty"`
+	BillSegmentStart int                 `json:"bill_segment_start_ms,omitempty"`
+	BillSegmentEnd   int                 `json:"bill_segment_end_ms,omitempty"`
+	Windows          []TranscriptWindow  `json:"windows,omitempty"`
 	Segments         []TranscriptSegment `json:"segments,omitempty"`
+}
+
+type TranscriptWindow struct {
+	StartMS int `json:"start_ms"`
+	EndMS   int `json:"end_ms"`
 }
 
 type TranscriptSegment struct {
@@ -93,13 +99,13 @@ type TranscriptSegment struct {
 }
 
 type Organization struct {
-	CanonicalName    string         `json:"canonical_name"`
-	Aliases          []string       `json:"aliases,omitempty"`
-	MatchConfidence  string         `json:"match_confidence"`
-	MatchNotes       string         `json:"match_notes,omitempty"`
-	Context          []OrgContext   `json:"context,omitempty"`
-	TestifierPosition string        `json:"testifier_position,omitempty"`
-	TestifierCount    int           `json:"testifier_count,omitempty"`
+	CanonicalName     string       `json:"canonical_name"`
+	Aliases           []string     `json:"aliases,omitempty"`
+	MatchConfidence   string       `json:"match_confidence"`
+	MatchNotes        string       `json:"match_notes,omitempty"`
+	Context           []OrgContext `json:"context,omitempty"`
+	TestifierPosition string       `json:"testifier_position,omitempty"`
+	TestifierCount    int          `json:"testifier_count,omitempty"`
 }
 
 type OrgContext struct {
@@ -159,12 +165,12 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
   FROM bill
  WHERE biennium = $1 AND prefix = $2 AND number = $3;`
 	var (
-		billRowID                                    int64
-		biennium, billNumber                         string
-		title, description, chamberOrigin            *string
-		currentStatus                                *string
-		statusDate                                   *time.Time
-		officialURL                                  *string
+		billRowID                         int64
+		biennium, billNumber              string
+		title, description, chamberOrigin *string
+		currentStatus                     *string
+		statusDate                        *time.Time
+		officialURL                       *string
 	)
 	err := store.Pool.QueryRow(ctx, q, demo.Biennium, demo.BillPrefix, demo.BillNumber).Scan(
 		&billRowID, &biennium, &billNumber,
@@ -241,7 +247,7 @@ SELECT h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
  WHERE a.csi_agenda_item_id = $1
  LIMIT 1;`
 	var (
-		commName, chamber, label, csiAID                                 string
+		commName, chamber, label, csiAID                                  string
 		commAcronym, location, officialAgendaURL, tvwURL, tvwEventID, tmp *string
 	)
 	_ = tmp
@@ -290,10 +296,10 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			t      Testifier
-			rawOrg *string
+			t        Testifier
+			rawOrg   *string
 			signedAt *time.Time
-			orgID  *int64
+			orgID    *int64
 		)
 		if err := rows.Scan(&t.RawName, &rawOrg, &t.Position, &t.Testified, &signedAt, &orgID); err != nil {
 			return err
@@ -340,7 +346,50 @@ SELECT te.caption_url,
 	if b.Transcript.BillSegmentEnd <= b.Transcript.BillSegmentStart {
 		return nil
 	}
-	// Pull segments in the bill range.
+	const winQ = `
+WITH ordered AS (
+  SELECT ts.start_ms,
+         ts.end_ms,
+         CASE
+           WHEN LAG(ts.end_ms) OVER (ORDER BY ts.start_ms) IS NULL THEN 1
+           WHEN ts.start_ms - LAG(ts.end_ms) OVER (ORDER BY ts.start_ms) > 120000 THEN 1
+           ELSE 0
+         END AS new_window
+    FROM transcript_segment ts
+    JOIN agenda_item a ON a.id = ts.agenda_item_id
+   WHERE a.csi_agenda_item_id = $1
+), grouped AS (
+  SELECT start_ms,
+         end_ms,
+         SUM(new_window) OVER (ORDER BY start_ms) AS window_id
+    FROM ordered
+)
+SELECT MIN(start_ms), MAX(end_ms)
+  FROM grouped
+ GROUP BY window_id
+ ORDER BY MIN(start_ms);`
+	winRows, err := store.Pool.Query(ctx, winQ, demo.Agenda.CSIAgendaItemID)
+	if err != nil {
+		return err
+	}
+	for winRows.Next() {
+		var w TranscriptWindow
+		if err := winRows.Scan(&w.StartMS, &w.EndMS); err != nil {
+			winRows.Close()
+			return err
+		}
+		b.Transcript.Windows = append(b.Transcript.Windows, w)
+	}
+	if err := winRows.Err(); err != nil {
+		winRows.Close()
+		return err
+	}
+	winRows.Close()
+	if len(b.Transcript.Windows) == 0 && startMS != nil && endMS != nil {
+		b.Transcript.Windows = append(b.Transcript.Windows, TranscriptWindow{StartMS: *startMS, EndMS: *endMS})
+	}
+
+	// Pull segments in all bill discussion windows.
 	const segQ = `
 SELECT ts.start_ms, ts.end_ms, ts.text, ts.speaker_label, ts.speaker_confidence::text
   FROM transcript_segment ts
@@ -388,11 +437,11 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
 	var staged []orgRow
 	for rows.Next() {
 		var (
-			o        Organization
-			id       int64
-			notes    *string
-			pos      *string
-			nTest    int
+			o     Organization
+			id    int64
+			notes *string
+			pos   *string
+			nTest int
 		)
 		if err := rows.Scan(&id, &o.CanonicalName, &o.Aliases, &o.MatchConfidence, &notes, &pos, &nTest); err != nil {
 			return err

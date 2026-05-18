@@ -12,6 +12,7 @@ export function TranscriptSection({
   tvwEventId: string;
 }) {
   const segments = transcript.segments ?? [];
+  const windows = transcript.windows ?? [];
   const [showTranscript, setShowTranscript] = useState(false);
 
   return (
@@ -26,8 +27,11 @@ export function TranscriptSection({
         {segments.length > 0 ? (
           <span className="text-sm text-stone-500 tabular-nums">
             {segments.length.toLocaleString()} segments ·{" "}
-            {formatMS(transcript.bill_segment_start_ms ?? 0)} –{" "}
-            {formatMS(transcript.bill_segment_end_ms ?? 0)}
+            {windows.length > 1
+              ? `${windows.length.toLocaleString()} discussion windows`
+              : `${formatMS(transcript.bill_segment_start_ms ?? 0)} – ${formatMS(
+                  transcript.bill_segment_end_ms ?? 0
+                )}`}
           </span>
         ) : null}
       </div>
