@@ -7,15 +7,7 @@ import {
   listLocalBundles,
   listOrganizationBundles,
 } from "@/lib/loadBundle";
-
-const ISSUE_PAGES = [
-  {
-    slug: "housing",
-    title: "Housing",
-    description:
-      "Bills, hearings, testimony positions, organizations, and source coverage for housing policy.",
-  },
-];
+import { ISSUE_PAGE_CONFIGS } from "./issues/_shared/config";
 
 export default async function HomePage() {
   const [bundles, hearings, organizations, legislators, searchResults] = await Promise.all([
@@ -35,11 +27,11 @@ export default async function HomePage() {
             Issues
           </h2>
           <span className="text-xs uppercase tracking-wider text-stone-500">
-            {ISSUE_PAGES.length} page{ISSUE_PAGES.length === 1 ? "" : "s"}
+            {ISSUE_PAGE_CONFIGS.length} page{ISSUE_PAGE_CONFIGS.length === 1 ? "" : "s"}
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          {ISSUE_PAGES.map((issue) => (
+          {ISSUE_PAGE_CONFIGS.map((issue) => (
             <div
               key={issue.slug}
               className="rounded border border-stone-300 bg-white p-4"

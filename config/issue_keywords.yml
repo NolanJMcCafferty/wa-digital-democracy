@@ -12,6 +12,25 @@ housing:
   - permitting
   - land use
 
+transportation:
+  - transportation
+  - transit
+  - rail
+  - bus
+  - ferry
+  - ferries
+  - highway
+  - road
+  - roads
+  - bridge
+  - bridges
+  - traffic safety
+  - WSDOT
+  - Sound Transit
+  - public transportation
+  - vehicle miles traveled
+  - pedestrian
+  - bicycle safety
+
 # Future buckets (out of scope for first page):
 # climate-energy: [climate, energy, emissions, ...]
-# transportation: [transportation, transit, highways, ferry, ...]
