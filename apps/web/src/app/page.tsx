@@ -13,7 +13,7 @@ const ISSUE_PAGES = [
     slug: "housing",
     title: "Housing",
     description:
-      "Bills, hearings, testimony positions, organizations, and source coverage for the housing MVP slice.",
+      "Bills, hearings, testimony positions, organizations, and source coverage for housing policy.",
   },
 ];
 
@@ -87,7 +87,7 @@ export default async function HomePage() {
             <h2 className="font-semibold text-stone-900">Sources</h2>
             <p className="text-sm text-stone-600">
               See the official feeds, public records, and planned expansion
-              sources behind the prototype.
+              sources behind the public record.
             </p>
           </div>
           <Link
@@ -105,8 +105,7 @@ export default async function HomePage() {
             <div>
               <h2 className="font-semibold text-stone-900">Legislators</h2>
               <p className="text-sm text-stone-600">
-                Browse sponsor pages generated from LWS sponsor records in the
-                local bill bundles.
+                Browse legislator pages connected to bill sponsorship records.
               </p>
             </div>
             <Link
@@ -141,15 +140,7 @@ export default async function HomePage() {
 
       {bundles.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No bills ingested yet. Run{" "}
-          <code className="rounded bg-stone-200 px-1.5 py-0.5">
-            wa-dd ingest-session
-          </code>{" "}
-          (metadata for every bill in a biennium) or{" "}
-          <code className="rounded bg-stone-200 px-1.5 py-0.5">
-            make daily-bundles
-          </code>{" "}
-          (curated bills with full hearing data).
+          No bills are available yet.
         </p>
       ) : (
         <div className="rounded border border-stone-300 bg-white p-4">
@@ -162,9 +153,7 @@ export default async function HomePage() {
                 </span>
               </h2>
               <p className="text-sm text-stone-600">
-                Every bill ingested from LWS for the active biennium, with
-                sponsors and status timeline. Curated bills also have
-                hearing video, testimony, and transcripts.
+                Browse bills from the active biennium, including sponsors, status timelines, and — where available — hearing video, testimony, and transcripts.
               </p>
             </div>
             <Link

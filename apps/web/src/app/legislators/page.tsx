@@ -9,16 +9,13 @@ export default async function LegislatorsPage() {
       <div className="space-y-3">
         <h1 className="text-3xl font-bold tracking-tight">Legislators</h1>
         <p className="max-w-3xl text-stone-600">
-          Legislator pages are currently built from LWS sponsor records in the
-          generated bill bundles. They show sponsorship appearances first; full
-          district, committee, voting, and PDC profile data can be added as the
-          identity layer expands.
+          Browse legislators connected to bills in the current public-record coverage. These pages start with sponsorship activity; district, committee, voting, and campaign-finance profiles can expand as the identity layer grows.
         </p>
       </div>
 
       {legislators.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No legislator sponsor records found. Generate a bill bundle first.
+          No legislator records are available yet.
         </p>
       ) : (
         <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
@@ -35,7 +32,7 @@ export default async function LegislatorsPage() {
                   <p className="text-sm text-stone-600">
                     {l.chamber ?? "Chamber unknown"} ·{" "}
                     {l.appearances.length.toLocaleString()} sponsored bill
-                    {l.appearances.length === 1 ? "" : "s"} in local bundles
+                    {l.appearances.length === 1 ? "" : "s"}
                   </p>
                 </div>
                 <Link

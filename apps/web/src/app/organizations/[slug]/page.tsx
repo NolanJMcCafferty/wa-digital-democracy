@@ -65,7 +65,7 @@ export default async function OrganizationPage({
           ))}
         </div>
         <p className="text-xs text-stone-500">
-          Counts come from CSI organization matches in generated hearing bundles.
+          Counts come from Committee Sign In organization matches.
         </p>
       </section>
 

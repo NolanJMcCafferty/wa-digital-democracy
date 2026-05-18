@@ -33,8 +33,7 @@ export default async function LegislatorPage({
             {legislator.name}
           </h1>
           <p className="text-stone-600">
-            {legislator.chamber ?? "Chamber unknown"} sponsor records from LWS
-            in generated local bundles.
+            {legislator.chamber ?? "Chamber unknown"} sponsorship activity in the current public-record coverage.
           </p>
         </div>
       </section>
@@ -48,7 +47,7 @@ export default async function LegislatorPage({
 
       <section aria-labelledby="sponsored-bills" className="space-y-4">
         <h2 id="sponsored-bills" className="text-xl font-semibold text-stone-900">
-          Sponsored bills in local bundles
+          Sponsored bills
         </h2>
         <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
           {legislator.appearances.map((a) => {
@@ -89,10 +88,7 @@ export default async function LegislatorPage({
       <section className="rounded-lg border border-stone-300 bg-stone-50 p-5 text-sm text-stone-600">
         <h2 className="mb-2 font-semibold text-stone-900">Data caveat</h2>
         <p>
-          This page is intentionally narrow: it is derived from LWS sponsor
-          records already present in generated bill bundles. District, party,
-          committee assignments, vote history, campaign-finance profiles, and
-          full legislator identity matching are not populated here yet.
+          This page is intentionally narrow for now: it starts with official sponsorship records. District, party, committee assignments, vote history, campaign-finance profiles, and full legislator identity matching are not populated yet.
         </p>
       </section>
     </article>

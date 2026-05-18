@@ -26,14 +26,14 @@ export default async function SourcesPage() {
             WA Digital Democracy is source-linked by design. Every public fact
             should trace back to an official feed, public record, document,
             video, transcript, or dataset. This page explains what powers the
-            current prototype and which clients are ready for future expansion.
+            current public record and which source families are ready for future expansion.
           </p>
         </div>
       </section>
 
       <section className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
         <Metric label="Source families" value={sources.length.toLocaleString()} />
-        <Metric label="Used in bundle" value={liveSources.toLocaleString()} />
+        <Metric label="In use" value={liveSources.toLocaleString()} />
         <Metric label="Recorded calls" value={activeCalls.toLocaleString()} />
         <Metric
           label="Expansion clients"
@@ -105,7 +105,7 @@ export default async function SourcesPage() {
                 ) : null}
                 {s.endpoints.length > 0 ? (
                   <>
-                    <dt className="text-stone-500">Endpoints in bundle</dt>
+                    <dt className="text-stone-500">Endpoints used</dt>
                     <dd className="text-stone-800">
                       <ul className="flex flex-wrap gap-1">
                         {s.endpoints.map((e) => (

@@ -17,8 +17,7 @@ export default async function OrganizationsPage() {
 
       {organizations.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No reviewed organization matches found yet. Add reviewed matches and
-          rebuild the local demo bundle.
+          No reviewed organization matches are available yet.
         </p>
       ) : (
         <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">

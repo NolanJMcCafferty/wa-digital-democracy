@@ -37,11 +37,10 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
     >
       <div className="space-y-1">
         <h2 id="site-search-heading" className="text-xl font-semibold text-stone-900">
-          Search the local graph
+          Search WA Digital Democracy
         </h2>
         <p className="text-sm text-stone-600">
-          Search bills, hearings, organizations, and legislators generated from
-          the local bundles.
+          Search bills, hearings, organizations, and legislators.
         </p>
       </div>
 
@@ -64,8 +63,7 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
 
       {matches.length === 0 ? (
         <p className="rounded border border-stone-200 bg-stone-50 p-3 text-sm text-stone-600">
-          No matches yet. The current prototype only searches generated local
-          bundle pages.
+          No matches yet. Try a bill number, legislator, organization, issue, or committee.
         </p>
       ) : (
         <ul className="divide-y divide-stone-200 rounded border border-stone-200">

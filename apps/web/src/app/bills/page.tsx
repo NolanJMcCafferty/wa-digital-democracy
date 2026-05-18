@@ -40,15 +40,13 @@ export default async function BillsPage() {
       <div className="space-y-3">
         <h1 className="text-3xl font-bold tracking-tight">Bills</h1>
         <p className="text-stone-600">
-          {bundles.length.toLocaleString()} bills ingested from Washington
-          Legislative Web Services. Click a bill to open its source-linked
-          first-page brief.
+          {bundles.length.toLocaleString()} bills from the active Washington biennium. Click a bill to open its source-linked public-record page.
         </p>
       </div>
 
       {bundles.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No bills ingested yet.
+          No bills are available yet.
         </p>
       ) : (
         prefixes.map((prefix) => {

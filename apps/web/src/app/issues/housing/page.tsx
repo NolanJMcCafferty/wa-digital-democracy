@@ -69,28 +69,20 @@ export default async function HousingIssuePage() {
             Housing
           </h1>
           <p className="max-w-3xl text-stone-600">
-            A first issue-level view over Washington housing legislation,
-            testimony, transcript excerpts, organizations, and source records.
-            Today this is powered by the local first-page bundles; as ingestion
-            expands, this page becomes the entry point for housing bills,
-            hearings, permitting, affordability, and accountability data.
+            A first issue-level view over Washington housing legislation, testimony, transcript excerpts, organizations, and source records. As coverage expands, this page becomes the entry point for housing bills, hearings, permitting, affordability, and accountability data.
           </p>
         </div>
       </section>
 
       {bundles.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No housing bundles found yet. Run{" "}
-          <code className="rounded bg-stone-200 px-1.5 py-0.5">
-            make build-demo
-          </code>{" "}
-          to generate the first one.
+          No housing legislation is available yet.
         </p>
       ) : (
         <>
           <section aria-labelledby="housing-summary" className="space-y-4">
             <h2 id="housing-summary" className="text-xl font-semibold text-stone-900">
-              Current local coverage
+              Current coverage
             </h2>
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
               <Metric label="Bills" value={totals.bills.toLocaleString()} />
@@ -112,8 +104,7 @@ export default async function HousingIssuePage() {
               ))}
             </div>
             <p className="text-xs text-stone-500">
-              Counts are from CSI sign-ins in the generated hearing bundles,
-              including people who registered a position but did not testify.
+              Counts are from Committee Sign In records, including people who registered a position but did not testify.
             </p>
           </section>
 

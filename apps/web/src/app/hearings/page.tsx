@@ -10,19 +10,13 @@ export default async function HearingsPage() {
       <div className="space-y-3">
         <h1 className="text-3xl font-bold tracking-tight">Hearings</h1>
         <p className="text-stone-600">
-          Committee hearings assembled from the local first-page bundles. Each
-          page centers the hearing itself: committee, agenda item, testimony,
-          transcript excerpts, video, and source records.
+          Committee hearing pages center the public record: committee, agenda item, testimony, transcript excerpts, video, and source records.
         </p>
       </div>
 
       {hearings.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No hearing bundles found. Run{" "}
-          <code className="rounded bg-stone-200 px-1.5 py-0.5">
-            make build-demo
-          </code>{" "}
-          to produce one.
+          No hearings are available yet.
         </p>
       ) : (
         <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">

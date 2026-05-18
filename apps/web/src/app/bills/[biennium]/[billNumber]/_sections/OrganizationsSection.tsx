@@ -17,11 +17,7 @@ export function OrganizationsSection({
       {organizations.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
           No organizations have been confidently linked to this hearing yet.
-          The MVP uses operator-curated matches in{" "}
-          <code className="rounded bg-stone-200 px-1 py-0.5">
-            config/reviewed_matches.yml
-          </code>
-          .
+          No reviewed organization links are available for this hearing yet.
         </p>
       ) : (
         <ul className="space-y-4">
