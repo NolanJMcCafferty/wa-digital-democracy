@@ -75,7 +75,13 @@ export type Transcript = {
   caption_url?: string;
   bill_segment_start_ms?: number;
   bill_segment_end_ms?: number;
+  windows?: TranscriptWindow[];
   segments?: TranscriptSegment[];
+};
+
+export type TranscriptWindow = {
+  start_ms: number;
+  end_ms: number;
 };
 
 export type TranscriptSegment = {

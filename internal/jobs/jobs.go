@@ -4,14 +4,14 @@
 //
 // Steps:
 //
-//   1. IngestBill            LWS bundle → bill, legislator, bill_sponsor, status timeline
-//   2. EnrichSchedules       (skipped at runtime when operator provides TVW event ID)
-//   3. IngestCSI              CSI agenda + testifiers → hearing, agenda_item, testifier
-//   4. IngestTVW              Invintus event detail + VTT → tvw_event, transcript_segment
-//   5. SegmentTranscript      bill-mention regex → assign agenda_item_id to segments
-//   6. MatchSpeakers          CSI testifier order around bill segment → speaker labels
-//   7. PDCContext             reviewed_matches.yml → org_context_record + testifier links
-//   8. BuildBundle            (in render/firstpage)
+//  1. IngestBill            LWS bundle → bill, legislator, bill_sponsor, status timeline
+//  2. EnrichSchedules       (skipped at runtime when operator provides TVW event ID)
+//  3. IngestCSI              CSI agenda + testifiers → hearing, agenda_item, testifier
+//  4. IngestTVW              Invintus event detail + VTT → tvw_event, transcript_segment
+//  5. SegmentTranscript      bill open/close detection → assign agenda_item_id to segments
+//  6. MatchSpeakers          CSI testifier order around bill segment → speaker labels
+//  7. PDCContext             reviewed_matches.yml → org_context_record + testifier links
+//  8. BuildBundle            (in render/firstpage)
 package jobs
 
 import (
@@ -49,13 +49,13 @@ type Pipeline struct {
 // progresses. Each step both reads and writes to this struct, so Step 8 can
 // reach all rows it needs to render the bundle.
 type IDs struct {
-	BillID         int64
-	HearingID      int64
-	AgendaItemID   int64
-	TVWEventID     string // string identifier, not a row id
-	OrgIDs         map[string]int64 // canonical_name → organization.id
-	BillSegmentStart int             // ms; populated by SegmentTranscript
-	BillSegmentEnd   int             // ms; populated by SegmentTranscript
+	BillID           int64
+	HearingID        int64
+	AgendaItemID     int64
+	TVWEventID       string           // string identifier, not a row id
+	OrgIDs           map[string]int64 // canonical_name → organization.id
+	BillSegmentStart int              // ms; populated by SegmentTranscript
+	BillSegmentEnd   int              // ms; populated by SegmentTranscript
 }
 
 // NewIDs returns a zero-value IDs ready for use.
