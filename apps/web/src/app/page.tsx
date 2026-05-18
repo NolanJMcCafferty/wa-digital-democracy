@@ -88,6 +88,24 @@ export default async function HomePage() {
         </div>
       ) : null}
 
+      <div className="rounded border border-stone-300 bg-white p-4">
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-stone-900">Sources</h2>
+            <p className="text-sm text-stone-600">
+              See the official feeds, public records, and planned expansion
+              sources behind the prototype.
+            </p>
+          </div>
+          <Link
+            href="/sources"
+            className="text-sm text-blue-700 underline hover:text-blue-900"
+          >
+            View sources →
+          </Link>
+        </div>
+      </div>
+
       {legislators.length > 0 ? (
         <div className="rounded border border-stone-300 bg-white p-4">
           <div className="flex items-baseline justify-between gap-4">

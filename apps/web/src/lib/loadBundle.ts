@@ -40,6 +40,18 @@ export type LegislatorBundleEntry = {
   }>;
 };
 
+export type SourceSummary = {
+  system: string;
+  label: string;
+  status: "active" | "planned" | "partial";
+  usedFor: string;
+  limitations?: string;
+  officialUrl: string;
+  calls: number;
+  latestFetchedAt?: string;
+  endpoints: string[];
+};
+
 export type OrganizationBundleEntry = {
   slug: string;
   canonicalName: string;
@@ -118,6 +130,157 @@ export async function loadHearingBundle(csiAgendaItemId: string): Promise<Bundle
     }
   }
   return null;
+}
+
+const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" | "endpoints">> = [
+  {
+    system: "lws",
+    label: "Washington Legislative Web Services",
+    status: "active",
+    usedFor: "Bill metadata, sponsors, status timeline, and official hearing references.",
+    officialUrl: "https://wslwebservices.leg.wa.gov/",
+  },
+  {
+    system: "csi",
+    label: "Committee Sign In",
+    status: "active",
+    usedFor: "Public testimony sign-ins, positions, organizations, and testified/registered-only flags.",
+    officialUrl: "https://app.leg.wa.gov/csi/",
+  },
+  {
+    system: "tvw",
+    label: "TVW",
+    status: "active",
+    usedFor: "Public legislative video metadata and watch links.",
+    officialUrl: "https://tvw.org/",
+  },
+  {
+    system: "invintus",
+    label: "Invintus",
+    status: "active",
+    usedFor: "TVW event details and caption/VTT transcript files.",
+    limitations: "Requires the local Invintus embedder key for event-detail calls.",
+    officialUrl: "https://api.v3.invintus.com/",
+  },
+  {
+    system: "pdc_socrata",
+    label: "PDC / data.wa.gov",
+    status: "active",
+    usedFor: "Lobbying and campaign-finance context for reviewed organization matches.",
+    limitations: "Socrata app token is optional; leave blank unless broader ingestion hits throttling.",
+    officialUrl: "https://data.wa.gov/",
+  },
+  {
+    system: "committee_schedules",
+    label: "Committee Schedules",
+    status: "partial",
+    usedFor: "Agenda/video enrichment when a committee schedule mapping is needed.",
+    limitations: "Date-filtered search requires CSRF/session capture; current demo uses configured TVW event ID.",
+    officialUrl: "https://app.leg.wa.gov/committeeschedules/",
+  },
+  {
+    system: "datawa_socrata",
+    label: "DataWA / DES contracts",
+    status: "planned",
+    usedFor: "State contracts, procurement, master-contract sales, and statewide open-data overlays.",
+    officialUrl: "https://data.wa.gov/",
+  },
+  {
+    system: "sao_reportsearch",
+    label: "Washington State Auditor",
+    status: "planned",
+    usedFor: "Audit/report metadata, findings, and accountability context.",
+    officialUrl: "https://sao.wa.gov/reports-data/audit-reports",
+  },
+  {
+    system: "seattle_auditor",
+    label: "Seattle City Auditor",
+    status: "planned",
+    usedFor: "Structured audit recommendations and follow-up status.",
+    officialUrl: "https://www.seattle.gov/cityauditor/recommendations",
+  },
+  {
+    system: "seattle_socrata",
+    label: "Seattle Open Data",
+    status: "planned",
+    usedFor: "Permits, budget, service requests, land use, and housing outcome overlays.",
+    officialUrl: "https://data.seattle.gov/",
+  },
+  {
+    system: "kingcounty_socrata",
+    label: "King County Open Data",
+    status: "planned",
+    usedFor: "Parcels, property, elections, health, transit, and public-safety overlays.",
+    officialUrl: "https://data.kingcounty.gov/",
+  },
+  {
+    system: "census",
+    label: "Census ACS",
+    status: "planned",
+    usedFor: "Demographic and geography context for districts, issues, and neighborhoods.",
+    officialUrl: "https://api.census.gov/data.html",
+  },
+  {
+    system: "usaspending",
+    label: "USAspending",
+    status: "planned",
+    usedFor: "Federal awards, grants, contracts, agencies, and recipients in Washington.",
+    officialUrl: "https://api.usaspending.gov/",
+  },
+  {
+    system: "openfema",
+    label: "OpenFEMA",
+    status: "planned",
+    usedFor: "Disaster declarations, assistance, mitigation, and hazard context.",
+    officialUrl: "https://www.fema.gov/about/openfema/api",
+  },
+  {
+    system: "bls",
+    label: "BLS",
+    status: "planned",
+    usedFor: "Labor-market, wage, employment, unemployment, and economic context.",
+    officialUrl: "https://www.bls.gov/developers/",
+  },
+  {
+    system: "hud",
+    label: "HUD",
+    status: "planned",
+    usedFor: "Housing affordability, subsidized housing, FMR, CHAS, and HUD overlays.",
+    officialUrl: "https://data.hud.gov/",
+  },
+  {
+    system: "epa",
+    label: "EPA ECHO / EJScreen",
+    status: "planned",
+    usedFor: "Environmental compliance, enforcement, facilities, and environmental-justice context.",
+    officialUrl: "https://echo.epa.gov/tools/web-services",
+  },
+];
+
+export async function listSourceSummaries(): Promise<SourceSummary[]> {
+  const entries = await listLocalBundles();
+  const bySystem = new Map<string, { calls: number; latestFetchedAt?: string; endpoints: Set<string> }>();
+  for (const entry of entries) {
+    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
+    for (const s of bundle?.sources ?? []) {
+      const current = bySystem.get(s.system) ?? { calls: 0, endpoints: new Set<string>() };
+      current.calls += 1;
+      current.endpoints.add(s.endpoint);
+      if (!current.latestFetchedAt || s.fetched_at > current.latestFetchedAt) {
+        current.latestFetchedAt = s.fetched_at;
+      }
+      bySystem.set(s.system, current);
+    }
+  }
+  return SOURCE_DEFINITIONS.map((def) => {
+    const seen = bySystem.get(def.system);
+    return {
+      ...def,
+      calls: seen?.calls ?? 0,
+      latestFetchedAt: seen?.latestFetchedAt,
+      endpoints: Array.from(seen?.endpoints ?? []).sort(),
+    };
+  });
 }
 
 export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> {

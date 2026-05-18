@@ -33,6 +33,9 @@ export default function RootLayout({
               <a href="/legislators" className="hover:text-stone-900">
                 Legislators
               </a>
+              <a href="/sources" className="hover:text-stone-900">
+                Sources
+              </a>
               <span>First-page MVP</span>
             </nav>
           </div>
