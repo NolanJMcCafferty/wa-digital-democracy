@@ -17,7 +17,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build build-demo vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -97,6 +97,9 @@ tidy:
 api:          ## Run the read-only HTTP API on :8080 (read by the Next.js frontend)
 	$(GO) run ./cmd/wa-dd-api
 
+ingest-legislators: ## Pull the full House+Senate roster for BIENNIUM (default 2025-26)
+	$(GO) run ./cmd/wa-dd ingest-legislators --biennium $${BIENNIUM:-2025-26}
+
 ingest-session: ## Pull LWS metadata for every bill in BIENNIUM (default 2025-26). Used by cron.
 	$(GO) run ./cmd/wa-dd ingest-session --biennium $${BIENNIUM:-2025-26}
 
@@ -109,4 +112,4 @@ ingest-hearings: ## Run the full pipeline for every discovered agenda item in BI
 	fi
 	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26}
 
-daily: ingest-session discover-hearings ingest-hearings ## One-call nightly: metadata + hearing discovery + auto-ingest
+daily: ingest-legislators ingest-session discover-hearings ingest-hearings ## One-call nightly: roster + metadata + hearing discovery + auto-ingest

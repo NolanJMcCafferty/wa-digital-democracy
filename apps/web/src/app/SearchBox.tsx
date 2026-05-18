@@ -40,16 +40,23 @@ type TranscriptResponse = {
 };
 
 const TRANSCRIPT_DEBOUNCE_MS = 300;
-const TRANSCRIPT_MIN_QUERY = 2;
+// Both the client-side entity filter and the server transcript fetch
+// require this many chars before they fire. Avoids the noisy "every
+// indexed page" preview before the user actually starts a query.
+const MIN_QUERY_LENGTH = 3;
+const ENTITY_RESULT_LIMIT = 5;
 
 export function SearchBox({ results }: { results: SearchResult[] }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const trimmed = deferredQuery.trim().toLowerCase();
+  const queryActive = trimmed.length >= MIN_QUERY_LENGTH;
 
-  // Client-side filter over the prebuilt bill/hearing/org/legislator index.
+  // Client-side filter over the prebuilt bill/hearing/org/legislator
+  // index. Returns nothing until the user has typed enough to make
+  // matches meaningful — we don't want to flash the whole index on focus.
   const matches = useMemo(() => {
-    if (!trimmed) return results.slice(0, 8);
+    if (!queryActive) return [];
     const terms = trimmed.split(/\s+/).filter(Boolean);
     return results
       .map((r) => {
@@ -58,9 +65,9 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
       })
       .filter((r) => r.score > 0)
       .sort((a, b) => b.score - a.score || a.result.title.localeCompare(b.result.title))
-      .slice(0, 12)
+      .slice(0, ENTITY_RESULT_LIMIT)
       .map((r) => r.result);
-  }, [results, trimmed]);
+  }, [results, trimmed, queryActive]);
 
   // Debounced server-side transcript search. Cancels in-flight requests
   // when the user keeps typing.
@@ -73,7 +80,7 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
     // Cancel any in-flight request before starting/skipping a new one.
     abortRef.current?.abort();
 
-    if (trimmed.length < TRANSCRIPT_MIN_QUERY) {
+    if (!queryActive) {
       setTranscript(null);
       setTranscriptLoading(false);
       setTranscriptError(null);
@@ -108,7 +115,7 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [trimmed]);
+  }, [trimmed, queryActive]);
 
   return (
     <section
@@ -136,13 +143,14 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
         />
       </label>
 
-      <div className="text-xs text-stone-500">
-        {trimmed
-          ? `${matches.length.toLocaleString()} entity result${matches.length === 1 ? "" : "s"}`
-          : `Showing ${matches.length.toLocaleString()} of ${results.length.toLocaleString()} indexed pages`}
-      </div>
+      {queryActive ? (
+        <div className="text-xs text-stone-500">
+          {matches.length.toLocaleString()} entity result
+          {matches.length === 1 ? "" : "s"}
+        </div>
+      ) : null}
 
-      {matches.length === 0 ? (
+      {!queryActive ? null : matches.length === 0 ? (
         <p className="rounded border border-stone-200 bg-stone-50 p-3 text-sm text-stone-600">
           No matches yet. Try a bill number, legislator, organization, issue, or committee.
         </p>
@@ -170,6 +178,7 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
 
       <TranscriptResults
         trimmed={trimmed}
+        active={queryActive}
         response={transcript}
         loading={transcriptLoading}
         error={transcriptError}
@@ -180,16 +189,18 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
 
 function TranscriptResults({
   trimmed,
+  active,
   response,
   loading,
   error,
 }: {
   trimmed: string;
+  active: boolean;
   response: TranscriptResponse | null;
   loading: boolean;
   error: string | null;
 }) {
-  if (trimmed.length < TRANSCRIPT_MIN_QUERY) return null;
+  if (!active) return null;
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-3">

@@ -37,8 +37,16 @@ export type HearingBundleEntry = BundleListEntry & {
 
 export type LegislatorBundleEntry = {
   slug: string;
-  name: string;
+  name: string;            // "Senator Alvarado" — kept for back-compat with /legislators/{slug} routes
+  displayName?: string;    // "Emily Alvarado"
+  firstName?: string;
+  lastName?: string;
   chamber?: string;
+  district?: string;       // "34"
+  party?: string;          // "D" | "R"
+  email?: string;
+  phone?: string;
+  billCount?: number;
   appearances: Array<{
     biennium: string;
     billId: string;
@@ -90,7 +98,7 @@ export type OrganizationBundleEntry = {
 
 export async function listLocalBundles(): Promise<BundleListEntry[]> {
   const res = await fetch(`${API_BASE}/api/v1/bills`, {
-    next: { revalidate: DEFAULT_REVALIDATE },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`listLocalBundles: ${API_BASE}/api/v1/bills returned ${res.status}`);
@@ -119,7 +127,7 @@ type hearingResponseItem = {
 
 export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
   const res = await fetch(`${API_BASE}/api/v1/hearings`, {
-    next: { revalidate: DEFAULT_REVALIDATE },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`listHearingBundles: ${API_BASE}/api/v1/hearings returned ${res.status}`);
@@ -280,8 +288,11 @@ type sourceResponseItem = {
 };
 
 export async function listSourceSummaries(): Promise<SourceSummary[]> {
+  // Always refetch — this powers the /sources status dashboard which
+  // should reflect the current source_record table rather than a
+  // ~60s-old snapshot.
   const res = await fetch(`${API_BASE}/api/v1/sources`, {
-    next: { revalidate: DEFAULT_REVALIDATE },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`listSourceSummaries: ${API_BASE}/api/v1/sources returned ${res.status}`);
@@ -306,7 +317,14 @@ export async function listSourceSummaries(): Promise<SourceSummary[]> {
 type legislatorListItem = {
   slug: string;
   name: string;
+  display_name?: string;
+  first_name?: string;
+  last_name?: string;
   chamber?: string;
+  district?: string;
+  party?: string;
+  email?: string;
+  phone?: string;
   bill_count: number;
 };
 
@@ -326,7 +344,7 @@ type legislatorDetailResponse = {
 
 export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> {
   const res = await fetch(`${API_BASE}/api/v1/legislators`, {
-    next: { revalidate: DEFAULT_REVALIDATE },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`listLegislatorBundles: ${API_BASE}/api/v1/legislators returned ${res.status}`);
@@ -340,7 +358,15 @@ export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> 
   return items.map((l) => ({
     slug: l.slug,
     name: l.name,
+    displayName: l.display_name,
+    firstName: l.first_name,
+    lastName: l.last_name,
     chamber: l.chamber,
+    district: l.district,
+    party: l.party,
+    email: l.email,
+    phone: l.phone,
+    billCount: l.bill_count,
     appearances: [],
   }));
 }
@@ -400,7 +426,7 @@ type orgDetailResponse = orgListItem & {
 
 export async function listOrganizationBundles(): Promise<OrganizationBundleEntry[]> {
   const res = await fetch(`${API_BASE}/api/v1/organizations`, {
-    next: { revalidate: DEFAULT_REVALIDATE },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`listOrganizationBundles: ${API_BASE}/api/v1/organizations returned ${res.status}`);

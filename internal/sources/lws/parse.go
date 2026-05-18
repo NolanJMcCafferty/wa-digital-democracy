@@ -260,3 +260,49 @@ func ParseLegislationByYear(body []byte) ([]LegislationInfo, error) {
 	}
 	return resp.Result.Items, nil
 }
+
+// Member is one row from SponsorService.Get{House,Senate}Sponsors. The
+// service returns full chamber rosters for a biennium — including
+// members who haven't sponsored a bill — which is the missing input for
+// our /legislators index.
+type Member struct {
+	ID        string `xml:"Id"`
+	Name      string `xml:"Name"`      // "Emily Alvarado"
+	LongName  string `xml:"LongName"`  // "Senator Alvarado"
+	Agency    string `xml:"Agency"`    // "House" | "Senate"
+	Acronym   string `xml:"Acronym"`   // "ALVA"
+	Party     string `xml:"Party"`     // "D" | "R"
+	District  string `xml:"District"`  // "34"
+	Phone     string `xml:"Phone"`     // "(360) 786-7667"
+	Email     string `xml:"Email"`     // "Emily.Alvarado@leg.wa.gov"
+	FirstName string `xml:"FirstName"`
+	LastName  string `xml:"LastName"`
+}
+
+// ParseSenateSponsors parses GetSenateSponsorsResponse.
+func ParseSenateSponsors(body []byte) ([]Member, error) {
+	var resp struct {
+		XMLName xml.Name
+		Result  struct {
+			Members []Member `xml:"Member"`
+		} `xml:"GetSenateSponsorsResult"`
+	}
+	if err := unmarshalSOAPBody(body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Result.Members, nil
+}
+
+// ParseHouseSponsors parses GetHouseSponsorsResponse.
+func ParseHouseSponsors(body []byte) ([]Member, error) {
+	var resp struct {
+		XMLName xml.Name
+		Result  struct {
+			Members []Member `xml:"Member"`
+		} `xml:"GetHouseSponsorsResult"`
+	}
+	if err := unmarshalSOAPBody(body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Result.Members, nil
+}
