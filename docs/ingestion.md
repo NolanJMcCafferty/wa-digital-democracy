@@ -483,3 +483,27 @@ without a confidence/evidence layer or human-reviewed decision.
 This remains intentionally bounded. Broader budget/spending work should add
 or use separate issues for monthly IT spend datasets, fiscal.wa.gov, Seattle
 Open Budget, USAspending joins, and reviewed agency/vendor/entity resolution.
+
+## Optional Phase 4 Seattle Open Budget ingestion
+
+`wa-dd ingest-seattle-operating-budget` ingests the City of Seattle Operating
+Budget Socrata dataset into `seattle_operating_budget`:
+
+```sh
+wa-dd ingest-seattle-operating-budget --limit 1000
+```
+
+The current MVP source is:
+
+- `8u2j-imqx` — City of Seattle Operating Budget (`data.seattle.gov`), public-domain licensed and attributed to the City of Seattle in Socrata metadata.
+
+Rows preserve fiscal year, service, department, program, fund, fund type,
+expense type, description, approved amount, raw fields, and `source_record_id`
+provenance linking back to the fetched Socrata page. This gives the Seattle
+accountability slice a department/program/fiscal-period budget table that can
+later join to Seattle City Auditor recommendations.
+
+Scope caveat: this is the operating-budget surface only. Seattle capital budget
+(`m6va-m4qe`), actual expenditures, project-level spending, and Open Budget site
+visualization metadata should remain separate work because they have different
+grains and columns.

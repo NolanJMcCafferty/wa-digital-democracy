@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM seattle_operating_budget WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
@@ -378,5 +379,48 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 	}
 	if count != 1 || company != "Sunrise Technologies Updated" || normalized != "SUNRISE TECHNOLOGIES UPDATED" {
 		t.Fatalf("count=%d company=%q normalized=%q", count, company, normalized)
+	}
+}
+
+func TestUpsertSeattleOperatingBudget_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "seattle_socrata", "seattle-operating-budget-test-1")
+
+	params := db.UpsertSeattleOperatingBudgetParams{
+		SourceDatasetID: "8u2j-imqx",
+		SourceRowID:     "row-1",
+		FiscalYear:      2026,
+		Service:         "Administration",
+		Department:      "Office of the City Auditor",
+		Program:         "Office of the City Auditor",
+		Fund:            "00100 - General Fund",
+		FundType:        "General Fund",
+		ExpenseType:     "Expenditures",
+		Description:     "Labor",
+		ApprovedAmount:  "1632174",
+		RawFields:       map[string]any{"source": "first"},
+		SourceRecordID:  srID,
+	}
+	if err := store.UpsertSeattleOperatingBudget(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.ApprovedAmount = "1700000"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertSeattleOperatingBudget(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(approved_amount)::text
+  FROM seattle_operating_budget
+ WHERE source_dataset_id = '8u2j-imqx' AND source_row_id = 'row-1';`).Scan(&count, &amount); err != nil {
+		t.Fatalf("query budget: %v", err)
+	}
+	if count != 1 || amount != "1700000" {
+		t.Fatalf("count=%d amount=%q", count, amount)
 	}
 }
