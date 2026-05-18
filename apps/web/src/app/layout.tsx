@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Nav } from "./Nav";
 
 export const metadata: Metadata = {
   title: "WA Digital Democracy",
@@ -14,49 +15,19 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen antialiased">
-        <header className="border-b border-stone-300 bg-stone-50/80 backdrop-blur-sm">
-          <div className="mx-auto flex max-w-5xl items-baseline justify-between px-6 py-4">
-            <a href="/" className="text-lg font-semibold tracking-tight text-stone-900">
+      <body className="min-h-screen bg-stone-50 antialiased">
+        <header className="border-b border-stone-300 bg-white">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <a
+              href="/"
+              className="text-xl font-bold tracking-tight text-stone-900 hover:text-stone-700"
+            >
               WA Digital Democracy
             </a>
-            <nav className="flex items-center gap-4 text-xs uppercase tracking-wider text-stone-500">
-              <a href="/issues/housing" className="hover:text-stone-900">
-                Housing
-              </a>
-              <a href="/issues/public-safety" className="hover:text-stone-900">
-                Public Safety
-              </a>
-              <a href="/issues/climate" className="hover:text-stone-900">
-                Climate
-              </a>
-              <a href="/issues/education" className="hover:text-stone-900">
-                Education
-              </a>
-              <a href="/issues/transportation" className="hover:text-stone-900">
-                Transportation
-              </a>
-              <a href="/hearings" className="hover:text-stone-900">
-                Hearings
-              </a>
-              <a href="/organizations" className="hover:text-stone-900">
-                Orgs
-              </a>
-              <a href="/legislators" className="hover:text-stone-900">
-                Legislators
-              </a>
-              <a href="/sources" className="hover:text-stone-900">
-                Sources
-              </a>
-            </nav>
+            <Nav />
           </div>
         </header>
-        <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
-        <footer className="mx-auto mt-16 max-w-5xl border-t border-stone-300 px-6 py-6 text-xs text-stone-500">
-          Source-linked. Every fact carries a fetched_at timestamp and a link
-          to the official record. Sources panel below each page lists all
-          underlying API calls.
-        </footer>
+        <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
       </body>
     </html>
   );

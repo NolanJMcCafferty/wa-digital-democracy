@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -50,9 +52,11 @@ func main() {
 	r.Use(middleware.Timeout(30 * time.Second))
 
 	r.Get("/healthz", healthHandler(store))
+	r.Get("/api/v1/addresses/suggest", suggestAddressesHandler())
 	r.Get("/api/v1/bills", listBillsHandler(store))
 	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", firstPageHandler(store))
 	r.Get("/api/v1/legislators", listLegislatorsHandler(store))
+	r.Get("/api/v1/legislators/lookup", lookupLegislatorsByAddressHandler(store))
 	r.Get("/api/v1/legislators/{slug}", getLegislatorHandler(store))
 	r.Get("/api/v1/organizations", listOrganizationsHandler(store))
 	r.Get("/api/v1/organizations/{slug}", getOrganizationHandler(store))
@@ -195,10 +199,19 @@ func upper(s string) string {
 
 func listLegislatorsHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
-		Slug      string `json:"slug"`
-		Name      string `json:"name"`
-		Chamber   string `json:"chamber,omitempty"`
-		BillCount int    `json:"bill_count"`
+		Slug        string `json:"slug"`
+		Name        string `json:"name"`         // "Senator Alvarado"
+		DisplayName string `json:"display_name"` // "Emily Alvarado"
+		FirstName   string `json:"first_name,omitempty"`
+		LastName    string `json:"last_name,omitempty"`
+		Role        string `json:"role,omitempty"` // "State Senator" | "State Representative"
+		Chamber     string `json:"chamber,omitempty"`
+		District    string `json:"district,omitempty"`
+		Party       string `json:"party,omitempty"`
+		Email       string `json:"email,omitempty"`
+		Phone       string `json:"phone,omitempty"`
+		OfficialURL string `json:"official_url,omitempty"`
+		BillCount   int    `json:"bill_count"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		legs, err := store.ListLegislators(req.Context())
@@ -209,13 +222,130 @@ func listLegislatorsHandler(store *db.Store) http.HandlerFunc {
 		out := make([]item, 0, len(legs))
 		for _, l := range legs {
 			out = append(out, item{
-				Slug:      slugify(l.Name),
-				Name:      l.Name,
-				Chamber:   l.Chamber,
-				BillCount: l.BillCount,
+				Slug:        slugify(l.Name), // unchanged so existing /legislators/{slug} routes still resolve
+				Name:        l.Name,
+				DisplayName: strings.TrimSpace(l.FirstName + " " + l.LastName),
+				FirstName:   l.FirstName,
+				LastName:    l.LastName,
+				Role:        legislatorRole(l.Chamber),
+				Chamber:     l.Chamber,
+				District:    l.District,
+				Party:       l.Party,
+				Email:       l.Email,
+				Phone:       l.Phone,
+				OfficialURL: l.OfficialURL,
+				BillCount:   l.BillCount,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+func suggestAddressesHandler() http.HandlerFunc {
+	type suggestion struct {
+		Text     string `json:"text"`
+		MagicKey string `json:"magic_key,omitempty"`
+	}
+	type body struct {
+		Query       string       `json:"query"`
+		Suggestions []suggestion `json:"suggestions"`
+	}
+	return func(w http.ResponseWriter, req *http.Request) {
+		query := strings.TrimSpace(req.URL.Query().Get("query"))
+		if len(query) < 4 {
+			writeJSON(w, http.StatusOK, body{Query: query, Suggestions: []suggestion{}})
+			return
+		}
+
+		suggestions, err := suggestWashingtonAddresses(req.Context(), query, 6)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		out := make([]suggestion, 0, len(suggestions))
+		for _, s := range suggestions {
+			out = append(out, suggestion{Text: s.Text, MagicKey: s.MagicKey})
+		}
+		writeJSON(w, http.StatusOK, body{Query: query, Suggestions: out})
+	}
+}
+
+func lookupLegislatorsByAddressHandler(store *db.Store) http.HandlerFunc {
+	type legislatorItem struct {
+		Slug        string `json:"slug"`
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name,omitempty"`
+		Role        string `json:"role,omitempty"`
+		Chamber     string `json:"chamber,omitempty"`
+		District    string `json:"district,omitempty"`
+		Party       string `json:"party,omitempty"`
+		BillCount   int    `json:"bill_count"`
+	}
+	type body struct {
+		QueryAddress   string           `json:"query_address"`
+		MatchedAddress string           `json:"matched_address,omitempty"`
+		District       string           `json:"district"`
+		Legislators    []legislatorItem `json:"legislators"`
+	}
+	return func(w http.ResponseWriter, req *http.Request) {
+		address := strings.TrimSpace(req.URL.Query().Get("address"))
+		magicKey := strings.TrimSpace(req.URL.Query().Get("magic_key"))
+		if len(address) < 5 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
+			return
+		}
+
+		lookup, err := lookupLegislativeDistrict(req.Context(), address, magicKey)
+		if err != nil {
+			switch {
+			case errors.Is(err, errAddressNotFound):
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "address not found"})
+			case errors.Is(err, errDistrictNotFound):
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "legislative district not found"})
+			default:
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			}
+			return
+		}
+
+		legs, err := store.ListLegislatorsByDistrict(req.Context(), lookup.District)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		out := make([]legislatorItem, 0, len(legs))
+		senators := 0
+		representatives := 0
+		for _, l := range legs {
+			switch l.Chamber {
+			case "Senate":
+				if senators >= 1 {
+					continue
+				}
+				senators++
+			case "House":
+				if representatives >= 2 {
+					continue
+				}
+				representatives++
+			}
+			out = append(out, legislatorItem{
+				Slug:        slugify(l.Name),
+				Name:        l.Name,
+				DisplayName: strings.TrimSpace(l.FirstName + " " + l.LastName),
+				Role:        legislatorRole(l.Chamber),
+				Chamber:     l.Chamber,
+				District:    l.District,
+				Party:       l.Party,
+				BillCount:   l.BillCount,
+			})
+		}
+		writeJSON(w, http.StatusOK, body{
+			QueryAddress:   address,
+			MatchedAddress: lookup.MatchedAddress,
+			District:       lookup.District,
+			Legislators:    out,
+		})
 	}
 }
 
@@ -231,7 +361,12 @@ func getLegislatorHandler(store *db.Store) http.HandlerFunc {
 	type body struct {
 		Slug        string       `json:"slug"`
 		Name        string       `json:"name"`
+		DisplayName string       `json:"display_name,omitempty"`
+		FirstName   string       `json:"first_name,omitempty"`
+		LastName    string       `json:"last_name,omitempty"`
 		Chamber     string       `json:"chamber,omitempty"`
+		District    string       `json:"district,omitempty"`
+		Party       string       `json:"party,omitempty"`
 		Appearances []appearance `json:"appearances"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -268,10 +403,326 @@ func getLegislatorHandler(store *db.Store) http.HandlerFunc {
 				SponsorType: b.SponsorType,
 			})
 		}
+		display := strings.TrimSpace(match.FirstName + " " + match.LastName)
 		writeJSON(w, http.StatusOK, body{
-			Slug: slug, Name: match.Name, Chamber: match.Chamber,
+			Slug:        slug,
+			Name:        match.Name,
+			DisplayName: display,
+			FirstName:   match.FirstName,
+			LastName:    match.LastName,
+			Chamber:     match.Chamber,
+			District:    match.District,
+			Party:       match.Party,
 			Appearances: apps,
 		})
+	}
+}
+
+var (
+	errAddressNotFound  = errors.New("address not found")
+	errDistrictNotFound = errors.New("legislative district not found")
+	districtHTTPClient  = &http.Client{Timeout: 12 * time.Second}
+)
+
+const (
+	censusGeocoderURL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+	esriSuggestURL    = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest"
+	esriCandidateURL  = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
+	legDistrictURL    = "https://services7.arcgis.com/zJ5hF9SNB8WMMiGf/ArcGIS/rest/services/Legislative_Districts/FeatureServer/0/query"
+	washingtonExtent  = "-124.85,45.54,-116.91,49.01"
+)
+
+type districtLookupResult struct {
+	District       string
+	MatchedAddress string
+}
+
+func lookupLegislativeDistrict(ctx context.Context, address, magicKey string) (districtLookupResult, error) {
+	point, err := geocodeAddress(ctx, address, magicKey)
+	if err != nil {
+		return districtLookupResult{}, err
+	}
+	district, err := legislativeDistrictForPoint(ctx, point.lon, point.lat)
+	if err != nil {
+		return districtLookupResult{}, err
+	}
+	return districtLookupResult{District: district, MatchedAddress: point.matchedAddress}, nil
+}
+
+type geocodedPoint struct {
+	lon            float64
+	lat            float64
+	matchedAddress string
+}
+
+type addressSuggestion struct {
+	Text     string
+	MagicKey string
+}
+
+func suggestWashingtonAddresses(ctx context.Context, query string, limit int) ([]addressSuggestion, error) {
+	var suggestions []addressSuggestion
+	seen := map[string]bool{}
+	for _, variant := range washingtonAddressQueryVariants(query) {
+		next, err := suggestWashingtonAddressVariant(ctx, variant, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, suggestion := range next {
+			if !strings.Contains(suggestion.Text, ", WA,") || seen[suggestion.Text] {
+				continue
+			}
+			seen[suggestion.Text] = true
+			suggestions = append(suggestions, suggestion)
+			if len(suggestions) >= limit {
+				return suggestions, nil
+			}
+		}
+	}
+	if suggestions == nil {
+		suggestions = []addressSuggestion{}
+	}
+	return suggestions, nil
+}
+
+func suggestWashingtonAddressVariant(ctx context.Context, query string, limit int) ([]addressSuggestion, error) {
+	u, err := url.Parse(esriSuggestURL)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("f", "json")
+	q.Set("text", query)
+	q.Set("countryCode", "USA")
+	q.Set("category", "Address")
+	q.Set("searchExtent", washingtonExtent)
+	q.Set("maxSuggestions", strconv.Itoa(limit))
+	u.RawQuery = q.Encode()
+
+	var body struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Suggestions []struct {
+			Text     string `json:"text"`
+			MagicKey string `json:"magicKey"`
+		} `json:"suggestions"`
+	}
+	if err := fetchJSON(ctx, u.String(), &body); err != nil {
+		return nil, fmt.Errorf("suggest address: %w", err)
+	}
+	if body.Error != nil {
+		return nil, fmt.Errorf("suggest address: %s", body.Error.Message)
+	}
+	out := make([]addressSuggestion, 0, len(body.Suggestions))
+	for _, s := range body.Suggestions {
+		out = append(out, addressSuggestion{Text: s.Text, MagicKey: s.MagicKey})
+	}
+	return out, nil
+}
+
+func washingtonAddressQueryVariants(query string) []string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+	variants := []string{query}
+	lower := strings.ToLower(query)
+	if !strings.Contains(lower, " wa") && !strings.Contains(lower, "washington") {
+		variants = append(variants, query+" WA")
+	}
+	return variants
+}
+
+func geocodeAddress(ctx context.Context, address, magicKey string) (geocodedPoint, error) {
+	if magicKey != "" {
+		return geocodeAddressWithESRI(ctx, address, magicKey)
+	}
+	point, err := geocodeAddressWithCensus(ctx, address)
+	if err == nil {
+		return point, nil
+	}
+	if errors.Is(err, errAddressNotFound) {
+		return geocodeAddressWithESRI(ctx, address, "")
+	}
+	return geocodedPoint{}, err
+}
+
+func geocodeAddressWithCensus(ctx context.Context, address string) (geocodedPoint, error) {
+	u, err := url.Parse(censusGeocoderURL)
+	if err != nil {
+		return geocodedPoint{}, err
+	}
+	q := u.Query()
+	q.Set("address", address)
+	q.Set("benchmark", "Public_AR_Current")
+	q.Set("format", "json")
+	u.RawQuery = q.Encode()
+
+	var body struct {
+		Result struct {
+			AddressMatches []struct {
+				MatchedAddress string `json:"matchedAddress"`
+				Coordinates    struct {
+					X float64 `json:"x"`
+					Y float64 `json:"y"`
+				} `json:"coordinates"`
+			} `json:"addressMatches"`
+		} `json:"result"`
+	}
+	if err := fetchJSON(ctx, u.String(), &body); err != nil {
+		return geocodedPoint{}, fmt.Errorf("geocode address: %w", err)
+	}
+	if len(body.Result.AddressMatches) == 0 {
+		return geocodedPoint{}, errAddressNotFound
+	}
+	match := body.Result.AddressMatches[0]
+	return geocodedPoint{
+		lon:            match.Coordinates.X,
+		lat:            match.Coordinates.Y,
+		matchedAddress: match.MatchedAddress,
+	}, nil
+}
+
+func geocodeAddressWithESRI(ctx context.Context, address, magicKey string) (geocodedPoint, error) {
+	u, err := url.Parse(esriCandidateURL)
+	if err != nil {
+		return geocodedPoint{}, err
+	}
+	q := u.Query()
+	q.Set("f", "json")
+	q.Set("singleLine", address)
+	q.Set("countryCode", "USA")
+	q.Set("category", "Address")
+	q.Set("searchExtent", washingtonExtent)
+	q.Set("outFields", "Match_addr,Region")
+	q.Set("maxLocations", "1")
+	if magicKey != "" {
+		q.Set("magicKey", magicKey)
+	}
+	u.RawQuery = q.Encode()
+
+	var body struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Candidates []struct {
+			Address  string  `json:"address"`
+			Score    float64 `json:"score"`
+			Location struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			} `json:"location"`
+			Attributes struct {
+				Region string `json:"Region"`
+			} `json:"attributes"`
+		} `json:"candidates"`
+	}
+	if err := fetchJSON(ctx, u.String(), &body); err != nil {
+		return geocodedPoint{}, fmt.Errorf("geocode address: %w", err)
+	}
+	if body.Error != nil {
+		return geocodedPoint{}, fmt.Errorf("geocode address: %s", body.Error.Message)
+	}
+	if len(body.Candidates) == 0 {
+		return geocodedPoint{}, errAddressNotFound
+	}
+	match := body.Candidates[0]
+	if match.Score < 80 || !strings.EqualFold(match.Attributes.Region, "Washington") {
+		return geocodedPoint{}, errAddressNotFound
+	}
+	return geocodedPoint{
+		lon:            match.Location.X,
+		lat:            match.Location.Y,
+		matchedAddress: match.Address,
+	}, nil
+}
+
+func legislativeDistrictForPoint(ctx context.Context, lon, lat float64) (string, error) {
+	u, err := url.Parse(legDistrictURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("f", "json")
+	q.Set("geometry", fmt.Sprintf("%.8f,%.8f", lon, lat))
+	q.Set("geometryType", "esriGeometryPoint")
+	q.Set("inSR", "4326")
+	q.Set("spatialRel", "esriSpatialRelIntersects")
+	q.Set("outFields", "DISTRICT,DISTRICTN")
+	q.Set("returnGeometry", "false")
+	u.RawQuery = q.Encode()
+
+	var body struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Features []struct {
+			Attributes struct {
+				District  string  `json:"DISTRICT"`
+				DistrictN float64 `json:"DISTRICTN"`
+			} `json:"attributes"`
+		} `json:"features"`
+	}
+	if err := fetchJSON(ctx, u.String(), &body); err != nil {
+		return "", fmt.Errorf("district lookup: %w", err)
+	}
+	if body.Error != nil {
+		return "", fmt.Errorf("district lookup: %s", body.Error.Message)
+	}
+	if len(body.Features) == 0 {
+		return "", errDistrictNotFound
+	}
+	attrs := body.Features[0].Attributes
+	district := normalizeDistrict(attrs.District)
+	if district == "" && attrs.DistrictN > 0 {
+		district = strconv.Itoa(int(attrs.DistrictN))
+	}
+	if district == "" {
+		return "", errDistrictNotFound
+	}
+	return district, nil
+}
+
+func fetchJSON(ctx context.Context, endpoint string, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "wa-digital-democracy/0.1 (+https://github.com/nolan-mccafferty/wa-digital-democracy)")
+	res, err := districtHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return fmt.Errorf("status %d", res.StatusCode)
+	}
+	return json.NewDecoder(res.Body).Decode(target)
+}
+
+func normalizeDistrict(s string) string {
+	var digits strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	out := strings.TrimLeft(digits.String(), "0")
+	if out == "" && digits.Len() > 0 {
+		return "0"
+	}
+	return out
+}
+
+func legislatorRole(chamber string) string {
+	switch chamber {
+	case "Senate":
+		return "State Senator"
+	case "House":
+		return "State Representative"
+	default:
+		return "Legislator"
 	}
 }
 

@@ -59,3 +59,84 @@ func TestSlugify_Unit(t *testing.T) {
 		}
 	}
 }
+
+func TestLookupLegislatorsByAddressHandler_MissingAddress(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/api/v1/legislators/lookup", lookupLegislatorsByAddressHandler(nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/legislators/lookup?address=", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "address is required") {
+		t.Errorf("body = %q, want address error", w.Body.String())
+	}
+}
+
+func TestSuggestAddressesHandler_ShortQuery(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/api/v1/addresses/suggest", suggestAddressesHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/addresses/suggest?query=105", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"suggestions":[]`) {
+		t.Errorf("body = %q, want empty suggestions array", w.Body.String())
+	}
+}
+
+func TestWashingtonAddressQueryVariants(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"1052 E", []string{"1052 E", "1052 E WA"}},
+		{"1052 E Seattle WA", []string{"1052 E Seattle WA"}},
+		{"1052 E Washington Ave", []string{"1052 E Washington Ave"}},
+	}
+	for _, c := range cases {
+		got := washingtonAddressQueryVariants(c.in)
+		if len(got) != len(c.want) {
+			t.Fatalf("washingtonAddressQueryVariants(%q) = %#v, want %#v", c.in, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("washingtonAddressQueryVariants(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+func TestNormalizeDistrict(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"34", "34"},
+		{"District 034", "34"},
+		{"LD-07", "7"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := normalizeDistrict(c.in); got != c.want {
+			t.Errorf("normalizeDistrict(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestLegislatorRole(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Senate", "State Senator"},
+		{"House", "State Representative"},
+		{"", "Legislator"},
+	}
+	for _, c := range cases {
+		if got := legislatorRole(c.in); got != c.want {
+			t.Errorf("legislatorRole(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

@@ -7,6 +7,11 @@ const STATUS_STYLE = {
   planned: "bg-stone-200 text-stone-700",
 };
 
+// Live status dashboard — always reflect the current source_record table
+// rather than a 60-second-stale snapshot. The cost is one extra API hit
+// per page render; the data is small and the page is rarely loaded.
+export const revalidate = 0;
+
 export default async function SourcesPage() {
   const sources = await listSourceSummaries();
   const activeCalls = sources.reduce((n, s) => n + s.calls, 0);

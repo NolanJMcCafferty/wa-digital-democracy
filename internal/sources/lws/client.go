@@ -180,6 +180,35 @@ func (c *Client) GetRollCalls(ctx context.Context, biennium, billNumber string) 
 	return ParseRollCalls(body)
 }
 
+// GetSenateSponsors calls SponsorService.GetSenateSponsors and returns
+// the full Senate roster for the biennium (~54 members).
+//
+// SponsorService is the legislative-service member roster: rosters are
+// keyed by biennium, returning every seated member regardless of
+// whether they've sponsored a bill in that biennium.
+func (c *Client) GetSenateSponsors(ctx context.Context, biennium string) ([]Member, error) {
+	body, err := c.callRaw(ctx, "SponsorService", "GetSenateSponsors", renderOp("GetSenateSponsors", [][2]string{
+		{"biennium", biennium},
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return ParseSenateSponsors(body)
+}
+
+// GetHouseSponsors calls SponsorService.GetHouseSponsors and returns
+// the full House roster for the biennium (~98–104 members including
+// mid-biennium turnover).
+func (c *Client) GetHouseSponsors(ctx context.Context, biennium string) ([]Member, error) {
+	body, err := c.callRaw(ctx, "SponsorService", "GetHouseSponsors", renderOp("GetHouseSponsors", [][2]string{
+		{"biennium", biennium},
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return ParseHouseSponsors(body)
+}
+
 // GetLegislationByYear calls LegislationService.GetLegislationByYear (used
 // by the candidate finder in Phase 3).
 func (c *Client) GetLegislationByYear(ctx context.Context, year int) ([]LegislationInfo, error) {

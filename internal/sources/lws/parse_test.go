@@ -206,3 +206,34 @@ func TestParseLWSDate(t *testing.T) {
 		t.Errorf("got %v, want %v", t1, want)
 	}
 }
+
+func TestParseSenateSponsors(t *testing.T) {
+	ms, err := ParseSenateSponsors(read(t, "get-senate-sponsors.xml"))
+	if err != nil {
+		t.Fatalf("ParseSenateSponsors: %v", err)
+	}
+	if len(ms) < 40 {
+		t.Errorf("got %d senators, expected near full chamber", len(ms))
+	}
+	first := ms[0]
+	if first.ID == "" || first.Name == "" || first.Agency != "Senate" {
+		t.Errorf("first member malformed: %+v", first)
+	}
+	if first.Party == "" || first.District == "" || first.Email == "" {
+		t.Errorf("expected party/district/email populated; got %+v", first)
+	}
+}
+
+func TestParseHouseSponsors(t *testing.T) {
+	ms, err := ParseHouseSponsors(read(t, "get-house-sponsors.xml"))
+	if err != nil {
+		t.Fatalf("ParseHouseSponsors: %v", err)
+	}
+	if len(ms) < 90 {
+		t.Errorf("got %d house members, expected near full chamber", len(ms))
+	}
+	first := ms[0]
+	if first.Agency != "House" {
+		t.Errorf("first member should have Agency=House: %+v", first)
+	}
+}
