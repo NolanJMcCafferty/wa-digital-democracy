@@ -59,7 +59,7 @@ func TestFirstPageHandler_OK(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	if w.Code == http.StatusNotFound {
-		t.Skip("HB 1501 not ingested in the test DB; run `make daily-bundles` first")
+		t.Skip("HB 1501 not ingested in the test DB; run `make daily` first")
 	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -170,7 +170,7 @@ func TestGetHearingHandler_OK(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code == http.StatusNotFound {
-		t.Skip("agenda item 27885 (HB 1501) not ingested in the test DB; run `make daily-bundles` first")
+		t.Skip("agenda item 27885 (HB 1501) not ingested in the test DB; run `make daily` first")
 	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())

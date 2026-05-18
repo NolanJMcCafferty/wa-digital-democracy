@@ -52,7 +52,6 @@ SUBCOMMANDS:
   ingest-tvw         Pull TVW/Invintus event detail + VTT
   match-hearing      Compute meeting<->TVW match for a candidate
   build-bundle       Assemble the JSON bundle for a selected demo
-  build-bundles      Build bundles for every entry in selected_bills.yml (daily batch)
   ingest-session     Ingest LWS metadata for every bill in a biennium (no hearings)
   discover-hearings  Auto-fill CSI/TVW IDs on every LWS hearing in a biennium
   ingest-hearings    Run the full pipeline for every discovered agenda item
@@ -82,8 +81,6 @@ func main() {
 		runStub(cmd, args, "phase 3")
 	case "build-bundle":
 		os.Exit(runBuildBundle(args))
-	case "build-bundles":
-		os.Exit(runBuildBundles(args))
 	case "ingest-session":
 		os.Exit(runIngestSession(args))
 	case "discover-hearings":
@@ -281,7 +278,7 @@ func runBuildBundle(args []string) int {
 }
 
 // buildDeps groups the long-lived process-wide dependencies that build-bundle
-// and build-bundles share. Construct once per process via newBuildDeps.
+// and ingest-hearings share. Construct once per process via newBuildDeps.
 type buildDeps struct {
 	store      *db.Store
 	httpClient *httpx.Client
@@ -418,119 +415,10 @@ func buildOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, o
 	return outPath, nil
 }
 
-// runBuildBundles implements `wa-dd build-bundles`: the daily-batch driver.
-// Reads config/selected_bills.yml, runs buildOne per entry, isolates per-bill
-// errors, and writes a run-summary JSON next to the bundles. Exits non-zero if
-// any bill failed so cron mail flags the run.
-func runBuildBundles(args []string) int {
-	fs := flag.NewFlagSet("build-bundles", flag.ContinueOnError)
-	var (
-		cfgPath   = fs.String("config", "config/selected_bills.yml", "path to selected_bills.yml")
-		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundles are written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per legislative host")
-	)
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	bills, err := config.LoadSelectedBills(*cfgPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundles: %v\n", err)
-		return 1
-	}
-
-	deps, cleanup, err := newBuildDeps(ctx, *dsn, *rawDir, *rateLimit)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundles: %v\n", err)
-		return 1
-	}
-	defer cleanup()
-
-	type result struct {
-		Bill        string `json:"bill"`
-		Status      string `json:"status"` // "ok" | "failed"
-		DurationMS  int64  `json:"duration_ms"`
-		BundlePath  string `json:"bundle_path,omitempty"`
-		Error       string `json:"error,omitempty"`
-	}
-	results := make([]result, 0, len(bills.Bills))
-	startedAt := time.Now()
-	failures := 0
-
-	for i := range bills.Bills {
-		demo := &bills.Bills[i]
-		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(bills.Bills), demo.BillID())
-		fmt.Fprintf(os.Stderr, "==> %s starting\n", prefix)
-
-		logf := func(s string) { fmt.Fprintf(os.Stderr, "    %s\n", s) }
-		t0 := time.Now()
-		bundlePath, err := buildOne(ctx, deps, demo, *outDir, logf)
-		dur := time.Since(t0)
-		if err != nil {
-			failures++
-			fmt.Fprintf(os.Stderr, "    %s FAIL (%s): %v\n", prefix, dur.Round(time.Millisecond), err)
-			results = append(results, result{
-				Bill:       demo.BillID(),
-				Status:     "failed",
-				DurationMS: dur.Milliseconds(),
-				Error:      err.Error(),
-			})
-			// Honor cancellation — don't keep iterating after Ctrl-C / SIGTERM.
-			if ctx.Err() != nil {
-				break
-			}
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "    %s ok (%s)\n", prefix, dur.Round(time.Millisecond))
-		results = append(results, result{
-			Bill:       demo.BillID(),
-			Status:     "ok",
-			DurationMS: dur.Milliseconds(),
-			BundlePath: filepath.Base(bundlePath),
-		})
-	}
-
-	summary := struct {
-		StartedAt  time.Time `json:"started_at"`
-		FinishedAt time.Time `json:"finished_at"`
-		Total      int       `json:"total"`
-		Succeeded  int       `json:"succeeded"`
-		Failed     int       `json:"failed"`
-		Results    []result  `json:"results"`
-	}{
-		StartedAt:  startedAt,
-		FinishedAt: time.Now(),
-		Total:      len(results),
-		Succeeded:  len(results) - failures,
-		Failed:     failures,
-		Results:    results,
-	}
-	summaryPath := filepath.Join(*outDir, "_run.json")
-	if err := writeJSON(summaryPath, summary); err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundles: write _run.json: %v\n", err)
-		// Don't mask a successful batch with a write-summary failure.
-		if failures == 0 {
-			return 1
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "==> done: %d ok, %d failed (%s)\n",
-		summary.Succeeded, summary.Failed, summary.FinishedAt.Sub(summary.StartedAt).Round(time.Millisecond))
-	if failures > 0 {
-		return 1
-	}
-	return 0
-}
-
 // runIngestSession implements `wa-dd ingest-session`: bulk-pull every
 // bill in a biennium from LWS GetLegislationByYear and run the metadata
-// -only pipeline (just IngestBill) per bill. Hearings/testimony stay
-// curated via `wa-dd build-bundles` + selected_bills.yml.
+// -only pipeline (just IngestBill) per bill. Hearings/testimony are
+// filled in by `wa-dd discover-hearings` + `wa-dd ingest-hearings`.
 func runIngestSession(args []string) int {
 	fs := flag.NewFlagSet("ingest-session", flag.ContinueOnError)
 	var (

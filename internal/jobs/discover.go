@@ -14,10 +14,9 @@ import (
 
 // Auto-discovery turns LWS-reported hearings into the (CSI agenda, TVW
 // event) join keys the curated pipeline needs. The pipeline today
-// requires the operator to paste those into config/selected_bills.yml;
-// the Discoverer fills them in directly from CSI and TVW so we can run
-// the full ingest for every hearing the legislature reports, not just
-// the ones an operator manually wrote down.
+// fills the (CSI agenda, TVW event) join keys directly from CSI and TVW
+// so we can run the full ingest for every hearing the legislature
+// reports.
 //
 // Caching policy: the three CSI directory calls (committees, meetings
 // per committee, agenda items per meeting) are stable within a nightly

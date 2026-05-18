@@ -18,8 +18,8 @@ var ErrBillNotFound = errors.New("firstpage: bill not ingested")
 
 // LookupSelectedDemo reconstructs a SelectedDemo for a bill by joining
 // against the agenda_item + hearing tables Phase 4's ingest pipeline
-// populated. The CLI batch (`wa-dd build-bundles`) reads the same shape
-// from selected_bills.yml; the API path reads it from Postgres.
+// populated. The API path reads it from Postgres directly; the singular
+// `wa-dd build-bundle` reads it from config/selected_demo.yml.
 //
 // When a bill has multiple hearings (e.g. House referral and Senate
 // referral), the most recent hearing wins. That's the v1 default; if a

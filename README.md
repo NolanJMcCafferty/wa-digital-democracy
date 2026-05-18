@@ -59,7 +59,7 @@ port or against a remote dev DB.
 
 ## Daily batch
 
-Four cooperating ingestions, chained by `make daily`. All four are
+Three cooperating ingestions, chained by `make daily`. All three are
 idempotent and safe to re-run:
 
 1. **`make ingest-session`** — pulls **every bill in the biennium** from
@@ -85,12 +85,6 @@ idempotent and safe to re-run:
    ingested"). This is what produces the rich bill-hearing pages.
    Summary: `data/processed/_ingest.json`.
 
-4. **`make daily-bundles`** — operator overrides. Re-runs the curated
-   pipeline for every entry in `config/selected_bills.yml`. Useful when
-   discovery missed something and the operator pastes IDs by hand, or
-   when forcing a re-ingest. Summary:
-   `data/processed/bundles/_run.json`.
-
 For nightly cron, one line is enough:
 
 ```cron
@@ -102,19 +96,13 @@ Re-running is cheap in DB writes — `source_record` dedups on
 bumps `fetched_at` for unchanged content — but every run still re-hits
 every upstream API at the configured rate (5 req/sec default).
 
-### When operator curation is still useful
+### One-off curated bundles
 
-Discovery handles the 75% of meetings with a clean Committee Schedules →
-TVW mapping. For the remaining 25% (or anything discovery rejects via
-its committee-name sanity check), the operator can still pin specific
-bill+hearing pairs in `config/selected_bills.yml`:
-
-1. `go run ./cmd/wa-dd find-candidates --issue housing` (or another
-   keyword set in `config/issue_keywords.yml`). This writes
-   `data/processed/candidates.json` and prints a copy-paste-ready table.
-2. Paste the relevant entry into `config/selected_bills.yml` under
-   `bills:` and add the `tvw.event_id` from the TVW website.
-3. `INVINTUS_EMBEDDER_KEY=… make daily-bundles`.
+`wa-dd build-bundle --config config/selected_demo.yml` is still
+available for the original single-bill demo path (Phase 2's EHB 1501
+verification). It's not part of the daily chain. Use it when you want
+to force a full pipeline run for a single hand-pinned bill — for
+example, regression-testing a parser fix.
 
 ## Layout
 

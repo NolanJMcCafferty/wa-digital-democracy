@@ -11,19 +11,18 @@ where things land, and how to debug a stuck or misbehaving run.
 
 ```
                      nightly cron: make daily
-        ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
-        │                  │                  │                  │                  │
-   ingest-session    discover-hearings    ingest-hearings    daily-bundles
-   (~70 min)         (~few min)           (variable)         (variable)
+        ┌──────────────────┬──────────────────┬──────────────────┐
         │                  │                  │                  │
-   LWS metadata      CSI agenda IDs       full pipeline       curated overrides
-   for ~5,000 bills  + TVW event IDs      (CSI testifiers,    (operator-pinned
-   in the biennium   on every hearing      TVW captions,       bills in
-                     LWS reports           transcript          selected_bills.yml)
-                                           segments,
+   ingest-session    discover-hearings    ingest-hearings
+   (~70 min)         (~few min)           (variable)
+        │                  │                  │
+   LWS metadata      CSI agenda IDs       full pipeline
+   for ~5,000 bills  + TVW event IDs      (CSI testifiers,
+   in the biennium   on every hearing      TVW captions,
+                     LWS reports           transcript segments,
                                            speakers, PDC)
-        │                  │                  │                  │
-        └──────────────────┴────────┬─────────┴──────────────────┘
+        │                  │                  │
+        └──────────────────┴────────┬─────────┘
                                     ▼
                               Postgres (truth)
                                     ▼
@@ -32,11 +31,10 @@ where things land, and how to debug a stuck or misbehaving run.
                        Next.js frontend at :3000
 ```
 
-The same Bundle JSON shape is produced by `firstpage.Build` regardless of
-which path populated the underlying Postgres rows. The frontend never
-distinguishes "auto-discovered" from "operator-curated" data.
+The same Bundle JSON shape is produced by `firstpage.Build` regardless
+of which path populated the underlying Postgres rows.
 
-## The four passes
+## The three passes
 
 Each pass writes to Postgres directly. Each is idempotent — re-running
 just bumps `fetched_at` on `source_record` rows where bytes are
@@ -190,7 +188,7 @@ fetch the actual testimony, video captions, and downstream derivatives.
   via `Store.ListDiscoveredAgendaItems`.
 - For each row, calls `firstpage.LookupSelectedDemoByAgendaItem` to
   rebuild a `*config.SelectedDemo` from the DB (no YAML parsing).
-- Calls `buildOne` (the same function the curated `build-bundles` uses)
+- Calls `buildOne` (the same function `build-bundle` uses for one-offs)
   which runs `Pipeline.Run`'s 6 steps and writes the bundle JSON
   snapshot.
 
@@ -233,39 +231,21 @@ hearings → tens of minutes.
 `internal/jobs/segment_transcript.go`,
 `internal/jobs/match_speakers.go`, `internal/jobs/pdc_context.go`.
 
-### 4. `wa-dd build-bundles` (operator overrides)
+### One-off: `wa-dd build-bundle` (singular)
 
-**What it does:** runs the same 6-step pipeline as `ingest-hearings`,
-but driven by `config/selected_bills.yml` instead of the DB. This is
-the manual fallback for cases discovery missed (~25% of meetings,
-plus anything LWS doesn't report a hearing for).
+Not part of the daily chain. Runs the full 6-step pipeline for a
+single bill pinned by `config/selected_demo.yml`. Phase 2's EHB 1501
+verification used this; it's still the cleanest way to force-reingest
+a specific bill on demand (e.g. to regression-test a parser fix).
 
-**Why keep it:** operators can pin a specific bill+hearing+TVW event
-combination by hand, e.g. when:
-
-- A hearing's TVW title doesn't contain the committee name
-  (sanity-check rejection).
-- LWS doesn't report a hearing that actually happened (rare, but
-  possible — committees sometimes add bills informally).
-- The operator wants to force a re-ingest of a specific bill (e.g.
-  after fixing a regex bug).
-
-**Workflow:**
-
-1. `wa-dd find-candidates --issue housing` — scans CSI committees and
-   writes `data/processed/candidates.json` with copy-paste-ready IDs
-   per candidate.
-2. The operator picks 1–N candidates and pastes their IDs into
-   `config/selected_bills.yml` under `bills:` (along with a
-   `tvw.event_id` looked up from the TVW website).
-3. `INVINTUS_EMBEDDER_KEY=… make daily-bundles`.
-
-**Code:** `cmd/wa-dd/main.go` (`runBuildBundles`, `runFindCandidates`).
+`wa-dd find-candidates --issue housing` is the companion tool — it
+writes `data/processed/candidates.json` with copy-paste-ready IDs the
+operator pastes into `selected_demo.yml`.
 
 ## Postgres tables
 
-The schema is defined in `db/migrations/0001_initial.sql`. The four
-passes interact with these tables:
+The schema is defined in `db/migrations/0001_initial.sql`. The passes
+interact with these tables:
 
 | Table | Populated by | Notes |
 |---|---|---|
@@ -297,10 +277,10 @@ source_record row with no per-step boilerplate.
 
 ## Daily orchestration
 
-`make daily` chains the four passes:
+`make daily` chains the three passes:
 
 ```makefile
-daily: ingest-session discover-hearings ingest-hearings daily-bundles
+daily: ingest-session discover-hearings ingest-hearings
 ```
 
 For nightly cron:
@@ -317,13 +297,9 @@ The order matters when fresh:
    and creates `agenda_item` rows.
 3. `ingest-hearings` runs the full pipeline against discovered agenda
    items.
-4. `daily-bundles` runs the full pipeline against operator-curated
-   entries.
 
-If any pass exits non-zero, cron mail will surface it. The chain
-doesn't stop on failure — make's default behavior would be to halt,
-but each step's per-bill isolation means most failures are partial,
-not blocking.
+If any pass exits non-zero, cron mail will surface it. Each step's
+per-bill isolation means most failures are partial, not blocking.
 
 ## Rate limits and politeness
 
@@ -355,32 +331,19 @@ A previous bug stored Pacific wall-clock as UTC, causing meetings to
 render as "2:30 AM PST" instead of "10:30 AM PST". That's fixed at the
 parse layer and tested.
 
-## Auto-discovery vs operator curation
-
-The two paths produce identical Bundle JSON, but reach the data via
-different routes:
-
-| | Auto-discovery (`discover-hearings` + `ingest-hearings`) | Operator curation (`build-bundles` + `selected_bills.yml`) |
-|---|---|---|
-| Trigger | Every LWS-reported hearing in the biennium | Operator pastes IDs into YAML |
-| CSI agenda IDs | Matched against CSI lists by date + bill number | Pasted from `find-candidates` output |
-| TVW event ID | Matched against TVW WP archive by date + committee name | Looked up by hand from the TVW website |
-| Coverage | ~75% of LWS-reported hearings (Phase 0) | Whatever the operator picks |
-| Failure mode | Skip + log; no false positives (sanity checks) | Won't run if YAML invalid; loud at parse time |
-| Best for | Bulk coverage of the session | Hand-fixing discovery misses, forcing re-ingest |
-
 ## Re-running
 
-All four passes are safe to re-run. What changes:
+All three passes are safe to re-run. What changes:
 
 - `bill`, `legislator`, `bill_sponsor`, `bill_status_change`,
   `hearing`, `agenda_item`, `tvw_event`, `organization` — UPSERT, so
   re-running just refreshes timestamps and any changed fields.
 - `testifier`, `transcript_segment`, `org_context_record` — these are
   insert-only with no dedupe. Re-running creates duplicates today.
-  In practice the curated path runs against fresh agenda_item rows or
-  re-ingests the demo set; neither hits this. Worth fixing eventually,
-  but not blocking.
+  `ingest-hearings` filters to agenda items without testifier rows, so
+  the routine nightly path doesn't hit this; one-off `build-bundle`
+  re-runs against an already-ingested bill will. Worth fixing
+  eventually, but not blocking.
 - `source_record` — UPSERT on `(system, endpoint, url, content_hash,
   transform_version)`. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new
@@ -391,7 +354,7 @@ All four passes are safe to re-run. What changes:
 ## Where to look when something breaks
 
 - **Per-step error?** `data/processed/_session.json`,
-  `_discovery.json`, `_ingest.json`, `bundles/_run.json`. Each entry
+  `_discovery.json`, `_ingest.json`. Each entry
   has a `status` and `error` field per bill or hearing.
 - **Per-fetch error?** `ingestion_run` table — includes the step name,
   start/finish timestamps, and the error message. Filter by
@@ -408,7 +371,7 @@ All four passes are safe to re-run. What changes:
 
 ## Out of scope today
 
-- Parallelism across bills. All four passes are serial. At 5 req/sec
+- Parallelism across bills. All three passes are serial. At 5 req/sec
   the bottleneck is upstream rate limits, not local CPU; concurrency
   would primarily help if we raise the rate.
 - Per-step selective re-fetching. Today every run re-hits every
