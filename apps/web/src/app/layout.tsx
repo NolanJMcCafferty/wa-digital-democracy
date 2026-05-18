@@ -21,6 +21,9 @@ export default function RootLayout({
               WA Digital Democracy
             </a>
             <nav className="flex items-center gap-4 text-xs uppercase tracking-wider text-stone-500">
+              <a href="/issues/housing" className="hover:text-stone-900">
+                Housing
+              </a>
               <a href="/hearings" className="hover:text-stone-900">
                 Hearings
               </a>

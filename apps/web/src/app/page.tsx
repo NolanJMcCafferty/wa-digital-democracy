@@ -1,6 +1,15 @@
 import Link from "next/link";
 import { listHearingBundles, listLocalBundles } from "@/lib/loadBundle";
 
+const ISSUE_PAGES = [
+  {
+    slug: "housing",
+    title: "Housing",
+    description:
+      "Bills, hearings, testimony positions, organizations, and source coverage for the housing MVP slice.",
+  },
+];
+
 export default async function HomePage() {
   const [bundles, hearings] = await Promise.all([
     listLocalBundles(),
@@ -19,6 +28,38 @@ export default async function HomePage() {
           from live LWS, CSI, TVW/Invintus, and PDC data.
         </p>
       </div>
+
+      <section aria-labelledby="issues-heading" className="space-y-3">
+        <div className="flex items-baseline justify-between gap-4">
+          <h2 id="issues-heading" className="text-xl font-semibold text-stone-900">
+            Issues
+          </h2>
+          <span className="text-xs uppercase tracking-wider text-stone-500">
+            {ISSUE_PAGES.length} page{ISSUE_PAGES.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {ISSUE_PAGES.map((issue) => (
+            <div
+              key={issue.slug}
+              className="rounded border border-stone-300 bg-white p-4"
+            >
+              <div className="flex items-baseline justify-between gap-4">
+                <div>
+                  <h3 className="font-semibold text-stone-900">{issue.title}</h3>
+                  <p className="text-sm text-stone-600">{issue.description}</p>
+                </div>
+                <Link
+                  href={`/issues/${issue.slug}`}
+                  className="text-sm text-blue-700 underline hover:text-blue-900"
+                >
+                  View →
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {hearings.length > 0 ? (
         <div className="rounded border border-stone-300 bg-white p-4">
