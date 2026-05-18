@@ -32,6 +32,7 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/datawa"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/fiscalwa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
@@ -65,6 +66,8 @@ SUBCOMMANDS:
                      Pull DataWA IT contracts report rows into Postgres
   ingest-webs-vendors
                      Pull DataWA WEBS vendor rows into Postgres
+  ingest-fiscal-vendor-payments
+                     Pull fiscal.wa.gov Open Checkbook vendor payments into Postgres
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -107,6 +110,8 @@ func main() {
 		os.Exit(runIngestITContracts(args))
 	case "ingest-webs-vendors":
 		os.Exit(runIngestWEBSVendors(args))
+	case "ingest-fiscal-vendor-payments":
+		os.Exit(runIngestFiscalVendorPayments(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -1393,6 +1398,93 @@ func runIngestWEBSVendors(args []string) int {
 		upserted++
 	}
 	fmt.Fprintf(os.Stderr, "==> ingested %d %s WEBS vendor rows\n", upserted, datawa.DatasetWEBSVendors)
+	return 0
+}
+
+// runIngestFiscalVendorPayments implements `wa-dd ingest-fiscal-vendor-payments`:
+// pulls the current fiscal.wa.gov Open Checkbook workbook into a normalized
+// vendor-payment table. This is a first budget/spending slice; proposal-level
+// operating/capital/transportation budgets remain separate source families.
+func runIngestFiscalVendorPayments(args []string) int {
+	fs := flag.NewFlagSet("ingest-fiscal-vendor-payments", flag.ContinueOnError)
+	var (
+		limit     = fs.Int("limit", 1000, "maximum rows to upsert after parsing (0 = all rows)")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 1.0, "max requests/sec for fiscal.wa.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      2 * time.Minute,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"fiscal.wa.gov": *rateLimit,
+		},
+	})
+	client := fiscalwa.New(httpClient)
+	rows, fetch, err := client.FetchVendorPaymentsWithSource(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: fetch/parse: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-fiscal-vendor-payments: source record was not captured")
+		return 1
+	}
+
+	var upserted int
+	for _, row := range rows {
+		if *limit > 0 && upserted >= *limit {
+			break
+		}
+		if err := store.UpsertFiscalWAVendorPayment(ctx, db.UpsertFiscalWAVendorPaymentParams{
+			SourceDatasetID: row.SourceDatasetID,
+			SourceRowID:     row.SourceRowID,
+			Biennium:        row.Biennium,
+			FiscalYear:      row.FiscalYear,
+			FiscalMonth:     row.FiscalMonth,
+			AgencyNumber:    row.AgencyNumber,
+			AgencyName:      row.AgencyName,
+			ObjectCode:      row.ObjectCode,
+			ObjectCategory:  row.ObjectCategory,
+			SubobjectCode:   row.SubobjectCode,
+			SubobjectName:   row.SubobjectName,
+			VendorName:      row.VendorName,
+			Amount:          normalizeMoney(row.Amount),
+			RawFields: map[string]any{
+				"biennium": row.Biennium, "fiscal_year": row.FiscalYear, "fiscal_month": row.FiscalMonth,
+				"agency_number": row.AgencyNumber, "agency_name": row.AgencyName,
+				"object_code": row.ObjectCode, "object_category": row.ObjectCategory,
+				"subobject_code": row.SubobjectCode, "subobject_name": row.SubobjectName,
+				"vendor_name": row.VendorName, "amount": row.Amount,
+			},
+			SourceRecordID: fetch.SourceRecordID,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: upsert row %s: %v\n", row.SourceRowID, err)
+			return 1
+		}
+		upserted++
+	}
+	fmt.Fprintf(os.Stderr, "==> ingested %d %s vendor payment rows\n", upserted, fiscalwa.VendorPaymentsDatasetID)
 	return 0
 }
 

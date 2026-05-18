@@ -1755,6 +1755,67 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 	return nil
 }
 
+// UpsertFiscalWAVendorPaymentParams is the normalized row shape for
+// fiscalwa_vendor_payment.
+type UpsertFiscalWAVendorPaymentParams struct {
+	SourceDatasetID string
+	SourceRowID     string
+	Biennium        string
+	FiscalYear      int
+	FiscalMonth     string
+	AgencyNumber    string
+	AgencyName      string
+	ObjectCode      string
+	ObjectCategory  string
+	SubobjectCode   string
+	SubobjectName   string
+	VendorName      string
+	Amount          string
+	RawFields       map[string]any
+	SourceRecordID  int64
+}
+
+// UpsertFiscalWAVendorPayment inserts or updates one fiscal.wa.gov vendor
+// payment row from the Open Checkbook workbook.
+func (s *Store) UpsertFiscalWAVendorPayment(ctx context.Context, p UpsertFiscalWAVendorPaymentParams) error {
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO fiscalwa_vendor_payment (
+  source_dataset_id, source_row_id, biennium, fiscal_year, fiscal_month,
+  agency_number, agency_name, object_code, object_category, subobject_code,
+  subobject_name, vendor_name, amount, raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,NULLIF($4,0),$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,'')::numeric,$14::jsonb,$15
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  biennium = EXCLUDED.biennium,
+  fiscal_year = EXCLUDED.fiscal_year,
+  fiscal_month = EXCLUDED.fiscal_month,
+  agency_number = EXCLUDED.agency_number,
+  agency_name = EXCLUDED.agency_name,
+  object_code = EXCLUDED.object_code,
+  object_category = EXCLUDED.object_category,
+  subobject_code = EXCLUDED.subobject_code,
+  subobject_name = EXCLUDED.subobject_name,
+  vendor_name = EXCLUDED.vendor_name,
+  amount = EXCLUDED.amount,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, strOrNull(p.Biennium), p.FiscalYear, strOrNull(p.FiscalMonth),
+		strOrNull(p.AgencyNumber), strOrNull(p.AgencyName), strOrNull(p.ObjectCode), strOrNull(p.ObjectCategory),
+		strOrNull(p.SubobjectCode), strOrNull(p.SubobjectName), strOrNull(p.VendorName), p.Amount, string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert fiscalwa_vendor_payment: %w", err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Auto-discovery queries — back the `wa-dd discover-hearings` and
 // `wa-dd ingest-hearings` commands.

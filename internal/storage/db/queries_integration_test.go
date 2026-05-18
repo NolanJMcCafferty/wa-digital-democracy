@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM fiscalwa_vendor_payment WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
@@ -378,5 +379,50 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 	}
 	if count != 1 || company != "Sunrise Technologies Updated" || normalized != "SUNRISE TECHNOLOGIES UPDATED" {
 		t.Fatalf("count=%d company=%q normalized=%q", count, company, normalized)
+	}
+}
+
+func TestUpsertFiscalWAVendorPayment_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "fiscal_wa", "fiscalwa-vendor-payment-test-1")
+
+	params := db.UpsertFiscalWAVendorPaymentParams{
+		SourceDatasetID: "vendor-payments-2025-27",
+		SourceRowID:     "row-1",
+		Biennium:        "2025-27",
+		FiscalYear:      2026,
+		FiscalMonth:     "01",
+		AgencyNumber:    "300",
+		AgencyName:      "Social and Health Services",
+		ObjectCode:      "E",
+		ObjectCategory:  "Goods and Services",
+		SubobjectCode:   "ER",
+		SubobjectName:   "Other Contractual Services",
+		VendorName:      "HOME CARE MASTERS LLC",
+		Amount:          "1402.27",
+		RawFields:       map[string]any{"source": "first"},
+		SourceRecordID:  srID,
+	}
+	if err := store.UpsertFiscalWAVendorPayment(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.Amount = "1500.00"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertFiscalWAVendorPayment(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(amount)::text
+  FROM fiscalwa_vendor_payment
+ WHERE source_dataset_id = 'vendor-payments-2025-27' AND source_row_id = 'row-1';`).Scan(&count, &amount); err != nil {
+		t.Fatalf("query payment: %v", err)
+	}
+	if count != 1 || amount != "1500.00" {
+		t.Fatalf("count=%d amount=%q", count, amount)
 	}
 }
