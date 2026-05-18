@@ -5,6 +5,7 @@ DSN ?= postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable
 COMPOSE := docker compose -f infra/docker-compose.yml
 ENV_FILE ?= .env.local
 GO ?= go
+GOOSE ?= $(GO) run -modfile=tools/goose/go.mod github.com/pressly/goose/v3/cmd/goose
 
 ifneq (,$(wildcard $(ENV_FILE)))
 include $(ENV_FILE)
@@ -31,37 +32,11 @@ ps:           ## Show service status
 psql:         ## Open psql shell against local Postgres
 	PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd
 
-migrate-up:   ## Apply all migrations (uses goose, host psql, or container psql)
-	@if command -v goose >/dev/null; then \
-		goose -dir db/migrations postgres "$(DSN)" up; \
-	else \
-		echo "goose not installed; applying with psql (Up sections only)"; \
-		if command -v psql >/dev/null; then \
-			for f in db/migrations/*.sql; do \
-				awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' $$f \
-				  | grep -vE '^-- \+goose Statement(Begin|End)' \
-				  | PGPASSWORD=wadd psql -h localhost -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
-			done; \
-		elif docker ps --format '{{.Names}}' | grep -qx wa-dd-postgres; then \
-			for f in db/migrations/*.sql; do \
-				awk '/-- \+goose Up/{flag=1; next} /-- \+goose Down/{flag=0} flag' $$f \
-				  | grep -vE '^-- \+goose Statement(Begin|End)' \
-				  | docker exec -i wa-dd-postgres psql -U wadd -d wa_dd -v ON_ERROR_STOP=1 -q; \
-			done; \
-		else \
-			echo "psql not installed and wa-dd-postgres is not running. Run 'make up' first or install psql/goose."; \
-			exit 1; \
-		fi; \
-	fi
+migrate-up:   ## Apply all migrations with project-pinned goose
+	$(GOOSE) -dir db/migrations postgres "$(DSN)" up
 
-migrate-down: ## Roll back the last migration
-	@if command -v goose >/dev/null; then \
-		goose -dir db/migrations postgres "$(DSN)" down; \
-	else \
-		echo "goose not installed; cannot run -down. Install with:"; \
-		echo "  go install github.com/pressly/goose/v3/cmd/goose@latest"; \
-		exit 1; \
-	fi
+migrate-down: ## Roll back the last migration with project-pinned goose
+	$(GOOSE) -dir db/migrations postgres "$(DSN)" down
 
 migrate-fresh: nuke up    ## Wipe DB and re-migrate
 	@sleep 2

@@ -30,7 +30,7 @@ The first-page architecture is "Go produces a JSON bundle; Next.js renders the b
 ```sh
 cp .env.example .env.local  # fill in local-only secrets; .env.local is gitignored
 make up                     # start Postgres in Docker
-make migrate-up             # apply schema (uses goose, host psql, or container psql)
+make migrate-up             # apply schema with project-pinned Goose
 make build-demo             # build the selected first-page JSON bundle
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
