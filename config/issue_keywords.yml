@@ -1,6 +1,31 @@
 # Issue → keyword sets used by `wa-dd find-candidates`.
 # Per Blueprint §"Recommended first issue/bill" (lines 43–69).
 
+health:
+  - health
+  - health care
+  - healthcare
+  - public health
+  - hospital
+  - hospitals
+  - insurance
+  - Medicaid
+  - behavioral health
+  - mental health
+  - substance use
+  - long-term care
+  - nursing
+  - provider
+  - providers
+  - prescription drugs
+  - pharmacy
+  - reproductive health
+  - Department of Health
+  - DOH
+  - Health Care Authority
+  - HCA
+  - DSHS
+
 housing:
   - housing
   - zoning

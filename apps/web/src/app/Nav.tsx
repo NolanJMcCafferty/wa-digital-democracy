@@ -7,7 +7,11 @@ import { useEffect, useRef, useState } from "react";
 // pages land; when Issues becomes a single link again it can collapse
 // back to the simple <a> form below.
 const ISSUE_LINKS = [
+  { href: "/issues/climate", label: "Climate" },
+  { href: "/issues/education", label: "Education" },
+  { href: "/issues/health", label: "Health" },
   { href: "/issues/housing", label: "Housing" },
+  { href: "/issues/public-safety", label: "Public Safety" },
   { href: "/issues/transportation", label: "Transportation" },
 ];
 
