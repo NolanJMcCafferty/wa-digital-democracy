@@ -931,3 +931,100 @@ SELECT source_system, COUNT(*), MAX(fetched_at), ARRAY_AGG(DISTINCT source_endpo
 	}
 	return out, rows.Err()
 }
+
+// ---------------------------------------------------------------------------
+// Auto-discovery queries — back the `wa-dd discover-hearings` and
+// `wa-dd ingest-hearings` commands.
+// ---------------------------------------------------------------------------
+
+// HearingForDiscovery is one row to feed into the Discoverer. We hand
+// out only the fields we need to match against CSI/TVW and the
+// hearing.id we'll write back into.
+type HearingForDiscovery struct {
+	HearingID        int64
+	BillID           int64
+	BillPrefix       string
+	BillNumber       int
+	CommitteeName    string
+	CommitteeAcronym string
+	Chamber          string
+	MeetingDateTime  time.Time
+	SourceRecordID   int64 // reused for the discovery-driven UpsertHearing call
+}
+
+// ListHearingsForDiscovery returns hearings whose CSI/TVW IDs are still
+// blank for bills in the given biennium. These are the candidates for
+// auto-discovery. Hearings already enriched (have either a TVW event ID
+// or a Committee Schedules agenda ID) are skipped.
+func (s *Store) ListHearingsForDiscovery(ctx context.Context, biennium string) ([]HearingForDiscovery, error) {
+	const q = `
+SELECT h.id, b.id, b.prefix, b.number,
+       h.committee_name, COALESCE(h.committee_acronym, ''), h.chamber,
+       h.meeting_datetime, h.source_record_id
+  FROM hearing h
+  JOIN bill b ON b.id = h.bill_id
+ WHERE b.biennium = $1
+   AND h.tvw_event_id IS NULL
+   AND h.committee_schedule_agenda_id IS NULL
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := s.Pool.Query(ctx, q, biennium)
+	if err != nil {
+		return nil, fmt.Errorf("list hearings for discovery: %w", err)
+	}
+	defer rows.Close()
+	out := []HearingForDiscovery{}
+	for rows.Next() {
+		var h HearingForDiscovery
+		if err := rows.Scan(
+			&h.HearingID, &h.BillID, &h.BillPrefix, &h.BillNumber,
+			&h.CommitteeName, &h.CommitteeAcronym, &h.Chamber,
+			&h.MeetingDateTime, &h.SourceRecordID,
+		); err != nil {
+			return nil, fmt.Errorf("scan hearing: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// DiscoveredAgendaItemRow is one (agenda_item, bill) pair that
+// auto-discovery has populated and is ready for full pipeline ingestion
+// (CSI testifiers + TVW captions + segments + speakers + PDC).
+type DiscoveredAgendaItemRow struct {
+	CSIAgendaItemID string
+	Biennium        string
+	BillPrefix      string
+	BillNumber      int
+}
+
+// ListDiscoveredAgendaItems returns agenda_item rows where (a) the
+// hearing has a tvw_event_id (so transcript ingest can run) and (b) no
+// testifier rows have been ingested yet for that agenda_item. Used by
+// `wa-dd ingest-hearings` to feed buildOne.
+func (s *Store) ListDiscoveredAgendaItems(ctx context.Context, biennium string) ([]DiscoveredAgendaItemRow, error) {
+	const q = `
+SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE b.biennium = $1
+   AND h.tvw_event_id IS NOT NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM testifier t WHERE t.agenda_item_id = a.id
+   )
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := s.Pool.Query(ctx, q, biennium)
+	if err != nil {
+		return nil, fmt.Errorf("list discovered agenda items: %w", err)
+	}
+	defer rows.Close()
+	out := []DiscoveredAgendaItemRow{}
+	for rows.Next() {
+		var r DiscoveredAgendaItemRow
+		if err := rows.Scan(&r.CSIAgendaItemID, &r.Biennium, &r.BillPrefix, &r.BillNumber); err != nil {
+			return nil, fmt.Errorf("scan agenda item: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

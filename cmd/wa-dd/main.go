@@ -54,6 +54,8 @@ SUBCOMMANDS:
   build-bundle       Assemble the JSON bundle for a selected demo
   build-bundles      Build bundles for every entry in selected_bills.yml (daily batch)
   ingest-session     Ingest LWS metadata for every bill in a biennium (no hearings)
+  discover-hearings  Auto-fill CSI/TVW IDs on every LWS hearing in a biennium
+  ingest-hearings    Run the full pipeline for every discovered agenda item
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -84,6 +86,10 @@ func main() {
 		os.Exit(runBuildBundles(args))
 	case "ingest-session":
 		os.Exit(runIngestSession(args))
+	case "discover-hearings":
+		os.Exit(runDiscoverHearings(args))
+	case "ingest-hearings":
+		os.Exit(runIngestHearings(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -726,4 +732,304 @@ func parseTypeFilter(s string) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+// discoveryDeps adds CSI + TVW to the metadata-only set. TVW is
+// constructed without an embedder key — only FetchWPVideoArchive is
+// used during discovery, and that endpoint doesn't require it.
+type discoveryDeps struct {
+	store      *db.Store
+	httpClient *httpx.Client
+	csiClient  *csi.Client
+	tvwClient  *tvw.Client
+}
+
+func newDiscoveryDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*discoveryDeps, func(), error) {
+	store, err := db.Open(ctx, dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db open: %w", err)
+	}
+	cleanup := func() { store.Close() }
+
+	objs, err := objectstore.NewFS(rawDir)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("objectstore: %w", err)
+	}
+	sink := db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"}
+
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         sink,
+		Timeout:      45 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"app.leg.wa.gov":      rateLimit,
+			"tvw.org":             rateLimit,
+			"api.v3.invintus.com": rateLimit,
+		},
+	})
+
+	return &discoveryDeps{
+		store:      store,
+		httpClient: httpClient,
+		csiClient:  csi.New(httpClient),
+		// Empty embedder key is fine: discovery only calls FetchWPVideoArchive,
+		// which hits TVW's WP API and doesn't need it.
+		tvwClient: tvw.New(httpClient, ""),
+	}, cleanup, nil
+}
+
+// runDiscoverHearings implements `wa-dd discover-hearings`: walks every
+// LWS-ingested hearing in the biennium that's still missing CSI/TVW IDs
+// and fills them in via Discoverer. Per-hearing failure isolation;
+// summary at data/processed/_discovery.json.
+func runDiscoverHearings(args []string) int {
+	fs := flag.NewFlagSet("discover-hearings", flag.ContinueOnError)
+	var (
+		biennium  = fs.String("biennium", "2025-26", "Biennium to scan, e.g. 2025-26")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		outDir    = fs.String("out-dir", "data/processed", "where _discovery.json is written")
+		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per CSI/TVW host")
+		limit     = fs.Int("limit", 0, "stop after N hearings (0 = no limit). For smoke tests.")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	deps, cleanup, err := newDiscoveryDeps(ctx, *dsn, *rawDir, *rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "discover-hearings: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	hearings, err := deps.store.ListHearingsForDiscovery(ctx, *biennium)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "discover-hearings: %v\n", err)
+		return 1
+	}
+	if *limit > 0 && len(hearings) > *limit {
+		hearings = hearings[:*limit]
+	}
+	fmt.Fprintf(os.Stderr, "==> %d hearings to discover\n", len(hearings))
+
+	disc := jobs.NewDiscoverer(jobs.DiscoveryDeps{
+		Store: deps.store,
+		CSI:   deps.csiClient,
+		TVW:   deps.tvwClient,
+	})
+
+	type result struct {
+		HearingID    int64  `json:"hearing_id"`
+		Bill         string `json:"bill"`
+		Status       string `json:"status"` // "ok" | "failed" | "no-tvw"
+		CSIAgendaID  string `json:"csi_agenda_item_id,omitempty"`
+		TVWEventID   string `json:"tvw_event_id,omitempty"`
+		Error        string `json:"error,omitempty"`
+		DurationMS   int64  `json:"duration_ms"`
+	}
+	results := make([]result, 0, len(hearings))
+	startedAt := time.Now()
+	failures, partial := 0, 0
+
+	for i, h := range hearings {
+		bill := fmt.Sprintf("%s %d", h.BillPrefix, h.BillNumber)
+		t0 := time.Now()
+		res, err := disc.DiscoverOne(ctx, h)
+		dur := time.Since(t0)
+		if err != nil {
+			failures++
+			fmt.Fprintf(os.Stderr, "[%d/%d] %s FAIL: %v\n", i+1, len(hearings), bill, err)
+			results = append(results, result{
+				HearingID: h.HearingID, Bill: bill, Status: "failed",
+				Error: err.Error(), DurationMS: dur.Milliseconds(),
+			})
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		if err := disc.Commit(ctx, h, res); err != nil {
+			failures++
+			fmt.Fprintf(os.Stderr, "[%d/%d] %s commit FAIL: %v\n", i+1, len(hearings), bill, err)
+			results = append(results, result{
+				HearingID: h.HearingID, Bill: bill, Status: "failed",
+				Error: err.Error(), DurationMS: dur.Milliseconds(),
+			})
+			continue
+		}
+		status := "ok"
+		if res.TVWEventID == "" {
+			status = "no-tvw"
+			partial++
+		}
+		// Quiet per-hearing log; spam at the 50-row mark instead.
+		if (i+1)%50 == 0 || i+1 == len(hearings) {
+			fmt.Fprintf(os.Stderr, "[%d/%d] %s %s (%s)\n", i+1, len(hearings), bill, status, dur.Round(time.Millisecond))
+		}
+		results = append(results, result{
+			HearingID: h.HearingID, Bill: bill, Status: status,
+			CSIAgendaID: res.CSIAgendaItemID, TVWEventID: res.TVWEventID,
+			DurationMS: dur.Milliseconds(),
+		})
+	}
+
+	summary := struct {
+		StartedAt    time.Time `json:"started_at"`
+		FinishedAt   time.Time `json:"finished_at"`
+		Biennium     string    `json:"biennium"`
+		Total        int       `json:"total"`
+		Succeeded    int       `json:"succeeded"`
+		PartialNoTVW int       `json:"partial_no_tvw"`
+		Failed       int       `json:"failed"`
+		Results      []result  `json:"results"`
+	}{
+		StartedAt:    startedAt,
+		FinishedAt:   time.Now(),
+		Biennium:     *biennium,
+		Total:        len(results),
+		Succeeded:    len(results) - failures - partial,
+		PartialNoTVW: partial,
+		Failed:       failures,
+		Results:      results,
+	}
+	if err := writeJSON(filepath.Join(*outDir, "_discovery.json"), summary); err != nil {
+		fmt.Fprintf(os.Stderr, "discover-hearings: write _discovery.json: %v\n", err)
+		if failures == 0 {
+			return 1
+		}
+	}
+	fmt.Fprintf(os.Stderr, "==> done: %d ok, %d no-tvw, %d failed (%s)\n",
+		summary.Succeeded, summary.PartialNoTVW, summary.Failed,
+		summary.FinishedAt.Sub(summary.StartedAt).Round(time.Millisecond))
+	if failures > 0 {
+		return 1
+	}
+	return 0
+}
+
+// runIngestHearings implements `wa-dd ingest-hearings`: for every
+// agenda_item whose hearing has a TVW event but no testifiers yet,
+// run the full curated pipeline (buildOne) so the hearing's testimony,
+// transcript, and PDC context get ingested. Reuses
+// firstpage.LookupSelectedDemoByAgendaItem so we don't re-derive the
+// SelectedDemo by hand.
+func runIngestHearings(args []string) int {
+	fs := flag.NewFlagSet("ingest-hearings", flag.ContinueOnError)
+	var (
+		biennium  = fs.String("biennium", "2025-26", "Biennium to scan, e.g. 2025-26")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		outDir    = fs.String("out-dir", "data/processed/bundles", "where bundle JSON is written")
+		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per legislative host")
+		limit     = fs.Int("limit", 0, "stop after N agenda items (0 = no limit). For smoke tests.")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	deps, cleanup, err := newBuildDeps(ctx, *dsn, *rawDir, *rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-hearings: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	rows, err := deps.store.ListDiscoveredAgendaItems(ctx, *biennium)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-hearings: %v\n", err)
+		return 1
+	}
+	if *limit > 0 && len(rows) > *limit {
+		rows = rows[:*limit]
+	}
+	fmt.Fprintf(os.Stderr, "==> %d agenda items to ingest\n", len(rows))
+
+	type result struct {
+		Bill            string `json:"bill"`
+		CSIAgendaItemID string `json:"csi_agenda_item_id"`
+		Status          string `json:"status"`
+		DurationMS      int64  `json:"duration_ms"`
+		BundlePath      string `json:"bundle_path,omitempty"`
+		Error           string `json:"error,omitempty"`
+	}
+	results := make([]result, 0, len(rows))
+	startedAt := time.Now()
+	failures := 0
+
+	for i, r := range rows {
+		demo, err := firstpage.LookupSelectedDemoByAgendaItem(ctx, deps.store, r.CSIAgendaItemID)
+		if err != nil {
+			failures++
+			fmt.Fprintf(os.Stderr, "[%d/%d] %s lookup FAIL: %v\n", i+1, len(rows), r.CSIAgendaItemID, err)
+			results = append(results, result{
+				Bill: fmt.Sprintf("%s %d", r.BillPrefix, r.BillNumber),
+				CSIAgendaItemID: r.CSIAgendaItemID,
+				Status: "failed", Error: err.Error(),
+			})
+			continue
+		}
+		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(rows), demo.BillID())
+		fmt.Fprintf(os.Stderr, "==> %s starting (agenda=%s)\n", prefix, r.CSIAgendaItemID)
+		t0 := time.Now()
+		logf := func(s string) { fmt.Fprintf(os.Stderr, "    %s\n", s) }
+		bundlePath, err := buildOne(ctx, deps, demo, *outDir, logf)
+		dur := time.Since(t0)
+		if err != nil {
+			failures++
+			fmt.Fprintf(os.Stderr, "    %s FAIL (%s): %v\n", prefix, dur.Round(time.Millisecond), err)
+			results = append(results, result{
+				Bill: demo.BillID(), CSIAgendaItemID: r.CSIAgendaItemID,
+				Status: "failed", Error: err.Error(),
+				DurationMS: dur.Milliseconds(),
+			})
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "    %s ok (%s)\n", prefix, dur.Round(time.Millisecond))
+		results = append(results, result{
+			Bill: demo.BillID(), CSIAgendaItemID: r.CSIAgendaItemID,
+			Status: "ok", DurationMS: dur.Milliseconds(),
+			BundlePath: filepath.Base(bundlePath),
+		})
+	}
+
+	summary := struct {
+		StartedAt  time.Time `json:"started_at"`
+		FinishedAt time.Time `json:"finished_at"`
+		Biennium   string    `json:"biennium"`
+		Total      int       `json:"total"`
+		Succeeded  int       `json:"succeeded"`
+		Failed     int       `json:"failed"`
+		Results    []result  `json:"results"`
+	}{
+		StartedAt: startedAt, FinishedAt: time.Now(),
+		Biennium: *biennium, Total: len(results),
+		Succeeded: len(results) - failures, Failed: failures,
+		Results: results,
+	}
+	if err := writeJSON(filepath.Join(*outDir, "..", "_ingest.json"), summary); err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-hearings: write _ingest.json: %v\n", err)
+		if failures == 0 {
+			return 1
+		}
+	}
+	fmt.Fprintf(os.Stderr, "==> done: %d ok, %d failed (%s)\n",
+		summary.Succeeded, summary.Failed,
+		summary.FinishedAt.Sub(summary.StartedAt).Round(time.Millisecond))
+	if failures > 0 {
+		return 1
+	}
+	return 0
 }

@@ -12,7 +12,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build build-demo vet fmt tidy api ingest-session daily-bundles daily
+.PHONY: help up down nuke ps psql migrate-up migrate-down migrate-fresh test build build-demo vet fmt tidy api ingest-session discover-hearings ingest-hearings daily-bundles daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -68,10 +68,19 @@ api:          ## Run the read-only HTTP API on :8080 (read by the Next.js fronte
 ingest-session: ## Pull LWS metadata for every bill in BIENNIUM (default 2025-26). Used by cron.
 	$(GO) run ./cmd/wa-dd ingest-session --biennium $${BIENNIUM:-2025-26}
 
-daily-bundles: ## Rebuild bundles for every entry in config/selected_bills.yml (used by cron)
+discover-hearings: ## Auto-fill CSI/TVW IDs on every LWS hearing in BIENNIUM
+	$(GO) run ./cmd/wa-dd discover-hearings --biennium $${BIENNIUM:-2025-26}
+
+ingest-hearings: ## Run the full pipeline for every discovered agenda item in BIENNIUM
+	@if [ -z "$$INVINTUS_EMBEDDER_KEY" ]; then \
+		echo "INVINTUS_EMBEDDER_KEY is required (export it or put it in your env)"; exit 1; \
+	fi
+	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26}
+
+daily-bundles: ## Rebuild bundles for every entry in config/selected_bills.yml (operator overrides)
 	@if [ -z "$$INVINTUS_EMBEDDER_KEY" ]; then \
 		echo "INVINTUS_EMBEDDER_KEY is required (export it or put it in your env)"; exit 1; \
 	fi
 	$(GO) run ./cmd/wa-dd build-bundles
 
-daily: ingest-session daily-bundles ## One-call nightly: session-wide metadata + curated hearings/testimony
+daily: ingest-session discover-hearings ingest-hearings daily-bundles ## One-call nightly: metadata + hearing discovery + auto-ingest + curated overrides

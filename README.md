@@ -59,38 +59,37 @@ port or against a remote dev DB.
 
 ## Daily batch
 
-Two cooperating ingestions, both safe to re-run:
+Four cooperating ingestions, chained by `make daily`. All four are
+idempotent and safe to re-run:
 
 1. **`make ingest-session`** — pulls **every bill in the biennium** from
-   LWS (`GetLegislationByYear`) and stores metadata + sponsors + status
-   timeline. Hearings/testimony/video are **not** touched here. ~5,000
-   bills × ~2 req/sec means a full session run takes 1–2 hours. Output
-   summary at `data/processed/_session.json`.
+   LWS `GetLegislationByYear` and stores metadata + sponsors + status
+   timeline + hearing references. Hearings/testimony/video are **not**
+   touched here — just the LWS-side claims about each bill. ~5,000
+   bills at 5 req/sec, runtime ~70 minutes. Summary:
+   `data/processed/_session.json`.
 
-2. **`make daily-bundles`** — re-runs the full pipeline (LWS + CSI + TVW
-   + transcript + speakers + PDC) for every entry in
-   `config/selected_bills.yml`. This is the curated subset where we know
-   the TVW event ID and CSI agenda IDs, so we can render full
-   bill-hearing pages with testimony and transcripts.
+2. **`make discover-hearings`** — for every LWS-reported hearing whose
+   CSI/TVW IDs are still blank, scans CSI committees + meetings + agenda
+   items and TVW WP video posts to fill them in. Failure isolation per
+   hearing; missing TVW match is non-fatal (the CSI testifier list
+   still gets ingested). Caches CSI committee/meeting lists and TVW
+   per-day archives so the wall-clock cost is dominated by
+   `ListAgendaItems` (~one call per unique meeting). Summary:
+   `data/processed/_discovery.json`.
 
-`make daily` chains them: session-wide metadata first, then curated
-hearings.
+3. **`make ingest-hearings`** — for every agenda_item that discovery
+   populated, runs the full pipeline (CSI testifiers + TVW captions +
+   transcript segmentation + speaker matching + PDC context). Skips
+   agenda items already ingested (no testifier rows means "not yet
+   ingested"). This is what produces the rich bill-hearing pages.
+   Summary: `data/processed/_ingest.json`.
 
-To populate the curated list:
-
-1. `go run ./cmd/wa-dd find-candidates --issue housing` (or another
-   keyword set in `config/issue_keywords.yml`). This writes
-   `data/processed/candidates.json` and prints a copy-paste-ready table.
-2. Pick candidates with TVW captions and paste each one's IDs into
-   `config/selected_bills.yml` under `bills:` (the file's header comment
-   has the schema). Bills without a `tvw.event_id` are rejected at load
-   time — TVW is required for transcript ingestion.
-3. `INVINTUS_EMBEDDER_KEY=… make daily-bundles`.
-
-Per-bill failures are isolated in both passes: one bad entry won't stop
-the rest. The run-summary JSONs (`_session.json`, `_run.json`) record
-which bills succeeded, which failed (with the error), and how long each
-took. The process exits non-zero if any bill failed so cron flags it.
+4. **`make daily-bundles`** — operator overrides. Re-runs the curated
+   pipeline for every entry in `config/selected_bills.yml`. Useful when
+   discovery missed something and the operator pastes IDs by hand, or
+   when forcing a re-ingest. Summary:
+   `data/processed/bundles/_run.json`.
 
 For nightly cron, one line is enough:
 
@@ -101,7 +100,21 @@ For nightly cron, one line is enough:
 Re-running is cheap in DB writes — `source_record` dedups on
 `(system, endpoint, url, content_hash, transform_version)` and just
 bumps `fetched_at` for unchanged content — but every run still re-hits
-every upstream API at the configured rate (2 req/sec by default).
+every upstream API at the configured rate (5 req/sec default).
+
+### When operator curation is still useful
+
+Discovery handles the 75% of meetings with a clean Committee Schedules →
+TVW mapping. For the remaining 25% (or anything discovery rejects via
+its committee-name sanity check), the operator can still pin specific
+bill+hearing pairs in `config/selected_bills.yml`:
+
+1. `go run ./cmd/wa-dd find-candidates --issue housing` (or another
+   keyword set in `config/issue_keywords.yml`). This writes
+   `data/processed/candidates.json` and prints a copy-paste-ready table.
+2. Paste the relevant entry into `config/selected_bills.yml` under
+   `bills:` and add the `tvw.event_id` from the TVW website.
+3. `INVINTUS_EMBEDDER_KEY=… make daily-bundles`.
 
 ## Layout
 

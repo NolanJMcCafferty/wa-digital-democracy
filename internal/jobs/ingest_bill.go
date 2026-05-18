@@ -129,12 +129,40 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	if err != nil {
 		return err
 	}
-	// Best-match hearing: the one whose committee acronym/csi_id matches
-	// the demo's committee. Fall back to the first hearing if no match.
-	matched := pickHearingForDemo(hearings, p.Demo)
-	if matched != nil {
-		nh := lws.NormalizeHearings([]lws.Hearing{*matched})[0]
-		hid, err := p.Store.UpsertHearing(ctx, db.UpsertHearingParams{
+	// Hearing-row policy: when the caller is the curated path (demo
+	// pins a chamber + committee), narrow to that one hearing so the
+	// rest of the pipeline binds correctly. When the caller is the
+	// metadata-only path (no chamber, no committee — ingest-session
+	// driver), upsert every hearing LWS reports so the auto-discovery
+	// pass downstream has rows to enrich.
+	if p.Demo.Chamber != "" {
+		matched := pickHearingForDemo(hearings, p.Demo)
+		if matched != nil {
+			nh := lws.NormalizeHearings([]lws.Hearing{*matched})[0]
+			hid, err := p.Store.UpsertHearing(ctx, db.UpsertHearingParams{
+				BillID:           pInt64(ids.BillID),
+				CommitteeName:    nh.CommitteeName,
+				CommitteeAcronym: nh.CommitteeAcronym,
+				Chamber:          nh.Chamber,
+				MeetingDateTime:  nh.MeetingDateTime,
+				Location:         nh.Location,
+				LWSMeetingID:     nh.LWSMeetingID,
+				SourceRecordID:   srHr,
+			})
+			if err != nil {
+				return err
+			}
+			ids.HearingID = hid
+		}
+		return nil
+	}
+
+	// Metadata-only path: upsert all hearings.
+	for _, nh := range lws.NormalizeHearings(hearings) {
+		if nh.CommitteeName == "" || nh.MeetingDateTime.IsZero() {
+			continue
+		}
+		if _, err := p.Store.UpsertHearing(ctx, db.UpsertHearingParams{
 			BillID:           pInt64(ids.BillID),
 			CommitteeName:    nh.CommitteeName,
 			CommitteeAcronym: nh.CommitteeAcronym,
@@ -143,13 +171,10 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 			Location:         nh.Location,
 			LWSMeetingID:     nh.LWSMeetingID,
 			SourceRecordID:   srHr,
-		})
-		if err != nil {
+		}); err != nil {
 			return err
 		}
-		ids.HearingID = hid
 	}
-
 	return nil
 }
 
