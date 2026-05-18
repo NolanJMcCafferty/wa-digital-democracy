@@ -46,3 +46,78 @@ func TestDetectBillDiscussionWindows_NoMentions(t *testing.T) {
 		t.Fatalf("windows = %#v, want none", got)
 	}
 }
+
+func TestBillDiscussionMentionPattern_PrefixCoverage(t *testing.T) {
+	// All bare prefixes, all engrossment/substitution chrome forms, and
+	// the corresponding spoken English variants. Each case must match
+	// for the bare prefix the bill row carries — that's the contract
+	// SegmentTranscript relies on after the LWS-prefix normalizer.
+	cases := []struct {
+		bare   string
+		number int
+		text   string
+	}{
+		// HB / House Bill
+		{"HB", 1501, "we will now hear HB 1501"},
+		{"HB", 1501, "HB1501 is up next"},
+		{"HB", 1501, "house bill 1501 is open"},
+		{"HB", 1501, "Engrossed Substitute House Bill 1501"},
+		{"HB", 1501, "ESHB 1501"},
+		{"HB", 1859, "Second Substitute House Bill 1859"},
+		{"HB", 1859, "2SHB 1859"},
+		{"HB", 1859, "Engrossed Second Substitute House Bill 1859"},
+		{"HB", 1859, "E2SHB 1859"},
+		{"HB", 2354, "Substitute House Bill 2354"},
+		{"HB", 2354, "SHB 2354"},
+
+		// SB / Senate Bill
+		{"SB", 6054, "Engrossed Senate Bill 6054"},
+		{"SB", 6054, "ESB 6054"},
+		{"SB", 6200, "Engrossed Substitute Senate Bill 6200"},
+		{"SB", 6200, "ESSB 6200"},
+
+		// HJR / House Joint Resolution — previously fell through to
+		// the bare-prefix branch with no spoken-form coverage.
+		{"HJR", 4002, "House Joint Resolution 4002"},
+		{"HJR", 4002, "HJR 4002"},
+		{"HJR", 4002, "Substitute House Joint Resolution 4002"},
+
+		// HCR / House Concurrent Resolution — entirely new coverage.
+		{"HCR", 4400, "House Concurrent Resolution 4400"},
+		{"HCR", 4400, "HCR 4400"},
+
+		// SJM / Senate Joint Memorial — entirely new coverage.
+		{"SJM", 8001, "Senate Joint Memorial 8001"},
+		{"SJM", 8001, "SJM 8001"},
+	}
+	for _, c := range cases {
+		cues := []segmentCue{{StartMS: 0, EndMS: 1000, Text: c.text}}
+		got := DetectBillDiscussionWindows(cues, c.bare, c.number)
+		if len(got) != 1 || got[0].Mentions != 1 {
+			t.Errorf("DetectBillDiscussionWindows(%q, %q, %d) = %#v, want 1 window with 1 mention",
+				c.text, c.bare, c.number, got)
+		}
+	}
+}
+
+func TestBillDiscussionMentionPattern_DoesNotOvermatch(t *testing.T) {
+	// Should NOT match: wrong number, different bill, near-misses.
+	cases := []struct {
+		bare   string
+		number int
+		text   string
+	}{
+		{"HB", 1501, "HB 1502 is on the docket"},        // different number
+		{"HB", 1501, "in 1501 there was a discussion"},  // bare digits, no prefix
+		{"HB", 1501, "we are on SB 1501"},               // different chamber
+		{"HCR", 4400, "house bill 4400"},                // wrong long form
+	}
+	for _, c := range cases {
+		cues := []segmentCue{{StartMS: 0, EndMS: 1000, Text: c.text}}
+		got := DetectBillDiscussionWindows(cues, c.bare, c.number)
+		if len(got) != 0 {
+			t.Errorf("DetectBillDiscussionWindows(%q, %q, %d) = %#v, want no windows",
+				c.text, c.bare, c.number, got)
+		}
+	}
+}
