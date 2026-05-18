@@ -34,6 +34,31 @@ func TestFetchAgencyContractsUsesFiscalYearDataset(t *testing.T) {
 	}
 }
 
+func TestFetchITContractsWithSourceReturnsProvenance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/resource/3txe-z9i9.json" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{":id":"row1"}]`))
+	}))
+	defer srv.Close()
+
+	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c.BaseURL = srv.URL
+	rows, fetch, err := c.FetchITContractsWithSource(context.Background(), 2025, socrata.Query{Limit: 1})
+	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.3txe-z9i9" {
+		t.Fatalf("rows=%#v fetch=%#v err=%v", rows, fetch, err)
+	}
+}
+
+func TestFetchITContractsRejectsUnknownYear(t *testing.T) {
+	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	_, _, err := c.FetchITContractsWithSource(context.Background(), 1900, socrata.Query{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestFetchMasterContractSalesWithSourceReturnsProvenance(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/resource/n8q6-4twj.json" {
@@ -97,6 +122,48 @@ func TestNormalizeContractAllFieldsAndDateFormats(t *testing.T) {
 	}
 	if c.StartDate == nil || c.EndDate == nil || c.PeriodStart == nil || c.PeriodEnd == nil || len(c.NormalizationWarning) != 0 {
 		t.Fatalf("dates/warnings = %#v", c)
+	}
+}
+
+func TestNormalizeITContract(t *testing.T) {
+	trueVal := true
+	contract := NormalizeITContract(DatasetITContractsFY2025, 2025, socrata.Row{
+		":id":                            "row1",
+		"agency_number_agency_name":      "086 - Governor's Office of Indian Affairs (INA)",
+		"contract_no":                    "04718",
+		"contractor_name":                "Verizon Wireless Services LLC.",
+		"contractor_name_d_b_a_optional": "VZW",
+		"cooperative_purchase_yes":       true,
+		"cooperative_name_if_applicable": "NASPO",
+		"was_this_purchased_through":     true,
+		"contract_start_date":            "2019-07-01T00:00:00.000",
+		"contract_end_date":              "2029-08-30T00:00:00.000",
+		"fiscal_year_start":              "FY 2020",
+		"fiscal_year_end":                "FY 2030",
+		"it_tower_application":           "0.2",
+		"it_tower_network":               "0.4",
+		"contract_amount_fy25":           "4864.66",
+		"total_contract_amount":          "71081.27",
+		"explanation_of_contract_amount": "DES Convenience Contract",
+	})
+	if contract.SourceDatasetID != DatasetITContractsFY2025 || contract.SourceRowID != "row1" || contract.ReportFiscalYear != 2025 {
+		t.Fatalf("unexpected normalized contract: %#v", contract)
+	}
+	if contract.AgencyNumber != "086" || contract.AgencyName != "Governor's Office of Indian Affairs (INA)" {
+		t.Fatalf("agency parse = %q / %q", contract.AgencyNumber, contract.AgencyName)
+	}
+	if contract.CooperativePurchase == nil || *contract.CooperativePurchase != trueVal {
+		t.Fatalf("cooperative purchase = %#v", contract.CooperativePurchase)
+	}
+	if contract.ContractAmountFY25 != "4864.66" || contract.TotalContractAmount != "71081.27" {
+		t.Fatalf("amounts = %q / %q", contract.ContractAmountFY25, contract.TotalContractAmount)
+	}
+}
+
+func TestNormalizeITContractInvalidBool(t *testing.T) {
+	contract := NormalizeITContract(DatasetITContractsFY2025, 2025, socrata.Row{"cooperative_purchase_yes": "maybe"})
+	if len(contract.NormalizationWarning) != 1 || contract.NormalizationWarning[0] != "invalid_cooperative_purchase:maybe" {
+		t.Fatalf("warnings = %#v", contract.NormalizationWarning)
 	}
 }
 

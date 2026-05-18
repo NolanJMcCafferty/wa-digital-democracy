@@ -1528,6 +1528,160 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 	return nil
 }
 
+// UpsertDataWAITContractParams is the normalized row shape for
+// datawa_it_contract.
+type UpsertDataWAITContractParams struct {
+	SourceDatasetID           string
+	SourceRowID               string
+	ReportFiscalYear          int
+	AgencyNumberAgencyName    string
+	AgencyNumber              string
+	AgencyName                string
+	ContractNumber            string
+	ContractorName            string
+	ContractorDBA             string
+	CooperativePurchase       *bool
+	CooperativeName           string
+	StatewideContractPurchase *bool
+	ContractStartDate         *time.Time
+	ContractEndDate           *time.Time
+	FiscalYearStart           string
+	FiscalYearEnd             string
+	ITTowerApplication        string
+	ITTowerCompute            string
+	ITTowerDataCenter         string
+	ITTowerDelivery           string
+	ITTowerEndUser            string
+	ITTowerITManagement       string
+	ITTowerNetwork            string
+	ITTowerOutput             string
+	ITTowerPlatform           string
+	ITTowerSecurity           string
+	ITTowerStorage            string
+	OtherNonIT                string
+	TotalPercentage           string
+	ContractAmountFY20        string
+	ContractAmountFY21        string
+	ContractAmountFY22        string
+	ContractAmountFY23        string
+	ContractAmountFY24        string
+	ContractAmountFY25        string
+	ContractAmountFY26        string
+	ContractAmountFY27        string
+	ContractAmountFY28        string
+	ContractAmountFY29        string
+	ContractAmountFY30        string
+	TotalContractAmount       string
+	ContractAmountExplanation string
+	Warnings                  []string
+	RawFields                 map[string]any
+	SourceRecordID            int64
+}
+
+// UpsertDataWAITContract inserts or updates one normalized DataWA IT contract
+// report row.
+func (s *Store) UpsertDataWAITContract(ctx context.Context, p UpsertDataWAITContractParams) error {
+	warnings, err := json.Marshal(p.Warnings)
+	if err != nil {
+		return fmt.Errorf("marshal warnings: %w", err)
+	}
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO datawa_it_contract (
+  source_dataset_id, source_row_id, report_fiscal_year, agency_number_agency_name,
+  agency_number, agency_name, contract_number, contractor_name, contractor_dba,
+  cooperative_purchase, cooperative_name, statewide_contract_purchase,
+  contract_start_date, contract_end_date, fiscal_year_start, fiscal_year_end,
+  it_tower_application, it_tower_compute, it_tower_data_center, it_tower_delivery,
+  it_tower_end_user, it_tower_it_management, it_tower_network, it_tower_output,
+  it_tower_platform, it_tower_security, it_tower_storage, other_non_it,
+  total_percentage, contract_amount_fy20, contract_amount_fy21, contract_amount_fy22,
+  contract_amount_fy23, contract_amount_fy24, contract_amount_fy25, contract_amount_fy26,
+  contract_amount_fy27, contract_amount_fy28, contract_amount_fy29, contract_amount_fy30,
+  total_contract_amount, contract_amount_explanation, normalization_warnings, raw_fields,
+  source_record_id
+) VALUES (
+  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+  NULLIF($17,'')::numeric, NULLIF($18,'')::numeric, NULLIF($19,'')::numeric, NULLIF($20,'')::numeric,
+  NULLIF($21,'')::numeric, NULLIF($22,'')::numeric, NULLIF($23,'')::numeric, NULLIF($24,'')::numeric,
+  NULLIF($25,'')::numeric, NULLIF($26,'')::numeric, NULLIF($27,'')::numeric, NULLIF($28,'')::numeric,
+  NULLIF($29,'')::numeric, NULLIF($30,'')::numeric, NULLIF($31,'')::numeric, NULLIF($32,'')::numeric,
+  NULLIF($33,'')::numeric, NULLIF($34,'')::numeric, NULLIF($35,'')::numeric, NULLIF($36,'')::numeric,
+  NULLIF($37,'')::numeric, NULLIF($38,'')::numeric, NULLIF($39,'')::numeric, NULLIF($40,'')::numeric,
+  NULLIF($41,'')::numeric, $42, $43::jsonb, $44::jsonb, $45
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  report_fiscal_year = EXCLUDED.report_fiscal_year,
+  agency_number_agency_name = EXCLUDED.agency_number_agency_name,
+  agency_number = EXCLUDED.agency_number,
+  agency_name = EXCLUDED.agency_name,
+  contract_number = EXCLUDED.contract_number,
+  contractor_name = EXCLUDED.contractor_name,
+  contractor_dba = EXCLUDED.contractor_dba,
+  cooperative_purchase = EXCLUDED.cooperative_purchase,
+  cooperative_name = EXCLUDED.cooperative_name,
+  statewide_contract_purchase = EXCLUDED.statewide_contract_purchase,
+  contract_start_date = EXCLUDED.contract_start_date,
+  contract_end_date = EXCLUDED.contract_end_date,
+  fiscal_year_start = EXCLUDED.fiscal_year_start,
+  fiscal_year_end = EXCLUDED.fiscal_year_end,
+  it_tower_application = EXCLUDED.it_tower_application,
+  it_tower_compute = EXCLUDED.it_tower_compute,
+  it_tower_data_center = EXCLUDED.it_tower_data_center,
+  it_tower_delivery = EXCLUDED.it_tower_delivery,
+  it_tower_end_user = EXCLUDED.it_tower_end_user,
+  it_tower_it_management = EXCLUDED.it_tower_it_management,
+  it_tower_network = EXCLUDED.it_tower_network,
+  it_tower_output = EXCLUDED.it_tower_output,
+  it_tower_platform = EXCLUDED.it_tower_platform,
+  it_tower_security = EXCLUDED.it_tower_security,
+  it_tower_storage = EXCLUDED.it_tower_storage,
+  other_non_it = EXCLUDED.other_non_it,
+  total_percentage = EXCLUDED.total_percentage,
+  contract_amount_fy20 = EXCLUDED.contract_amount_fy20,
+  contract_amount_fy21 = EXCLUDED.contract_amount_fy21,
+  contract_amount_fy22 = EXCLUDED.contract_amount_fy22,
+  contract_amount_fy23 = EXCLUDED.contract_amount_fy23,
+  contract_amount_fy24 = EXCLUDED.contract_amount_fy24,
+  contract_amount_fy25 = EXCLUDED.contract_amount_fy25,
+  contract_amount_fy26 = EXCLUDED.contract_amount_fy26,
+  contract_amount_fy27 = EXCLUDED.contract_amount_fy27,
+  contract_amount_fy28 = EXCLUDED.contract_amount_fy28,
+  contract_amount_fy29 = EXCLUDED.contract_amount_fy29,
+  contract_amount_fy30 = EXCLUDED.contract_amount_fy30,
+  total_contract_amount = EXCLUDED.total_contract_amount,
+  contract_amount_explanation = EXCLUDED.contract_amount_explanation,
+  normalization_warnings = EXCLUDED.normalization_warnings,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, p.ReportFiscalYear, strOrNull(p.AgencyNumberAgencyName),
+		strOrNull(p.AgencyNumber), strOrNull(p.AgencyName), strOrNull(p.ContractNumber), strOrNull(p.ContractorName), strOrNull(p.ContractorDBA),
+		boolPtrOrNull(p.CooperativePurchase), strOrNull(p.CooperativeName), boolPtrOrNull(p.StatewideContractPurchase),
+		datePtrOrNull(p.ContractStartDate), datePtrOrNull(p.ContractEndDate), strOrNull(p.FiscalYearStart), strOrNull(p.FiscalYearEnd),
+		p.ITTowerApplication, p.ITTowerCompute, p.ITTowerDataCenter, p.ITTowerDelivery, p.ITTowerEndUser, p.ITTowerITManagement,
+		p.ITTowerNetwork, p.ITTowerOutput, p.ITTowerPlatform, p.ITTowerSecurity, p.ITTowerStorage, p.OtherNonIT, p.TotalPercentage,
+		p.ContractAmountFY20, p.ContractAmountFY21, p.ContractAmountFY22, p.ContractAmountFY23, p.ContractAmountFY24, p.ContractAmountFY25,
+		p.ContractAmountFY26, p.ContractAmountFY27, p.ContractAmountFY28, p.ContractAmountFY29, p.ContractAmountFY30, p.TotalContractAmount,
+		strOrNull(p.ContractAmountExplanation), string(warnings), string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert datawa_it_contract: %w", err)
+	}
+	return nil
+}
+
+func boolPtrOrNull(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	return *b
+}
+
 // ---------------------------------------------------------------------------
 // Auto-discovery queries — back the `wa-dd discover-hearings` and
 // `wa-dd ingest-hearings` commands.

@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM bill_status_change WHERE source_record_id = ANY($1)`,
@@ -281,5 +282,54 @@ SELECT count(*), max(vendor_name), max(total_sales_reported)::text
 	}
 	if count != 1 || vendor != "Vendor B" || amount != "20.00" {
 		t.Fatalf("count=%d vendor=%q amount=%q", count, vendor, amount)
+	}
+}
+
+func TestUpsertDataWAITContract_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-it-contract-test-1")
+	coop := true
+
+	params := db.UpsertDataWAITContractParams{
+		SourceDatasetID:           "3txe-z9i9",
+		SourceRowID:               "row-1",
+		ReportFiscalYear:          2025,
+		AgencyNumberAgencyName:    "086 - Governor's Office of Indian Affairs (INA)",
+		AgencyNumber:              "086",
+		AgencyName:                "Governor's Office of Indian Affairs (INA)",
+		ContractNumber:            "04718",
+		ContractorName:            "Vendor A",
+		CooperativePurchase:       &coop,
+		StatewideContractPurchase: &coop,
+		ITTowerApplication:        "0.2",
+		ITTowerNetwork:            "0.4",
+		ContractAmountFY25:        "4864.66",
+		TotalContractAmount:       "71081.27",
+		RawFields:                 map[string]any{"source": "first"},
+		SourceRecordID:            srID,
+	}
+	if err := store.UpsertDataWAITContract(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.ContractorName = "Vendor B"
+	params.TotalContractAmount = "80000.00"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertDataWAITContract(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var contractor string
+	var total string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(contractor_name), max(total_contract_amount)::text
+  FROM datawa_it_contract
+ WHERE source_dataset_id = '3txe-z9i9' AND source_row_id = 'row-1';`).Scan(&count, &contractor, &total); err != nil {
+		t.Fatalf("query it contract: %v", err)
+	}
+	if count != 1 || contractor != "Vendor B" || total != "80000.00" {
+		t.Fatalf("count=%d contractor=%q total=%q", count, contractor, total)
 	}
 }
