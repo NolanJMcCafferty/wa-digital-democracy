@@ -30,6 +30,7 @@ const (
 	DatasetITContractsFY2024     = "ktim-amuz"
 	DatasetITContractsFY2023     = "hycx-v82h"
 	DatasetITContractsFY2022     = "dzvi-rs2c"
+	DatasetWEBSVendors           = "3kwi-7zsj"
 )
 
 var AgencyContractFiscalYears = map[int]string{
@@ -145,6 +146,26 @@ type ITContract struct {
 	NormalizationWarning      []string
 }
 
+type WEBSVendor struct {
+	SourceDatasetID       string
+	SourceRowID           string
+	CompanyName           string
+	NormalizedCompanyName string
+	DBAName               string
+	PhoneNumber           string
+	ContactEmail          string
+	City                  string
+	State                 string
+	WebAddress            string
+	CommodityCode         string
+	DescriptionOfWork     string
+	SmallBusiness         string
+	VeteranOwned          string
+	OtherCert             string
+	OtherCert2            string
+	NormalizationWarning  []string
+}
+
 func (c *Client) FetchAgencyContracts(ctx context.Context, fiscalYear int, q socrata.Query) ([]socrata.Row, error) {
 	rows, _, err := c.FetchAgencyContractsWithSource(ctx, fiscalYear, q)
 	return rows, err
@@ -168,6 +189,10 @@ func (c *Client) FetchITContractsWithSource(ctx context.Context, fiscalYear int,
 		return nil, httpx.RawFetch{}, strconv.ErrSyntax
 	}
 	return c.FetchPageWithSource(ctx, datasetID, q)
+}
+
+func (c *Client) FetchWEBSVendorsWithSource(ctx context.Context, q socrata.Query) ([]socrata.Row, httpx.RawFetch, error) {
+	return c.FetchPageWithSource(ctx, DatasetWEBSVendors, q)
 }
 
 func NormalizeContract(datasetID string, fiscalYear int, row socrata.Row) Contract {
@@ -282,6 +307,33 @@ func NormalizeITContract(datasetID string, fiscalYear int, row socrata.Row) ITCo
 		ContractAmountExplanation: first(row, "explanation_of_contract_amount", "contract_amount_explanation"),
 		NormalizationWarning:      compact(startWarn, endWarn, coopPurchaseWarn, statewidePurchaseWarn),
 	}
+}
+
+func NormalizeWEBSVendor(row socrata.Row) WEBSVendor {
+	companyName := first(row, "company_name", "vendor_name", "business_name")
+	return WEBSVendor{
+		SourceDatasetID:       DatasetWEBSVendors,
+		SourceRowID:           first(row, ":id", "sid", "id"),
+		CompanyName:           companyName,
+		NormalizedCompanyName: NormalizeEntityName(companyName),
+		DBAName:               first(row, "dba_name", "doing_business_as"),
+		PhoneNumber:           first(row, "phone_number", "phone"),
+		ContactEmail:          first(row, "contact_email", "email"),
+		City:                  first(row, "city"),
+		State:                 first(row, "state"),
+		WebAddress:            first(row, "web_address", "website", "url"),
+		CommodityCode:         first(row, "code", "commodity_code"),
+		DescriptionOfWork:     first(row, "description_of_work", "commodity_description"),
+		SmallBusiness:         first(row, "small_business"),
+		VeteranOwned:          first(row, "veteran_owned", "vet_owned"),
+		OtherCert:             first(row, "other_cert"),
+		OtherCert2:            first(row, "other_cert_2"),
+	}
+}
+
+func NormalizeEntityName(name string) string {
+	fields := strings.Fields(strings.ToUpper(strings.TrimSpace(name)))
+	return strings.Join(fields, " ")
 }
 
 func StableRowID(row socrata.Row) string {

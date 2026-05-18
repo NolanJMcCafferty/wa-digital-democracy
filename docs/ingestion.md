@@ -459,6 +459,27 @@ total contract amount, raw fields, normalization warnings, and source
 provenance. Monthly WaTech spend datasets are a separate grain and should be
 handled by a follow-up issue rather than forced into the contracts table.
 
+`wa-dd ingest-webs-vendors` ingests WEBS vendor/procurement entity rows into
+`datawa_webs_vendor`:
+
+```sh
+wa-dd ingest-webs-vendors --limit 1000
+```
+
+The source dataset is:
+
+- `3kwi-7zsj` — WEBS Vendors by commodity code and MWBE/V/Small status
+
+Rows preserve company/DBA names, normalized company names for candidate joins,
+phone/email/city/state/web fields, commodity code and description, small-
+business/veteran/other certification flags, raw fields, normalization warnings,
+and source provenance.
+
+Matching strategy: use `normalized_company_name` only to generate reviewable
+candidate joins against contract contractor/vendor names and PDC/lobbying
+organization names. Do not automatically merge or display a match as confirmed
+without a confidence/evidence layer or human-reviewed decision.
+
 This remains intentionally bounded. Broader budget/spending work should add
 or use separate issues for monthly IT spend datasets, fiscal.wa.gov, Seattle
-Open Budget, USAspending joins, and agency/vendor/entity resolution.
+Open Budget, USAspending joins, and reviewed agency/vendor/entity resolution.

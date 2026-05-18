@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_contract WHERE source_record_id = ANY($1)`,
@@ -331,5 +332,51 @@ SELECT count(*), max(contractor_name), max(total_contract_amount)::text
 	}
 	if count != 1 || contractor != "Vendor B" || total != "80000.00" {
 		t.Fatalf("count=%d contractor=%q total=%q", count, contractor, total)
+	}
+}
+
+func TestUpsertDataWAWEBSVendor_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-webs-vendor-test-1")
+
+	params := db.UpsertDataWAWEBSVendorParams{
+		SourceDatasetID:       "3kwi-7zsj",
+		SourceRowID:           "row-1",
+		CompanyName:           "Sunrise Technologies, Inc.",
+		NormalizedCompanyName: "SUNRISE TECHNOLOGIES, INC.",
+		DBAName:               "Sunrise Integrated Solutions",
+		ContactEmail:          "kdavis@sunrisetechnologies.com",
+		City:                  "Folsom",
+		State:                 "CA",
+		CommodityCode:         "918-71",
+		DescriptionOfWork:     "IT Consulting",
+		SmallBusiness:         "Y",
+		VeteranOwned:          "N",
+		RawFields:             map[string]any{"source": "first"},
+		SourceRecordID:        srID,
+	}
+	if err := store.UpsertDataWAWEBSVendor(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.CompanyName = "Sunrise Technologies Updated"
+	params.NormalizedCompanyName = "SUNRISE TECHNOLOGIES UPDATED"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertDataWAWEBSVendor(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var company string
+	var normalized string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(company_name), max(normalized_company_name)
+  FROM datawa_webs_vendor
+ WHERE source_dataset_id = '3kwi-7zsj' AND source_row_id = 'row-1';`).Scan(&count, &company, &normalized); err != nil {
+		t.Fatalf("query vendor: %v", err)
+	}
+	if count != 1 || company != "Sunrise Technologies Updated" || normalized != "SUNRISE TECHNOLOGIES UPDATED" {
+		t.Fatalf("count=%d company=%q normalized=%q", count, company, normalized)
 	}
 }

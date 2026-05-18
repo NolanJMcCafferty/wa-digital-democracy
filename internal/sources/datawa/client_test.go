@@ -34,6 +34,23 @@ func TestFetchAgencyContractsUsesFiscalYearDataset(t *testing.T) {
 	}
 }
 
+func TestFetchWEBSVendorsWithSourceReturnsProvenance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/resource/3kwi-7zsj.json" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{":id":"row1"}]`))
+	}))
+	defer srv.Close()
+
+	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c.BaseURL = srv.URL
+	rows, fetch, err := c.FetchWEBSVendorsWithSource(context.Background(), socrata.Query{Limit: 1})
+	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.3kwi-7zsj" {
+		t.Fatalf("rows=%#v fetch=%#v err=%v", rows, fetch, err)
+	}
+}
+
 func TestFetchITContractsWithSourceReturnsProvenance(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/resource/3txe-z9i9.json" {
@@ -122,6 +139,37 @@ func TestNormalizeContractAllFieldsAndDateFormats(t *testing.T) {
 	}
 	if c.StartDate == nil || c.EndDate == nil || c.PeriodStart == nil || c.PeriodEnd == nil || len(c.NormalizationWarning) != 0 {
 		t.Fatalf("dates/warnings = %#v", c)
+	}
+}
+
+func TestNormalizeWEBSVendor(t *testing.T) {
+	vendor := NormalizeWEBSVendor(socrata.Row{
+		":id":                 "row1",
+		"company_name":        "  Sunrise Technologies, Inc. ",
+		"dba_name":            "Sunrise Integrated Solutions",
+		"phone_number":        "(916) 932-2910",
+		"contact_email":       "kdavis@sunrisetechnologies.com",
+		"city":                "Folsom",
+		"state":               "CA",
+		"web_address":         "www.sunrisetechnologies.com",
+		"code":                "918-71",
+		"description_of_work": "IT Consulting",
+		"small_business":      "Y",
+		"veteran_owned":       "N",
+		"other_cert":          "DBE",
+		"other_cert_2":        "CALTRANS",
+	})
+	if vendor.SourceDatasetID != DatasetWEBSVendors || vendor.SourceRowID != "row1" {
+		t.Fatalf("unexpected vendor ids: %#v", vendor)
+	}
+	if vendor.NormalizedCompanyName != "SUNRISE TECHNOLOGIES, INC." || vendor.CommodityCode != "918-71" || vendor.SmallBusiness != "Y" {
+		t.Fatalf("unexpected normalized vendor: %#v", vendor)
+	}
+}
+
+func TestNormalizeEntityName(t *testing.T) {
+	if got := NormalizeEntityName("  acme   corp "); got != "ACME CORP" {
+		t.Fatalf("normalized name = %q", got)
 	}
 }
 

@@ -1682,6 +1682,79 @@ func boolPtrOrNull(b *bool) any {
 	return *b
 }
 
+// UpsertDataWAWEBSVendorParams is the normalized row shape for datawa_webs_vendor.
+type UpsertDataWAWEBSVendorParams struct {
+	SourceDatasetID       string
+	SourceRowID           string
+	CompanyName           string
+	NormalizedCompanyName string
+	DBAName               string
+	PhoneNumber           string
+	ContactEmail          string
+	City                  string
+	State                 string
+	WebAddress            string
+	CommodityCode         string
+	DescriptionOfWork     string
+	SmallBusiness         string
+	VeteranOwned          string
+	OtherCert             string
+	OtherCert2            string
+	Warnings              []string
+	RawFields             map[string]any
+	SourceRecordID        int64
+}
+
+// UpsertDataWAWEBSVendor inserts or updates one normalized WEBS vendor row.
+func (s *Store) UpsertDataWAWEBSVendor(ctx context.Context, p UpsertDataWAWEBSVendorParams) error {
+	warnings, err := json.Marshal(p.Warnings)
+	if err != nil {
+		return fmt.Errorf("marshal warnings: %w", err)
+	}
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO datawa_webs_vendor (
+  source_dataset_id, source_row_id, company_name, normalized_company_name,
+  dba_name, phone_number, contact_email, city, state, web_address,
+  commodity_code, description_of_work, small_business, veteran_owned,
+  other_cert, other_cert_2, normalization_warnings, raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,$19
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  company_name = EXCLUDED.company_name,
+  normalized_company_name = EXCLUDED.normalized_company_name,
+  dba_name = EXCLUDED.dba_name,
+  phone_number = EXCLUDED.phone_number,
+  contact_email = EXCLUDED.contact_email,
+  city = EXCLUDED.city,
+  state = EXCLUDED.state,
+  web_address = EXCLUDED.web_address,
+  commodity_code = EXCLUDED.commodity_code,
+  description_of_work = EXCLUDED.description_of_work,
+  small_business = EXCLUDED.small_business,
+  veteran_owned = EXCLUDED.veteran_owned,
+  other_cert = EXCLUDED.other_cert,
+  other_cert_2 = EXCLUDED.other_cert_2,
+  normalization_warnings = EXCLUDED.normalization_warnings,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, strOrNull(p.CompanyName), strOrNull(p.NormalizedCompanyName),
+		strOrNull(p.DBAName), strOrNull(p.PhoneNumber), strOrNull(p.ContactEmail), strOrNull(p.City), strOrNull(p.State), strOrNull(p.WebAddress),
+		strOrNull(p.CommodityCode), strOrNull(p.DescriptionOfWork), strOrNull(p.SmallBusiness), strOrNull(p.VeteranOwned),
+		strOrNull(p.OtherCert), strOrNull(p.OtherCert2), string(warnings), string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert datawa_webs_vendor: %w", err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Auto-discovery queries — back the `wa-dd discover-hearings` and
 // `wa-dd ingest-hearings` commands.
