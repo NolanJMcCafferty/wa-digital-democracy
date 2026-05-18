@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { listLocalBundles } from "@/lib/loadBundle";
+import { listHearingBundles, listLocalBundles } from "@/lib/loadBundle";
 
 export default async function HomePage() {
-  const bundles = await listLocalBundles();
+  const [bundles, hearings] = await Promise.all([
+    listLocalBundles(),
+    listHearingBundles(),
+  ]);
   return (
     <div className="space-y-8">
       <div className="space-y-3">
@@ -16,6 +19,26 @@ export default async function HomePage() {
           from live LWS, CSI, TVW/Invintus, and PDC data.
         </p>
       </div>
+
+      {hearings.length > 0 ? (
+        <div className="rounded border border-stone-300 bg-white p-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-stone-900">Hearings</h2>
+              <p className="text-sm text-stone-600">
+                Browse hearing-centered pages for committee testimony, video,
+                transcript excerpts, and source records.
+              </p>
+            </div>
+            <Link
+              href="/hearings"
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+            >
+              View hearings →
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       {bundles.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">

@@ -20,9 +20,12 @@ export default function RootLayout({
             <a href="/" className="text-lg font-semibold tracking-tight text-stone-900">
               WA Digital Democracy
             </a>
-            <span className="text-xs uppercase tracking-wider text-stone-500">
-              First-page MVP
-            </span>
+            <nav className="flex items-center gap-4 text-xs uppercase tracking-wider text-stone-500">
+              <a href="/hearings" className="hover:text-stone-900">
+                Hearings
+              </a>
+              <span>First-page MVP</span>
+            </nav>
           </div>
         </header>
         <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>

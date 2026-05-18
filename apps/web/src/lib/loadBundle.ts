@@ -15,6 +15,14 @@ export type BundleListEntry = {
   billNumber: number;
 };
 
+export type HearingBundleEntry = BundleListEntry & {
+  csiAgendaItemId: string;
+  title: string;
+  committeeName: string;
+  meetingDatetime: string;
+  billId: string;
+};
+
 export async function listLocalBundles(): Promise<BundleListEntry[]> {
   let names: string[] = [];
   try {
@@ -38,6 +46,37 @@ export async function listLocalBundles(): Promise<BundleListEntry[]> {
   }
   out.sort((a, b) => (a.biennium === b.biennium ? a.billNumber - b.billNumber : a.biennium.localeCompare(b.biennium)));
   return out;
+}
+
+export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
+  const entries = await listLocalBundles();
+  const out: HearingBundleEntry[] = [];
+  for (const entry of entries) {
+    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
+    const hearingId = bundle?.hearing.csi_agenda_item_id;
+    if (!bundle || !hearingId) continue;
+    out.push({
+      ...entry,
+      csiAgendaItemId: hearingId,
+      title: bundle.hearing.agenda_item_label || bundle.bill.title || bundle.bill.bill_id,
+      committeeName: bundle.hearing.committee_name,
+      meetingDatetime: bundle.hearing.meeting_datetime,
+      billId: bundle.bill.bill_id,
+    });
+  }
+  out.sort((a, b) => b.meetingDatetime.localeCompare(a.meetingDatetime));
+  return out;
+}
+
+export async function loadHearingBundle(csiAgendaItemId: string): Promise<Bundle | null> {
+  const entries = await listLocalBundles();
+  for (const entry of entries) {
+    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
+    if (bundle?.hearing.csi_agenda_item_id === csiAgendaItemId) {
+      return bundle;
+    }
+  }
+  return null;
 }
 
 export async function loadBundle(

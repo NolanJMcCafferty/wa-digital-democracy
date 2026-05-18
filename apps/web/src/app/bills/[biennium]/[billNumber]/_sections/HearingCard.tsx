@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Hearing } from "@/lib/bundle";
 import { formatDateTime } from "@/lib/format";
 
@@ -14,16 +15,26 @@ export function HearingCard({ hearing }: { hearing: Hearing }) {
         >
           Hearing
         </h2>
-        {hearing.tvw_url ? (
-          <a
-            className="text-sm text-blue-700 underline hover:text-blue-900"
-            href={hearing.tvw_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Watch on TVW →
-          </a>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {hearing.csi_agenda_item_id ? (
+            <Link
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+              href={`/hearings/${hearing.csi_agenda_item_id}`}
+            >
+              Hearing page →
+            </Link>
+          ) : null}
+          {hearing.tvw_url ? (
+            <a
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+              href={hearing.tvw_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Watch on TVW →
+            </a>
+          ) : null}
+        </div>
       </div>
 
       <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[max-content_1fr]">
