@@ -389,8 +389,7 @@ All three passes are safe to re-run. What changes:
 
 ## Optional Phase 4 contract ingestion
 
-`wa-dd ingest-contracts` is the first narrow budget/spending/contracts
-connector. It ingests one DataWA agency-contract fiscal-year dataset into
+`wa-dd ingest-contracts` ingests DataWA agency-contract fiscal-year datasets into
 `datawa_contract` with source provenance through `source_record`.
 
 ```sh
@@ -415,6 +414,21 @@ Rows are normalized into `datawa_contract` and keep:
 - normalization warnings for sentinel/invalid dates;
 - `source_record_id` linking back to the fetched Socrata page.
 
-This is intentionally a bounded MVP. Broader budget/spending work should add
-separate issues for additional DataWA datasets, fiscal.wa.gov, Seattle Open
-Budget, USAspending joins, and agency/vendor/entity resolution.
+`wa-dd ingest-master-contract-sales` ingests DataWA statewide/master-contract
+sales into `datawa_master_contract_sale`:
+
+```sh
+wa-dd ingest-master-contract-sales --limit 1000
+```
+
+The source dataset is:
+
+- `n8q6-4twj` — Statewide Contract / Master Contract Sales Data by Customer, Contract, Vendor
+
+Rows preserve customer type/name, contract number/title, vendor name, report
+year, quarterly and total sales, OMWBE/veteran/small/diverse-business flags,
+raw fields, normalization warnings, and `source_record_id` provenance.
+
+This remains intentionally bounded. Broader budget/spending work should add
+or use separate issues for IT contract/spend datasets, fiscal.wa.gov, Seattle
+Open Budget, USAspending joins, and agency/vendor/entity resolution.

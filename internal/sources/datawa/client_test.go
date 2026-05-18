@@ -34,6 +34,23 @@ func TestFetchAgencyContractsUsesFiscalYearDataset(t *testing.T) {
 	}
 }
 
+func TestFetchMasterContractSalesWithSourceReturnsProvenance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/resource/n8q6-4twj.json" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{":id":"row1"}]`))
+	}))
+	defer srv.Close()
+
+	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c.BaseURL = srv.URL
+	rows, fetch, err := c.FetchMasterContractSalesWithSource(context.Background(), socrata.Query{Limit: 1})
+	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.n8q6-4twj" {
+		t.Fatalf("rows=%#v fetch=%#v err=%v", rows, fetch, err)
+	}
+}
+
 func TestFetchAgencyContractsWithSourceReturnsProvenance(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[{":id":"row1"}]`))
@@ -80,6 +97,39 @@ func TestNormalizeContractAllFieldsAndDateFormats(t *testing.T) {
 	}
 	if c.StartDate == nil || c.EndDate == nil || c.PeriodStart == nil || c.PeriodEnd == nil || len(c.NormalizationWarning) != 0 {
 		t.Fatalf("dates/warnings = %#v", c)
+	}
+}
+
+func TestNormalizeMasterContractSale(t *testing.T) {
+	sale := NormalizeMasterContractSale(socrata.Row{
+		":id":               "row1",
+		"customer_type":     "State Agency",
+		"customer_name":     "TRANSPORTATION DEPT OF",
+		"contract_number":   "00111",
+		"contract_title":    "Fertilizers",
+		"vendor_name":       "WILBUR-ELLIS COMPANY LLC",
+		"year":              "2015",
+		"q1_sales_reported": "1.25",
+		"q2_sales_reported": "2.75",
+		"q3_sales_reported": "0",
+		"q4_sales_reported": "1239",
+		"omwbe":             "N",
+		"vet_owned":         "N",
+		"small_business":    "N",
+		"diverse_options":   "N",
+	})
+	if sale.SourceDatasetID != DatasetMasterContractSales || sale.SourceRowID != "row1" || sale.ReportYear != 2015 {
+		t.Fatalf("unexpected normalized sale: %#v", sale)
+	}
+	if sale.TotalSalesReported != "1243.00" {
+		t.Fatalf("total sales = %q", sale.TotalSalesReported)
+	}
+}
+
+func TestNormalizeMasterContractSaleInvalidYear(t *testing.T) {
+	sale := NormalizeMasterContractSale(socrata.Row{"year": "FY15"})
+	if len(sale.NormalizationWarning) != 1 || sale.NormalizationWarning[0] != "invalid_year:FY15" {
+		t.Fatalf("warnings = %#v", sale.NormalizationWarning)
 	}
 }
 

@@ -1238,6 +1238,87 @@ func datePtrOrNull(t *time.Time) pgtype.Date {
 	return pgtype.Date{Time: *t, Valid: true}
 }
 
+// UpsertDataWAMasterContractSaleParams is the normalized row shape for
+// datawa_master_contract_sale.
+type UpsertDataWAMasterContractSaleParams struct {
+	SourceDatasetID    string
+	SourceRowID        string
+	CustomerType       string
+	CustomerName       string
+	ContractNumber     string
+	ContractTitle      string
+	VendorName         string
+	ReportYear         int
+	Q1SalesReported    string
+	Q2SalesReported    string
+	Q3SalesReported    string
+	Q4SalesReported    string
+	TotalSalesReported string
+	OMWBE              string
+	VeteranOwned       string
+	SmallBusiness      string
+	DiverseOptions     string
+	Warnings           []string
+	RawFields          map[string]any
+	SourceRecordID     int64
+}
+
+// UpsertDataWAMasterContractSale inserts or updates one normalized DataWA
+// statewide/master-contract sales row.
+func (s *Store) UpsertDataWAMasterContractSale(ctx context.Context, p UpsertDataWAMasterContractSaleParams) error {
+	warnings, err := json.Marshal(p.Warnings)
+	if err != nil {
+		return fmt.Errorf("marshal warnings: %w", err)
+	}
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO datawa_master_contract_sale (
+  source_dataset_id, source_row_id, customer_type, customer_name,
+  contract_number, contract_title, vendor_name, report_year,
+  q1_sales_reported, q2_sales_reported, q3_sales_reported, q4_sales_reported,
+  total_sales_reported, omwbe, veteran_owned, small_business, diverse_options,
+  normalization_warnings, raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,$4,$5,$6,$7,NULLIF($8, 0),
+  NULLIF($9,'')::numeric, NULLIF($10,'')::numeric, NULLIF($11,'')::numeric, NULLIF($12,'')::numeric,
+  NULLIF($13,'')::numeric, $14,$15,$16,$17,$18::jsonb,$19::jsonb,$20
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  customer_type = EXCLUDED.customer_type,
+  customer_name = EXCLUDED.customer_name,
+  contract_number = EXCLUDED.contract_number,
+  contract_title = EXCLUDED.contract_title,
+  vendor_name = EXCLUDED.vendor_name,
+  report_year = EXCLUDED.report_year,
+  q1_sales_reported = EXCLUDED.q1_sales_reported,
+  q2_sales_reported = EXCLUDED.q2_sales_reported,
+  q3_sales_reported = EXCLUDED.q3_sales_reported,
+  q4_sales_reported = EXCLUDED.q4_sales_reported,
+  total_sales_reported = EXCLUDED.total_sales_reported,
+  omwbe = EXCLUDED.omwbe,
+  veteran_owned = EXCLUDED.veteran_owned,
+  small_business = EXCLUDED.small_business,
+  diverse_options = EXCLUDED.diverse_options,
+  normalization_warnings = EXCLUDED.normalization_warnings,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, strOrNull(p.CustomerType), strOrNull(p.CustomerName),
+		strOrNull(p.ContractNumber), strOrNull(p.ContractTitle), strOrNull(p.VendorName), p.ReportYear,
+		p.Q1SalesReported, p.Q2SalesReported, p.Q3SalesReported, p.Q4SalesReported, p.TotalSalesReported,
+		strOrNull(p.OMWBE), strOrNull(p.VeteranOwned), strOrNull(p.SmallBusiness), strOrNull(p.DiverseOptions),
+		string(warnings), string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert datawa_master_contract_sale: %w", err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Auto-discovery queries — back the `wa-dd discover-hearings` and
 // `wa-dd ingest-hearings` commands.

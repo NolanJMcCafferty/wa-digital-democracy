@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM bill_status_change WHERE source_record_id = ANY($1)`,
 		`DELETE FROM transcript_segment WHERE source_record_id = ANY($1)`,
@@ -233,5 +234,52 @@ SELECT count(*), max(contractor_name), max(total_amount)::text
 	}
 	if count != 1 || contractor != "Vendor B" || amount != "456.78" {
 		t.Fatalf("count=%d contractor=%q amount=%q", count, contractor, amount)
+	}
+}
+
+func TestUpsertDataWAMasterContractSale_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-master-sale-test-1")
+
+	params := db.UpsertDataWAMasterContractSaleParams{
+		SourceDatasetID:    "n8q6-4twj",
+		SourceRowID:        "row-1",
+		CustomerType:       "State Agency",
+		CustomerName:       "TRANSPORTATION DEPT OF",
+		ContractNumber:     "00111",
+		ContractTitle:      "Fertilizers",
+		VendorName:         "Vendor A",
+		ReportYear:         2015,
+		Q1SalesReported:    "1.00",
+		Q2SalesReported:    "2.00",
+		Q3SalesReported:    "3.00",
+		Q4SalesReported:    "4.00",
+		TotalSalesReported: "10.00",
+		RawFields:          map[string]any{"source": "first"},
+		SourceRecordID:     srID,
+	}
+	if err := store.UpsertDataWAMasterContractSale(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.VendorName = "Vendor B"
+	params.TotalSalesReported = "20.00"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertDataWAMasterContractSale(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var vendor string
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(vendor_name), max(total_sales_reported)::text
+  FROM datawa_master_contract_sale
+ WHERE source_dataset_id = 'n8q6-4twj' AND source_row_id = 'row-1';`).Scan(&count, &vendor, &amount); err != nil {
+		t.Fatalf("query sale: %v", err)
+	}
+	if count != 1 || vendor != "Vendor B" || amount != "20.00" {
+		t.Fatalf("count=%d vendor=%q amount=%q", count, vendor, amount)
 	}
 }
