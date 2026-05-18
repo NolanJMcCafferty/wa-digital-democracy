@@ -34,6 +34,20 @@ func TestFetchAgencyContractsUsesFiscalYearDataset(t *testing.T) {
 	}
 }
 
+func TestFetchAgencyContractsWithSourceReturnsProvenance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{":id":"row1"}]`))
+	}))
+	defer srv.Close()
+
+	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c.BaseURL = srv.URL
+	rows, fetch, err := c.FetchAgencyContractsWithSource(context.Background(), 2025, socrata.Query{Limit: 1})
+	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.6fx9-ncas" {
+		t.Fatalf("rows=%#v fetch=%#v err=%v", rows, fetch, err)
+	}
+}
+
 func TestFetchAgencyContractsRejectsUnknownYear(t *testing.T) {
 	c := New(nil, "")
 	if _, err := c.FetchAgencyContracts(context.Background(), 1999, socrata.Query{}); err == nil {
@@ -66,6 +80,14 @@ func TestNormalizeContractAllFieldsAndDateFormats(t *testing.T) {
 	}
 	if c.StartDate == nil || c.EndDate == nil || c.PeriodStart == nil || c.PeriodEnd == nil || len(c.NormalizationWarning) != 0 {
 		t.Fatalf("dates/warnings = %#v", c)
+	}
+}
+
+func TestStableRowID(t *testing.T) {
+	id1 := StableRowID(map[string]any{"b": "two", "a": "one"})
+	id2 := StableRowID(map[string]any{"a": "one", "b": "two"})
+	if id1 == "" || id1 != id2 {
+		t.Fatalf("stable ids = %q %q", id1, id2)
 	}
 }
 

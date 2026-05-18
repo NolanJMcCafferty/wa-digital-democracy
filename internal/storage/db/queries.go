@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1138,6 +1139,103 @@ SELECT source_system, COUNT(*), MAX(fetched_at), ARRAY_AGG(DISTINCT source_endpo
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// UpsertDataWAContractParams is the normalized row shape for datawa_contract.
+type UpsertDataWAContractParams struct {
+	SourceDatasetID       string
+	SourceRowID           string
+	FiscalYear            int
+	AgencyName            string
+	AgencyNumber          string
+	ContractNumber        string
+	AmendmentNumber       string
+	ContractorName        string
+	StatewideVendorNumber string
+	Description           string
+	StartDate             *time.Time
+	EndDate               *time.Time
+	PeriodStart           *time.Time
+	PeriodEnd             *time.Time
+	FederalAmount         string
+	StateAmount           string
+	OtherAmount           string
+	TotalAmount           string
+	ProcurementType       string
+	MinorityWomanOwned    string
+	SmallBusiness         string
+	VeteranOwned          string
+	Warnings              []string
+	RawFields             map[string]any
+	SourceRecordID        int64
+}
+
+// UpsertDataWAContract inserts or updates one normalized data.wa.gov contract row.
+func (s *Store) UpsertDataWAContract(ctx context.Context, p UpsertDataWAContractParams) error {
+	warnings, err := json.Marshal(p.Warnings)
+	if err != nil {
+		return fmt.Errorf("marshal warnings: %w", err)
+	}
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO datawa_contract (
+  source_dataset_id, source_row_id, fiscal_year, agency_name, agency_number,
+  contract_number, amendment_number, contractor_name, statewide_vendor_number,
+  description, start_date, end_date, period_start, period_end,
+  federal_amount, state_amount, other_amount, total_amount, procurement_type,
+  minority_woman_owned, small_business, veteran_owned, normalization_warnings,
+  raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+  NULLIF($15,'')::numeric, NULLIF($16,'')::numeric, NULLIF($17,'')::numeric, NULLIF($18,'')::numeric,
+  $19,$20,$21,$22,$23::jsonb,$24::jsonb,$25
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  fiscal_year = EXCLUDED.fiscal_year,
+  agency_name = EXCLUDED.agency_name,
+  agency_number = EXCLUDED.agency_number,
+  contract_number = EXCLUDED.contract_number,
+  amendment_number = EXCLUDED.amendment_number,
+  contractor_name = EXCLUDED.contractor_name,
+  statewide_vendor_number = EXCLUDED.statewide_vendor_number,
+  description = EXCLUDED.description,
+  start_date = EXCLUDED.start_date,
+  end_date = EXCLUDED.end_date,
+  period_start = EXCLUDED.period_start,
+  period_end = EXCLUDED.period_end,
+  federal_amount = EXCLUDED.federal_amount,
+  state_amount = EXCLUDED.state_amount,
+  other_amount = EXCLUDED.other_amount,
+  total_amount = EXCLUDED.total_amount,
+  procurement_type = EXCLUDED.procurement_type,
+  minority_woman_owned = EXCLUDED.minority_woman_owned,
+  small_business = EXCLUDED.small_business,
+  veteran_owned = EXCLUDED.veteran_owned,
+  normalization_warnings = EXCLUDED.normalization_warnings,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, p.FiscalYear, strOrNull(p.AgencyName), strOrNull(p.AgencyNumber),
+		strOrNull(p.ContractNumber), strOrNull(p.AmendmentNumber), strOrNull(p.ContractorName), strOrNull(p.StatewideVendorNumber),
+		strOrNull(p.Description), datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), datePtrOrNull(p.PeriodStart), datePtrOrNull(p.PeriodEnd),
+		p.FederalAmount, p.StateAmount, p.OtherAmount, p.TotalAmount, strOrNull(p.ProcurementType),
+		strOrNull(p.MinorityWomanOwned), strOrNull(p.SmallBusiness), strOrNull(p.VeteranOwned), string(warnings), string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert datawa_contract: %w", err)
+	}
+	return nil
+}
+
+func datePtrOrNull(t *time.Time) pgtype.Date {
+	if t == nil || t.IsZero() {
+		return pgtype.Date{Valid: false}
+	}
+	return pgtype.Date{Time: *t, Valid: true}
 }
 
 // ---------------------------------------------------------------------------

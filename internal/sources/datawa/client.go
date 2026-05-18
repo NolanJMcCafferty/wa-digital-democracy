@@ -4,6 +4,9 @@ package datawa
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -69,11 +72,16 @@ type Contract struct {
 }
 
 func (c *Client) FetchAgencyContracts(ctx context.Context, fiscalYear int, q socrata.Query) ([]socrata.Row, error) {
+	rows, _, err := c.FetchAgencyContractsWithSource(ctx, fiscalYear, q)
+	return rows, err
+}
+
+func (c *Client) FetchAgencyContractsWithSource(ctx context.Context, fiscalYear int, q socrata.Query) ([]socrata.Row, httpx.RawFetch, error) {
 	datasetID := AgencyContractFiscalYears[fiscalYear]
 	if datasetID == "" {
-		return nil, strconv.ErrSyntax
+		return nil, httpx.RawFetch{}, strconv.ErrSyntax
 	}
-	return c.FetchPage(ctx, datasetID, q)
+	return c.FetchPageWithSource(ctx, datasetID, q)
 }
 
 func NormalizeContract(datasetID string, fiscalYear int, row socrata.Row) Contract {
@@ -107,6 +115,12 @@ func NormalizeContract(datasetID string, fiscalYear int, row socrata.Row) Contra
 		VeteranOwned:         first(row, "veteran_owned"),
 		NormalizationWarning: warnings,
 	}
+}
+
+func StableRowID(row socrata.Row) string {
+	body, _ := json.Marshal(row)
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
 func first(row socrata.Row, keys ...string) string {
