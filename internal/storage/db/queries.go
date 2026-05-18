@@ -660,3 +660,274 @@ func lowerTrim(s string) string {
 	}
 	return string(out[start:end])
 }
+
+// ---------------------------------------------------------------------------
+// Aggregation queries — back the /api/v1/{legislators,organizations,hearings,sources}
+// endpoints. All read-only; safe to run any time.
+// ---------------------------------------------------------------------------
+
+// LegislatorAggregate is the row shape ListLegislators returns.
+type LegislatorAggregate struct {
+	ID        int64
+	Name      string
+	Chamber   string
+	BillCount int
+}
+
+// ListLegislators returns every legislator in the DB with their sponsored
+// bill count. Order: alphabetical by name.
+func (s *Store) ListLegislators(ctx context.Context) ([]LegislatorAggregate, error) {
+	const q = `
+SELECT l.id, l.name, COALESCE(l.chamber, ''), COUNT(DISTINCT bs.bill_id)
+  FROM legislator l
+  LEFT JOIN bill_sponsor bs ON bs.legislator_id = l.id
+ GROUP BY l.id
+ ORDER BY l.name;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list legislators: %w", err)
+	}
+	defer rows.Close()
+	out := []LegislatorAggregate{}
+	for rows.Next() {
+		var l LegislatorAggregate
+		if err := rows.Scan(&l.ID, &l.Name, &l.Chamber, &l.BillCount); err != nil {
+			return nil, fmt.Errorf("scan legislator: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// LegislatorAppearance is one sponsored-bill row joined onto bill metadata.
+type LegislatorAppearance struct {
+	Biennium    string
+	BillID      string
+	BillPrefix  string
+	BillNumber  int
+	BillTitle   string
+	SponsorType string
+}
+
+// GetLegislatorBills returns every bill the legislator has sponsored,
+// joined to bill metadata for display.
+func (s *Store) GetLegislatorBills(ctx context.Context, legislatorID int64) ([]LegislatorAppearance, error) {
+	const q = `
+SELECT b.biennium, b.bill_number, b.prefix, b.number,
+       COALESCE(b.title, ''), bs.sponsor_type
+  FROM bill_sponsor bs
+  JOIN bill b ON b.id = bs.bill_id
+ WHERE bs.legislator_id = $1
+ ORDER BY b.biennium DESC, b.prefix, b.number;`
+	rows, err := s.Pool.Query(ctx, q, legislatorID)
+	if err != nil {
+		return nil, fmt.Errorf("legislator bills: %w", err)
+	}
+	defer rows.Close()
+	out := []LegislatorAppearance{}
+	for rows.Next() {
+		var a LegislatorAppearance
+		if err := rows.Scan(&a.Biennium, &a.BillID, &a.BillPrefix, &a.BillNumber,
+			&a.BillTitle, &a.SponsorType); err != nil {
+			return nil, fmt.Errorf("scan appearance: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// OrganizationAggregate is the row shape ListOrganizations returns.
+type OrganizationAggregate struct {
+	ID              int64
+	CanonicalName   string
+	Aliases         []string
+	MatchConfidence string
+	MatchNotes      string
+	TestifierCount  int
+	ProCount        int
+	ConCount        int
+	OtherCount      int
+	UnknownCount    int
+	ContextCount    int
+}
+
+// ListOrganizations returns every organization with aggregated testifier
+// position counts and PDC context-record count.
+func (s *Store) ListOrganizations(ctx context.Context) ([]OrganizationAggregate, error) {
+	const q = `
+SELECT o.id, o.canonical_name, o.aliases,
+       o.match_confidence::text, COALESCE(o.match_notes, ''),
+       COUNT(DISTINCT t.id) AS testifier_count,
+       COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Pro')   AS pro_count,
+       COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Con')   AS con_count,
+       COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Other') AS other_count,
+       COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Unknown') AS unknown_count,
+       COUNT(DISTINCT ocr.id) AS context_count
+  FROM organization o
+  LEFT JOIN testifier          t   ON t.normalized_org_id = o.id
+  LEFT JOIN org_context_record ocr ON ocr.organization_id = o.id
+ GROUP BY o.id
+ ORDER BY o.canonical_name;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list organizations: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationAggregate{}
+	for rows.Next() {
+		var o OrganizationAggregate
+		if err := rows.Scan(&o.ID, &o.CanonicalName, &o.Aliases,
+			&o.MatchConfidence, &o.MatchNotes,
+			&o.TestifierCount, &o.ProCount, &o.ConCount,
+			&o.OtherCount, &o.UnknownCount, &o.ContextCount); err != nil {
+			return nil, fmt.Errorf("scan organization: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OrganizationAppearance is one (org, agenda_item) row.
+type OrganizationAppearance struct {
+	Biennium         string
+	BillID           string
+	BillPrefix       string
+	BillNumber       int
+	CSIAgendaItemID  string
+	HearingTitle     string
+	CommitteeName    string
+	MeetingDateTime  time.Time
+	Position         string
+	TestifierCount   int
+}
+
+// GetOrganizationAppearances returns every (agenda_item, org) appearance
+// where at least one testifier from that org signed in.
+func (s *Store) GetOrganizationAppearances(ctx context.Context, organizationID int64) ([]OrganizationAppearance, error) {
+	const q = `
+SELECT b.biennium, b.bill_number, b.prefix, b.number,
+       COALESCE(a.csi_agenda_item_id, ''),
+       COALESCE(a.label, ''),
+       h.committee_name,
+       h.meeting_datetime,
+       MAX(t.position::text) AS position,
+       COUNT(t.id) AS testifier_count
+  FROM testifier t
+  JOIN agenda_item a ON a.id = t.agenda_item_id
+  JOIN hearing     h ON h.id = a.hearing_id
+  LEFT JOIN bill   b ON b.id = a.bill_id
+ WHERE t.normalized_org_id = $1
+ GROUP BY b.biennium, b.bill_number, b.prefix, b.number,
+          a.csi_agenda_item_id, a.label, h.committee_name, h.meeting_datetime
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := s.Pool.Query(ctx, q, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("organization appearances: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationAppearance{}
+	for rows.Next() {
+		var a OrganizationAppearance
+		var biennium, billID, prefix *string
+		var billNumber *int
+		if err := rows.Scan(&biennium, &billID, &prefix, &billNumber,
+			&a.CSIAgendaItemID, &a.HearingTitle,
+			&a.CommitteeName, &a.MeetingDateTime,
+			&a.Position, &a.TestifierCount); err != nil {
+			return nil, fmt.Errorf("scan appearance: %w", err)
+		}
+		if biennium != nil {
+			a.Biennium = *biennium
+		}
+		if billID != nil {
+			a.BillID = *billID
+		}
+		if prefix != nil {
+			a.BillPrefix = *prefix
+		}
+		if billNumber != nil {
+			a.BillNumber = *billNumber
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// HearingAggregate is the row shape ListHearings returns.
+type HearingAggregate struct {
+	CSIAgendaItemID string
+	AgendaItemLabel string
+	CommitteeName   string
+	Chamber         string
+	MeetingDateTime time.Time
+	Biennium        string
+	BillID          string
+	BillPrefix      string
+	BillNumber      int
+	HasTVW          bool
+}
+
+// ListHearings returns every agenda_item joined to its hearing + bill,
+// ordered by meeting datetime descending. Only includes rows where the
+// hearing has a TVW event mapping (the curated subset).
+func (s *Store) ListHearings(ctx context.Context) ([]HearingAggregate, error) {
+	const q = `
+SELECT a.csi_agenda_item_id, a.label,
+       h.committee_name, h.chamber, h.meeting_datetime,
+       b.biennium, b.bill_number, b.prefix, b.number,
+       (h.tvw_event_id IS NOT NULL) AS has_tvw
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE h.tvw_event_id IS NOT NULL
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list hearings: %w", err)
+	}
+	defer rows.Close()
+	out := []HearingAggregate{}
+	for rows.Next() {
+		var hh HearingAggregate
+		if err := rows.Scan(&hh.CSIAgendaItemID, &hh.AgendaItemLabel,
+			&hh.CommitteeName, &hh.Chamber, &hh.MeetingDateTime,
+			&hh.Biennium, &hh.BillID, &hh.BillPrefix, &hh.BillNumber,
+			&hh.HasTVW); err != nil {
+			return nil, fmt.Errorf("scan hearing: %w", err)
+		}
+		out = append(out, hh)
+	}
+	return out, rows.Err()
+}
+
+// SourceSummaryRow is the row shape ListSourceSummaries returns.
+type SourceSummaryRow struct {
+	System          string
+	Calls           int
+	LatestFetchedAt time.Time
+	Endpoints       []string
+}
+
+// ListSourceSummaries groups source_record rows by source_system and
+// returns counts + most-recent fetch + distinct endpoints.
+func (s *Store) ListSourceSummaries(ctx context.Context) ([]SourceSummaryRow, error) {
+	const q = `
+SELECT source_system, COUNT(*), MAX(fetched_at), ARRAY_AGG(DISTINCT source_endpoint)
+  FROM source_record
+ GROUP BY source_system
+ ORDER BY source_system;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("list source summaries: %w", err)
+	}
+	defer rows.Close()
+	out := []SourceSummaryRow{}
+	for rows.Next() {
+		var r SourceSummaryRow
+		if err := rows.Scan(&r.System, &r.Calls, &r.LatestFetchedAt, &r.Endpoints); err != nil {
+			return nil, fmt.Errorf("scan source summary: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

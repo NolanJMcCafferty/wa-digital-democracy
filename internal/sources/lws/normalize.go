@@ -24,7 +24,7 @@ type NormalizedBill struct {
 // official-URL pattern is documented in Blueprint line 97:
 //   https://app.leg.wa.gov/billsummary?BillNumber=<n>&Year=<biennium-start>
 func NormalizeBill(l *Legislation) NormalizedBill {
-	prefix, num := splitBillID(l.BillID)
+	prefix, num := SplitBillID(l.BillID)
 	if num == 0 {
 		// Fall back to <BillNumber>.
 		if n, err := strconv.Atoi(strings.TrimSpace(l.BillNumber)); err == nil {
@@ -111,14 +111,14 @@ func NormalizeHearings(in []Hearing) []NormalizedHearing {
 	return out
 }
 
-// splitBillID parses "HB 1234" → ("HB", 1234). Returns ("",0) on failure.
+// SplitBillID parses "HB 1234" → ("HB", 1234). Returns ("",0) on failure.
 //
 // LWS reports BillID as the bill's *current* form, including engrossment
 // and substitution chrome ("ESSB 6054", "2SHB 1859"). The bill's identity
 // — the chamber+number that humans cite and that public bill URLs use —
 // is the bare form, so we strip the chrome here to keep one row per bill
 // across the legislative cycle.
-func splitBillID(billID string) (string, int) {
+func SplitBillID(billID string) (string, int) {
 	parts := strings.Fields(billID)
 	if len(parts) != 2 {
 		return "", 0

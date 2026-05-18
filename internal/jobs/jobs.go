@@ -101,6 +101,36 @@ func (p *Pipeline) Run(ctx context.Context, log func(string), ids *IDs) error {
 	return nil
 }
 
+// RunMetadataOnly runs only the LWS-bill ingestion step. Used by the
+// biennium-wide `wa-dd ingest-session` driver where we ingest metadata
+// for every bill in the session but skip CSI/TVW/segment/match/PDC —
+// those steps require operator-curated agenda + TVW IDs that aren't in
+// scope for the bulk-metadata pass. Same `ingestion_run` instrumentation
+// as Run; same per-step error semantics.
+func (p *Pipeline) RunMetadataOnly(ctx context.Context, log func(string), ids *IDs) error {
+	const step = "ingest-bill"
+	log(fmt.Sprintf("==> %s", step))
+	runID, err := p.Store.StartIngestionRun(ctx, step, map[string]any{
+		"biennium": p.Demo.Biennium, "bill": p.Demo.BillID(),
+		"mode": "metadata-only",
+	})
+	if err != nil {
+		return fmt.Errorf("start run %s: %w", step, err)
+	}
+	stepErr := p.IngestBill(ctx, ids)
+	status := "succeeded"
+	if stepErr != nil {
+		status = "failed"
+	}
+	if err := p.Store.FinishIngestionRun(ctx, runID, status, 0, 0, stepErr); err != nil {
+		log(fmt.Sprintf("warning: finish run %s: %v", step, err))
+	}
+	if stepErr != nil {
+		return fmt.Errorf("%s: %w", step, stepErr)
+	}
+	return nil
+}
+
 // pInt64 wraps a non-zero id in *int64, or returns nil for 0.
 func pInt64(id int64) *int64 {
 	if id == 0 {

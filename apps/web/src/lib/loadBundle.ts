@@ -105,35 +105,46 @@ export async function listLocalBundles(): Promise<BundleListEntry[]> {
   }));
 }
 
+type hearingResponseItem = {
+  csi_agenda_item_id: string;
+  agenda_item_label: string;
+  committee_name: string;
+  chamber: string;
+  meeting_datetime: string;
+  biennium: string;
+  bill_id: string;
+  bill_prefix: string;
+  bill_number: number;
+};
+
 export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
-  const entries = await listLocalBundles();
-  const out: HearingBundleEntry[] = [];
-  for (const entry of entries) {
-    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
-    const hearingId = bundle?.hearing.csi_agenda_item_id;
-    if (!bundle || !hearingId) continue;
-    out.push({
-      ...entry,
-      csiAgendaItemId: hearingId,
-      title: bundle.hearing.agenda_item_label || bundle.bill.title || bundle.bill.bill_id,
-      committeeName: bundle.hearing.committee_name,
-      meetingDatetime: bundle.hearing.meeting_datetime,
-      billId: bundle.bill.bill_id,
-    });
+  const res = await fetch(`${API_BASE}/api/v1/hearings`, {
+    next: { revalidate: DEFAULT_REVALIDATE },
+  });
+  if (!res.ok) {
+    throw new Error(`listHearingBundles: ${API_BASE}/api/v1/hearings returned ${res.status}`);
   }
-  out.sort((a, b) => b.meetingDatetime.localeCompare(a.meetingDatetime));
-  return out;
+  const items = (await res.json()) as hearingResponseItem[];
+  return items.map((h) => ({
+    biennium: h.biennium,
+    billPrefix: h.bill_prefix,
+    billNumber: h.bill_number,
+    billId: h.bill_id,
+    title: h.agenda_item_label || h.bill_id,
+    csiAgendaItemId: h.csi_agenda_item_id,
+    committeeName: h.committee_name,
+    meetingDatetime: h.meeting_datetime,
+  }));
 }
 
 export async function loadHearingBundle(csiAgendaItemId: string): Promise<Bundle | null> {
-  const entries = await listLocalBundles();
-  for (const entry of entries) {
-    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
-    if (bundle?.hearing.csi_agenda_item_id === csiAgendaItemId) {
-      return bundle;
-    }
+  const url = `${API_BASE}/api/v1/hearings/${encodeURIComponent(csiAgendaItemId)}`;
+  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`loadHearingBundle ${url} returned ${res.status}`);
   }
-  return null;
+  return (await res.json()) as Bundle;
 }
 
 const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" | "endpoints">> = [
@@ -261,121 +272,188 @@ const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" 
   },
 ];
 
+type sourceResponseItem = {
+  system: string;
+  calls: number;
+  latest_fetched_at: string;
+  endpoints: string[];
+};
+
 export async function listSourceSummaries(): Promise<SourceSummary[]> {
-  const entries = await listLocalBundles();
-  const bySystem = new Map<string, { calls: number; latestFetchedAt?: string; endpoints: Set<string> }>();
-  for (const entry of entries) {
-    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
-    for (const s of bundle?.sources ?? []) {
-      const current = bySystem.get(s.system) ?? { calls: 0, endpoints: new Set<string>() };
-      current.calls += 1;
-      current.endpoints.add(s.endpoint);
-      if (!current.latestFetchedAt || s.fetched_at > current.latestFetchedAt) {
-        current.latestFetchedAt = s.fetched_at;
-      }
-      bySystem.set(s.system, current);
-    }
+  const res = await fetch(`${API_BASE}/api/v1/sources`, {
+    next: { revalidate: DEFAULT_REVALIDATE },
+  });
+  if (!res.ok) {
+    throw new Error(`listSourceSummaries: ${API_BASE}/api/v1/sources returned ${res.status}`);
   }
+  const live = (await res.json()) as sourceResponseItem[];
+  const bySystem = new Map<string, sourceResponseItem>();
+  for (const s of live) bySystem.set(s.system, s);
+
+  // Left-join with the local SOURCE_DEFINITIONS so "planned" rows still
+  // show even before they're wired into the ingest pipeline.
   return SOURCE_DEFINITIONS.map((def) => {
     const seen = bySystem.get(def.system);
     return {
       ...def,
       calls: seen?.calls ?? 0,
-      latestFetchedAt: seen?.latestFetchedAt,
-      endpoints: Array.from(seen?.endpoints ?? []).sort(),
+      latestFetchedAt: seen?.latest_fetched_at,
+      endpoints: (seen?.endpoints ?? []).slice().sort(),
     };
   });
 }
 
+type legislatorListItem = {
+  slug: string;
+  name: string;
+  chamber?: string;
+  bill_count: number;
+};
+
+type legislatorDetailResponse = {
+  slug: string;
+  name: string;
+  chamber?: string;
+  appearances: Array<{
+    biennium: string;
+    bill_id: string;
+    bill_prefix: string;
+    bill_number: number;
+    bill_title?: string;
+    sponsor_type?: string;
+  }>;
+};
+
 export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> {
-  const entries = await listLocalBundles();
-  const legislators = new Map<string, LegislatorBundleEntry>();
-  for (const entry of entries) {
-    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
-    if (!bundle) continue;
-    for (const sponsor of bundle.bill.sponsors ?? []) {
-      const slug = slugify(sponsor.name);
-      const existing = legislators.get(slug) ?? {
-        slug,
-        name: sponsor.name,
-        chamber: sponsor.chamber,
-        appearances: [],
-      };
-      if (!existing.chamber && sponsor.chamber) existing.chamber = sponsor.chamber;
-      existing.appearances.push({
-        biennium: bundle.bill.biennium,
-        billId: bundle.bill.bill_id,
-        billPrefix: entry.billPrefix,
-        billNumber: entry.billNumber,
-        billTitle: bundle.bill.title,
-        sponsorType: sponsor.sponsor_type,
-        hearingTitle: bundle.hearing.agenda_item_label,
-        csiAgendaItemId: bundle.hearing.csi_agenda_item_id,
-        meetingDatetime: bundle.hearing.meeting_datetime,
-      });
-      legislators.set(slug, existing);
-    }
+  const res = await fetch(`${API_BASE}/api/v1/legislators`, {
+    next: { revalidate: DEFAULT_REVALIDATE },
+  });
+  if (!res.ok) {
+    throw new Error(`listLegislatorBundles: ${API_BASE}/api/v1/legislators returned ${res.status}`);
   }
-  return Array.from(legislators.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const items = (await res.json()) as legislatorListItem[];
+  // The list endpoint returns aggregate counts, not appearances. We
+  // synthesize empty appearances arrays here so the existing
+  // LegislatorBundleEntry shape (which the legislators index page
+  // consumes for slug + name) keeps working. Pages that need the full
+  // appearance list call loadLegislatorBundle(slug) below.
+  return items.map((l) => ({
+    slug: l.slug,
+    name: l.name,
+    chamber: l.chamber,
+    appearances: [],
+  }));
 }
 
 export async function loadLegislatorBundle(slug: string): Promise<LegislatorBundleEntry | null> {
-  const legislators = await listLegislatorBundles();
-  return legislators.find((l) => l.slug === slug) ?? null;
+  const url = `${API_BASE}/api/v1/legislators/${encodeURIComponent(slug)}`;
+  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`loadLegislatorBundle ${url} returned ${res.status}`);
+  }
+  const detail = (await res.json()) as legislatorDetailResponse;
+  return {
+    slug: detail.slug,
+    name: detail.name,
+    chamber: detail.chamber,
+    appearances: detail.appearances.map((a) => ({
+      biennium: a.biennium,
+      billId: a.bill_id,
+      billPrefix: a.bill_prefix,
+      billNumber: a.bill_number,
+      billTitle: a.bill_title,
+      sponsorType: a.sponsor_type,
+    })),
+  };
 }
 
 export function legislatorSlug(s: Sponsor): string {
   return slugify(s.name);
 }
 
+type orgListItem = {
+  slug: string;
+  canonical_name: string;
+  aliases: string[];
+  match_confidence: Organization["match_confidence"];
+  match_notes?: string;
+  testifier_count: number;
+  positions: Record<Position, number>;
+  context_count: number;
+};
+
+type orgDetailResponse = orgListItem & {
+  appearances: Array<{
+    biennium: string;
+    bill_id: string;
+    bill_prefix: string;
+    bill_number: number;
+    csi_agenda_item_id?: string;
+    hearing_title: string;
+    committee_name: string;
+    meeting_datetime: string;
+    position?: string;
+    testifier_count: number;
+  }>;
+};
+
 export async function listOrganizationBundles(): Promise<OrganizationBundleEntry[]> {
-  const entries = await listLocalBundles();
-  const orgs = new Map<string, OrganizationBundleEntry>();
-  for (const entry of entries) {
-    const bundle = await loadBundle(entry.biennium, entry.billPrefix, entry.billNumber);
-    if (!bundle) continue;
-    for (const org of bundle.organizations ?? []) {
-      const slug = slugify(org.canonical_name);
-      const existing = orgs.get(slug) ?? {
-        slug,
-        canonicalName: org.canonical_name,
-        aliases: org.aliases ?? [],
-        matchConfidence: org.match_confidence,
-        matchNotes: org.match_notes,
-        testifierCount: 0,
-        positions: { Pro: 0, Con: 0, Other: 0, Unknown: 0 },
-        contextCount: 0,
-        contexts: [],
-        appearances: [],
-      };
-      existing.aliases = Array.from(new Set([...existing.aliases, ...(org.aliases ?? [])]));
-      existing.testifierCount += org.testifier_count ?? 0;
-      existing.contexts.push(...(org.context ?? []));
-      existing.contextCount = existing.contexts.length;
-      if (org.testifier_position && org.testifier_position in existing.positions) {
-        existing.positions[org.testifier_position as Position] += org.testifier_count ?? 0;
-      }
-      existing.appearances.push({
-        biennium: bundle.bill.biennium,
-        billId: bundle.bill.bill_id,
-        billPrefix: entry.billPrefix,
-        billNumber: entry.billNumber,
-        csiAgendaItemId: bundle.hearing.csi_agenda_item_id,
-        hearingTitle: bundle.hearing.agenda_item_label || bundle.bill.title || bundle.bill.bill_id,
-        committeeName: bundle.hearing.committee_name,
-        meetingDatetime: bundle.hearing.meeting_datetime,
-        position: org.testifier_position,
-        testifierCount: org.testifier_count ?? 0,
-      });
-      orgs.set(slug, existing);
-    }
+  const res = await fetch(`${API_BASE}/api/v1/organizations`, {
+    next: { revalidate: DEFAULT_REVALIDATE },
+  });
+  if (!res.ok) {
+    throw new Error(`listOrganizationBundles: ${API_BASE}/api/v1/organizations returned ${res.status}`);
   }
-  return Array.from(orgs.values()).sort((a, b) => a.canonicalName.localeCompare(b.canonicalName));
+  const items = (await res.json()) as orgListItem[];
+  return items.map((o) => ({
+    slug: o.slug,
+    canonicalName: o.canonical_name,
+    aliases: o.aliases ?? [],
+    matchConfidence: o.match_confidence,
+    matchNotes: o.match_notes,
+    testifierCount: o.testifier_count,
+    positions: o.positions,
+    contextCount: o.context_count,
+    // The aggregate list endpoint omits per-record contexts and
+    // appearances — those need a detail fetch. Index pages only show
+    // counts, so empty arrays here are fine.
+    contexts: [],
+    appearances: [],
+  }));
 }
 
 export async function loadOrganizationBundle(slug: string): Promise<OrganizationBundleEntry | null> {
-  const orgs = await listOrganizationBundles();
-  return orgs.find((o) => o.slug === slug) ?? null;
+  const url = `${API_BASE}/api/v1/organizations/${encodeURIComponent(slug)}`;
+  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`loadOrganizationBundle ${url} returned ${res.status}`);
+  }
+  const detail = (await res.json()) as orgDetailResponse;
+  return {
+    slug: detail.slug,
+    canonicalName: detail.canonical_name,
+    aliases: detail.aliases ?? [],
+    matchConfidence: detail.match_confidence,
+    matchNotes: detail.match_notes,
+    testifierCount: detail.testifier_count,
+    positions: detail.positions,
+    contextCount: detail.context_count,
+    contexts: [], // detail endpoint doesn't return per-record contexts at this stage
+    appearances: detail.appearances.map((a) => ({
+      biennium: a.biennium,
+      billId: a.bill_id,
+      billPrefix: a.bill_prefix,
+      billNumber: a.bill_number,
+      csiAgendaItemId: a.csi_agenda_item_id,
+      hearingTitle: a.hearing_title,
+      committeeName: a.committee_name,
+      meetingDatetime: a.meeting_datetime,
+      position: a.position,
+      testifierCount: a.testifier_count,
+    })),
+  };
 }
 
 export function slugify(s: string): string {

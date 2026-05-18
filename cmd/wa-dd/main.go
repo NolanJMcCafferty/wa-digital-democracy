@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,6 +53,7 @@ SUBCOMMANDS:
   match-hearing      Compute meeting<->TVW match for a candidate
   build-bundle       Assemble the JSON bundle for a selected demo
   build-bundles      Build bundles for every entry in selected_bills.yml (daily batch)
+  ingest-session     Ingest LWS metadata for every bill in a biennium (no hearings)
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -79,6 +82,8 @@ func main() {
 		os.Exit(runBuildBundle(args))
 	case "build-bundles":
 		os.Exit(runBuildBundles(args))
+	case "ingest-session":
+		os.Exit(runIngestSession(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -118,7 +123,7 @@ func runFindCandidates(args []string) int {
 		maxMeetings = fs.Int("max-meetings", 8, "max recent meetings per committee")
 		out         = fs.String("out", "data/processed/candidates.json", "output JSON path")
 		topN        = fs.Int("top", 10, "show top-N candidates in stderr summary")
-		rateLimit   = fs.Float64("rate", 2.0, "max requests/sec to app.leg.wa.gov")
+		rateLimit   = fs.Float64("rate", 5.0, "max requests/sec to app.leg.wa.gov")
 		quiet       = fs.Bool("quiet", false, "suppress per-step progress logs")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -236,7 +241,7 @@ func runBuildBundle(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundle is written")
-		rateLimit = fs.Float64("rate", 2.0, "max requests/sec for legislative APIs")
+		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for legislative APIs")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -325,6 +330,47 @@ func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*
 	}, cleanup, nil
 }
 
+// metadataDeps is the trimmed dependency set for ingest-session: just LWS
+// + storage + httpx. We don't need CSI/TVW/PDC for the metadata-only pass,
+// and we don't want to require INVINTUS_EMBEDDER_KEY for it.
+type metadataDeps struct {
+	store      *db.Store
+	httpClient *httpx.Client
+	lwsClient  *lws.Client
+}
+
+func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*metadataDeps, func(), error) {
+	store, err := db.Open(ctx, dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db open: %w", err)
+	}
+	cleanup := func() { store.Close() }
+
+	objs, err := objectstore.NewFS(rawDir)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("objectstore: %w", err)
+	}
+	sink := db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"}
+
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         sink,
+		Timeout:      45 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"wslwebservices.leg.wa.gov": rateLimit,
+		},
+	})
+
+	return &metadataDeps{
+		store:      store,
+		httpClient: httpClient,
+		lwsClient:  lws.New(httpClient),
+	}, cleanup, nil
+}
+
 // buildOne runs the full ingest+bundle pipeline for a single bill and writes
 // the bundle JSON to outDir. Returns the absolute path of the written bundle.
 // All errors are wrapped with the bill identifier so callers can log per-bill
@@ -377,7 +423,7 @@ func runBuildBundles(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundles are written")
-		rateLimit = fs.Float64("rate", 2.0, "max requests/sec per legislative host")
+		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per legislative host")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -473,4 +519,211 @@ func runBuildBundles(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// runIngestSession implements `wa-dd ingest-session`: bulk-pull every
+// bill in a biennium from LWS GetLegislationByYear and run the metadata
+// -only pipeline (just IngestBill) per bill. Hearings/testimony stay
+// curated via `wa-dd build-bundles` + selected_bills.yml.
+func runIngestSession(args []string) int {
+	fs := flag.NewFlagSet("ingest-session", flag.ContinueOnError)
+	var (
+		biennium  = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		outDir    = fs.String("out-dir", "data/processed", "where _session.json is written")
+		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for the LWS host")
+		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
+		onlyTypes = fs.String("only-types", "", "comma-separated list of bill prefixes to keep (e.g. \"HB,SB\"). Empty = all.")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	years, err := bienniumYears(*biennium)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-session: %v\n", err)
+		return 1
+	}
+
+	allowedTypes := parseTypeFilter(*onlyTypes)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	deps, cleanup, err := newMetadataDeps(ctx, *dsn, *rawDir, *rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-session: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	// 1. Fetch the year-level bill index for each year of the biennium.
+	type billRef struct {
+		biennium string
+		prefix   string
+		number   int
+	}
+	seen := map[string]struct{}{}
+	bills := make([]billRef, 0, 2000)
+	for _, year := range years {
+		fmt.Fprintf(os.Stderr, "==> GetLegislationByYear(%d)\n", year)
+		infos, err := deps.lwsClient.GetLegislationByYear(ctx, year)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-session: GetLegislationByYear(%d): %v\n", year, err)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "    received %d bills\n", len(infos))
+		for _, info := range infos {
+			prefix, number := lws.SplitBillID(info.BillID)
+			if number == 0 {
+				continue
+			}
+			if len(allowedTypes) > 0 {
+				if _, ok := allowedTypes[prefix]; !ok {
+					continue
+				}
+			}
+			key := info.Biennium + "|" + info.BillID
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			bills = append(bills, billRef{
+				biennium: info.Biennium,
+				prefix:   prefix,
+				number:   number,
+			})
+		}
+	}
+	if *limit > 0 && len(bills) > *limit {
+		bills = bills[:*limit]
+	}
+	fmt.Fprintf(os.Stderr, "==> %d unique bills to ingest\n", len(bills))
+
+	// 2. Loop with per-bill failure isolation.
+	type result struct {
+		Bill       string `json:"bill"`
+		Status     string `json:"status"`
+		DurationMS int64  `json:"duration_ms"`
+		Error      string `json:"error,omitempty"`
+	}
+	results := make([]result, 0, len(bills))
+	startedAt := time.Now()
+	failures := 0
+
+	for i, b := range bills {
+		demo := &config.SelectedDemo{
+			Biennium:   b.biennium,
+			BillPrefix: b.prefix,
+			BillNumber: b.number,
+		}
+		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(bills), demo.BillID())
+		t0 := time.Now()
+
+		pipeline := &jobs.Pipeline{
+			Store: deps.store,
+			LWS:   deps.lwsClient,
+			Demo:  demo,
+		}
+		ids := jobs.NewIDs()
+		// Quiet per-bill log: ingest-bill makes 4 SOAP calls; logging
+		// every step at this scale would drown the output. Only failures
+		// surface to stderr.
+		stepErr := pipeline.RunMetadataOnly(ctx, func(string) {}, ids)
+		dur := time.Since(t0)
+
+		if stepErr != nil {
+			failures++
+			fmt.Fprintf(os.Stderr, "%s FAIL (%s): %v\n", prefix, dur.Round(time.Millisecond), stepErr)
+			results = append(results, result{
+				Bill: demo.BillID(), Status: "failed",
+				DurationMS: dur.Milliseconds(), Error: stepErr.Error(),
+			})
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		// Light progress every 50 bills so an hour-long run doesn't go silent.
+		if (i+1)%50 == 0 || i+1 == len(bills) {
+			fmt.Fprintf(os.Stderr, "%s ok (%s)\n", prefix, dur.Round(time.Millisecond))
+		}
+		results = append(results, result{
+			Bill: demo.BillID(), Status: "ok",
+			DurationMS: dur.Milliseconds(),
+		})
+	}
+
+	summary := struct {
+		StartedAt  time.Time `json:"started_at"`
+		FinishedAt time.Time `json:"finished_at"`
+		Biennium   string    `json:"biennium"`
+		Total      int       `json:"total"`
+		Succeeded  int       `json:"succeeded"`
+		Failed     int       `json:"failed"`
+		Results    []result  `json:"results"`
+	}{
+		StartedAt:  startedAt,
+		FinishedAt: time.Now(),
+		Biennium:   *biennium,
+		Total:      len(results),
+		Succeeded:  len(results) - failures,
+		Failed:     failures,
+		Results:    results,
+	}
+	summaryPath := filepath.Join(*outDir, "_session.json")
+	if err := writeJSON(summaryPath, summary); err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-session: write _session.json: %v\n", err)
+		if failures == 0 {
+			return 1
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "==> done: %d ok, %d failed (%s)\n",
+		summary.Succeeded, summary.Failed, summary.FinishedAt.Sub(summary.StartedAt).Round(time.Millisecond))
+	if failures > 0 {
+		return 1
+	}
+	return 0
+}
+
+// bienniumYears parses "2025-26" → [2025, 2026]. Errors on malformed input.
+func bienniumYears(b string) ([]int, error) {
+	parts := strings.SplitN(b, "-", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid biennium %q (expected e.g. 2025-26)", b)
+	}
+	startYear, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("invalid biennium start year: %w", err)
+	}
+	endYear := startYear + 1
+	if len(parts[1]) == 2 {
+		// "26" → 2026
+		yy, err := strconv.Atoi(parts[1])
+		if err == nil {
+			endYear = (startYear/100)*100 + yy
+		}
+	} else if len(parts[1]) == 4 {
+		yy, err := strconv.Atoi(parts[1])
+		if err == nil {
+			endYear = yy
+		}
+	}
+	return []int{startYear, endYear}, nil
+}
+
+func parseTypeFilter(s string) map[string]struct{} {
+	if s == "" {
+		return nil
+	}
+	out := map[string]struct{}{}
+	for _, t := range strings.Split(s, ",") {
+		t = strings.TrimSpace(strings.ToUpper(t))
+		if t != "" {
+			out[t] = struct{}{}
+		}
+	}
+	return out
 }

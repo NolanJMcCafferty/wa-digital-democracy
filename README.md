@@ -59,40 +59,49 @@ port or against a remote dev DB.
 
 ## Daily batch
 
-`make daily-bundles` rebuilds bundles for every entry in
-`config/selected_bills.yml`. The frontend reads bills via the Go API
-(`make api`), which queries the same Postgres rows the daily run
-populates — so a successful batch refresh is what makes the page fresh.
-The on-disk bundles in `data/processed/bundles/` are kept as snapshots
-for offline inspection and as a debugging fallback; the frontend does
-not read them.
+Two cooperating ingestions, both safe to re-run:
 
-To populate the list:
+1. **`make ingest-session`** — pulls **every bill in the biennium** from
+   LWS (`GetLegislationByYear`) and stores metadata + sponsors + status
+   timeline. Hearings/testimony/video are **not** touched here. ~5,000
+   bills × ~2 req/sec means a full session run takes 1–2 hours. Output
+   summary at `data/processed/_session.json`.
 
-1. `go run ./cmd/wa-dd find-candidates --issue housing` (or another keyword
-   set in `config/issue_keywords.yml`). This writes
+2. **`make daily-bundles`** — re-runs the full pipeline (LWS + CSI + TVW
+   + transcript + speakers + PDC) for every entry in
+   `config/selected_bills.yml`. This is the curated subset where we know
+   the TVW event ID and CSI agenda IDs, so we can render full
+   bill-hearing pages with testimony and transcripts.
+
+`make daily` chains them: session-wide metadata first, then curated
+hearings.
+
+To populate the curated list:
+
+1. `go run ./cmd/wa-dd find-candidates --issue housing` (or another
+   keyword set in `config/issue_keywords.yml`). This writes
    `data/processed/candidates.json` and prints a copy-paste-ready table.
-2. Pick 5–10 candidates with TVW captions and paste each one's IDs into
+2. Pick candidates with TVW captions and paste each one's IDs into
    `config/selected_bills.yml` under `bills:` (the file's header comment
    has the schema). Bills without a `tvw.event_id` are rejected at load
    time — TVW is required for transcript ingestion.
 3. `INVINTUS_EMBEDDER_KEY=… make daily-bundles`.
 
-Per-bill failures are isolated: one bad entry won't stop the rest. After
-the run, `data/processed/bundles/_run.json` summarizes which bills
-succeeded, which failed (with the error), and how long each took. The
-process exits non-zero if any bill failed so cron flags it.
+Per-bill failures are isolated in both passes: one bad entry won't stop
+the rest. The run-summary JSONs (`_session.json`, `_run.json`) record
+which bills succeeded, which failed (with the error), and how long each
+took. The process exits non-zero if any bill failed so cron flags it.
 
-For a daily refresh, add a crontab entry on the operator's machine, e.g.:
+For nightly cron, one line is enough:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily-bundles >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 Re-running is cheap in DB writes — `source_record` dedups on
-`(system, endpoint, url, content_hash, transform_version)` and just bumps
-`fetched_at` for unchanged content — but every run still re-hits every API
-at 2 req/sec, so 5–10 bills is the right scope here.
+`(system, endpoint, url, content_hash, transform_version)` and just
+bumps `fetched_at` for unchanged content — but every run still re-hits
+every upstream API at the configured rate (2 req/sec by default).
 
 ## Layout
 

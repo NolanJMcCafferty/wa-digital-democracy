@@ -72,3 +72,57 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 	demo.TVW.EventID = tvwEventID
 	return demo, nil
 }
+
+// LookupSelectedDemoByAgendaItem reconstructs a SelectedDemo by pivoting
+// on the CSI agenda item ID. The hearing-detail API endpoint
+// (/api/v1/hearings/{id}) needs this so it can call firstpage.Build
+// without first knowing the bill identifiers.
+func LookupSelectedDemoByAgendaItem(
+	ctx context.Context,
+	store *db.Store,
+	csiAgendaItemID string,
+) (*config.SelectedDemo, error) {
+	const q = `
+SELECT b.biennium, b.prefix, b.number,
+       a.csi_agenda_item_id, a.csi_meeting_family_id,
+       a.csi_agenda_item_family_id, a.label,
+       COALESCE(h.tvw_event_id, ''),
+       COALESCE(h.committee_acronym, ''),
+       h.chamber
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE a.csi_agenda_item_id = $1
+ LIMIT 1;`
+	var (
+		biennium, prefix                                          string
+		number                                                    int
+		gotCSIAgendaItemID, csiMeetingFamilyID, csiAgendaItemFamilyID string
+		label, tvwEventID, committeeAcronym, chamber              string
+	)
+	err := store.Pool.QueryRow(ctx, q, csiAgendaItemID).Scan(
+		&biennium, &prefix, &number,
+		&gotCSIAgendaItemID, &csiMeetingFamilyID, &csiAgendaItemFamilyID,
+		&label, &tvwEventID, &committeeAcronym, &chamber,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: agenda_item %s", ErrBillNotFound, csiAgendaItemID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup demo by agenda item: %w", err)
+	}
+
+	demo := &config.SelectedDemo{
+		Biennium:   biennium,
+		BillPrefix: prefix,
+		BillNumber: number,
+		Chamber:    chamber,
+	}
+	demo.Committee.Acronym = committeeAcronym
+	demo.Agenda.CSIAgendaItemID = gotCSIAgendaItemID
+	demo.Agenda.CSIMeetingFamilyID = csiMeetingFamilyID
+	demo.Agenda.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
+	demo.Agenda.Label = label
+	demo.TVW.EventID = tvwEventID
+	return demo, nil
+}

@@ -153,39 +153,40 @@ export default async function HomePage() {
 
       {bundles.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
-          No bills found. Run{" "}
+          No bills ingested yet. Run{" "}
           <code className="rounded bg-stone-200 px-1.5 py-0.5">
-            wa-dd build-bundle
+            wa-dd ingest-session
           </code>{" "}
-          (or{" "}
+          (metadata for every bill in a biennium) or{" "}
           <code className="rounded bg-stone-200 px-1.5 py-0.5">
             make daily-bundles
-          </code>
-          ) to ingest one.
+          </code>{" "}
+          (curated bills with full hearing data).
         </p>
       ) : (
-        <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
-          {bundles.map((b) => (
-            <li key={`${b.biennium}-${b.billPrefix}-${b.billNumber}`} className="px-4 py-3">
-              <Link
-                href={`/bills/${b.biennium}/${b.billPrefix}${b.billNumber}`}
-                className="flex flex-col gap-1 hover:bg-stone-50"
-              >
-                <span className="font-medium text-stone-900">
-                  {b.billId}
-                  {b.title ? (
-                    <span className="ml-2 font-normal text-stone-600">
-                      — {b.title}
-                    </span>
-                  ) : null}
+        <div className="rounded border border-stone-300 bg-white p-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-stone-900">
+                Bills{" "}
+                <span className="text-sm font-normal text-stone-500">
+                  ({bundles.length.toLocaleString()})
                 </span>
-                <span className="text-sm text-stone-500">
-                  Biennium {b.biennium}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+              </h2>
+              <p className="text-sm text-stone-600">
+                Every bill ingested from LWS for the active biennium, with
+                sponsors and status timeline. Curated bills also have
+                hearing video, testimony, and transcripts.
+              </p>
+            </div>
+            <Link
+              href="/bills"
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+            >
+              Browse bills →
+            </Link>
+          </div>
+        </div>
       )}
     </div>
   );
