@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM datawa_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM bill_status_change WHERE source_record_id = ANY($1)`,
 		`DELETE FROM transcript_segment WHERE source_record_id = ANY($1)`,
 		`DELETE FROM org_context_record WHERE source_record_id = ANY($1)`,
@@ -192,5 +193,45 @@ func TestFindBillNumberMentions(t *testing.T) {
 	got, _ = store.FindBillNumberMentions(ctx, tvwEventID, "HB", 5678)
 	if len(got) != 1 || got[0] != 2000 {
 		t.Fatalf("HB 5678 hits = %v, want [2000]", got)
+	}
+}
+
+func TestUpsertDataWAContract_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-contract-test-1")
+
+	params := db.UpsertDataWAContractParams{
+		SourceDatasetID: "test-contracts",
+		SourceRowID:     "row-1",
+		FiscalYear:      2025,
+		AgencyName:      "Dept",
+		ContractorName:  "Vendor A",
+		TotalAmount:     "123.45",
+		RawFields:       map[string]any{"source": "first"},
+		SourceRecordID:  srID,
+	}
+	if err := store.UpsertDataWAContract(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.ContractorName = "Vendor B"
+	params.TotalAmount = "456.78"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertDataWAContract(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var contractor string
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(contractor_name), max(total_amount)::text
+  FROM datawa_contract
+ WHERE source_dataset_id = 'test-contracts' AND source_row_id = 'row-1';`).Scan(&count, &contractor, &amount); err != nil {
+		t.Fatalf("query contract: %v", err)
+	}
+	if count != 1 || contractor != "Vendor B" || amount != "456.78" {
+		t.Fatalf("count=%d contractor=%q amount=%q", count, contractor, amount)
 	}
 }

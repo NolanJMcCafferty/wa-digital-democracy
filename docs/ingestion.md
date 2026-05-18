@@ -3,7 +3,7 @@
 Last updated: 2026-05-18.
 
 This document describes how data flows from the official Washington
-state sources (LWS, CSI, TVW/Invintus, PDC) into Postgres and out to
+state sources (LWS, CSI, TVW/Invintus, PDC, DataWA) into Postgres and out to
 the Next.js frontend. It's the operator's reference for what runs when,
 where things land, and how to debug a stuck or misbehaving run.
 
@@ -34,7 +34,7 @@ where things land, and how to debug a stuck or misbehaving run.
 The same Bundle JSON shape is produced by `firstpage.Build` regardless
 of which path populated the underlying Postgres rows.
 
-## The three passes
+## Legislative daily passes
 
 Each pass writes to Postgres directly. Each is idempotent — re-running
 just bumps `fetched_at` on `source_record` rows where bytes are
@@ -386,3 +386,35 @@ All three passes are safe to re-run. What changes:
   `MatchSpeakers` step currently labels most segments
   `unknown_speaker`. Improving this is a known gap; see the
   Comprehensive Plan's Phase 3 notes.
+
+## Optional Phase 4 contract ingestion
+
+`wa-dd ingest-contracts` is the first narrow budget/spending/contracts
+connector. It ingests one DataWA agency-contract fiscal-year dataset into
+`datawa_contract` with source provenance through `source_record`.
+
+```sh
+wa-dd ingest-contracts --fiscal-year 2025 --limit 1000
+```
+
+Current fiscal-year dataset mapping lives in `internal/sources/datawa`:
+
+- 2025 → `6fx9-ncas` — Agency Contracts Fiscal Year 2025
+- 2024 → `s8d5-pj78` — Agency Contracts Fiscal Year 2024
+- 2023 → `mz6y-pfem` — Agency Contracts Fiscal Year 2023
+- 2022 → `pwse-3zea` — Agency Contracts Fiscal Year 2022
+
+Rows are normalized into `datawa_contract` and keep:
+
+- source dataset/row IDs;
+- fiscal year;
+- agency and contractor names;
+- contract/amendment/vendor identifiers;
+- dates and money fields;
+- raw fields as JSONB;
+- normalization warnings for sentinel/invalid dates;
+- `source_record_id` linking back to the fetched Socrata page.
+
+This is intentionally a bounded MVP. Broader budget/spending work should add
+separate issues for additional DataWA datasets, fiscal.wa.gov, Seattle Open
+Budget, USAspending joins, and agency/vendor/entity resolution.

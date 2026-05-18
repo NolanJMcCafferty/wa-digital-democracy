@@ -31,9 +31,11 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/datawa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
@@ -56,6 +58,7 @@ SUBCOMMANDS:
   ingest-session     Ingest LWS metadata for every bill in a biennium (no hearings)
   discover-hearings  Auto-fill CSI/TVW IDs on every LWS hearing in a biennium
   ingest-hearings    Run the full pipeline for every discovered agenda item
+  ingest-contracts   Pull DataWA agency contract rows into Postgres
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -90,6 +93,8 @@ func main() {
 		os.Exit(runDiscoverHearings(args))
 	case "ingest-hearings":
 		os.Exit(runIngestHearings(args))
+	case "ingest-contracts":
+		os.Exit(runIngestContracts(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -233,13 +238,13 @@ func writeJSON(path string, v any) error {
 // runBuildBundle implements `wa-dd build-bundle`.
 //
 // Steps:
-//   1. Load selected_demo.yml.
-//   2. Open Postgres + the filesystem object store and wire them into the
-//      shared httpx.RawSink so every fetch records provenance.
-//   3. Run the eight pipeline jobs (Blueprint Steps 1–8 minus the optional
-//      Committee Schedules enrichment, which the operator covered by
-//      pasting tvw.event_id into the demo config).
-//   4. Assemble the JSON bundle and write to data/processed/bundles/.
+//  1. Load selected_demo.yml.
+//  2. Open Postgres + the filesystem object store and wire them into the
+//     shared httpx.RawSink so every fetch records provenance.
+//  3. Run the eight pipeline jobs (Blueprint Steps 1–8 minus the optional
+//     Committee Schedules enrichment, which the operator covered by
+//     pasting tvw.event_id into the demo config).
+//  4. Assemble the JSON bundle and write to data/processed/bundles/.
 func runBuildBundle(args []string) int {
 	fs := flag.NewFlagSet("build-bundle", flag.ContinueOnError)
 	var (
@@ -318,11 +323,11 @@ func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
 		HostRateLimit: map[string]float64{
-			"app.leg.wa.gov":           rateLimit,
+			"app.leg.wa.gov":            rateLimit,
 			"wslwebservices.leg.wa.gov": rateLimit,
-			"tvw.org":                  rateLimit,
-			"api.v3.invintus.com":      rateLimit,
-			"data.wa.gov":              rateLimit,
+			"tvw.org":                   rateLimit,
+			"api.v3.invintus.com":       rateLimit,
+			"data.wa.gov":               rateLimit,
 		},
 	})
 
@@ -717,13 +722,13 @@ func runDiscoverHearings(args []string) int {
 	})
 
 	type result struct {
-		HearingID    int64  `json:"hearing_id"`
-		Bill         string `json:"bill"`
-		Status       string `json:"status"` // "ok" | "failed" | "no-tvw"
-		CSIAgendaID  string `json:"csi_agenda_item_id,omitempty"`
-		TVWEventID   string `json:"tvw_event_id,omitempty"`
-		Error        string `json:"error,omitempty"`
-		DurationMS   int64  `json:"duration_ms"`
+		HearingID   int64  `json:"hearing_id"`
+		Bill        string `json:"bill"`
+		Status      string `json:"status"` // "ok" | "failed" | "no-tvw"
+		CSIAgendaID string `json:"csi_agenda_item_id,omitempty"`
+		TVWEventID  string `json:"tvw_event_id,omitempty"`
+		Error       string `json:"error,omitempty"`
+		DurationMS  int64  `json:"duration_ms"`
 	}
 	results := make([]result, 0, len(hearings))
 	startedAt := time.Now()
@@ -863,9 +868,9 @@ func runIngestHearings(args []string) int {
 			failures++
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s lookup FAIL: %v\n", i+1, len(rows), r.CSIAgendaItemID, err)
 			results = append(results, result{
-				Bill: fmt.Sprintf("%s %d", r.BillPrefix, r.BillNumber),
+				Bill:            fmt.Sprintf("%s %d", r.BillPrefix, r.BillNumber),
 				CSIAgendaItemID: r.CSIAgendaItemID,
-				Status: "failed", Error: err.Error(),
+				Status:          "failed", Error: err.Error(),
 			})
 			continue
 		}
@@ -925,6 +930,114 @@ func runIngestHearings(args []string) int {
 	return 0
 }
 
+// runIngestContracts implements `wa-dd ingest-contracts`: pulls one DataWA
+// agency-contract fiscal-year dataset into the normalized datawa_contract table.
+// This is the first narrow budget/spending/contracts connector for Phase 4.
+func runIngestContracts(args []string) int {
+	fs := flag.NewFlagSet("ingest-contracts", flag.ContinueOnError)
+	var (
+		fiscalYear = fs.Int("fiscal-year", 2025, "DataWA agency contracts fiscal year to ingest")
+		limit      = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
+		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir     = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit  = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-contracts: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-contracts: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      45 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"data.wa.gov": *rateLimit,
+		},
+	})
+	client := datawa.New(httpClient, os.Getenv("SOCRATA_APP_TOKEN"))
+	datasetID := datawa.AgencyContractFiscalYears[*fiscalYear]
+	if datasetID == "" {
+		fmt.Fprintf(os.Stderr, "ingest-contracts: unsupported fiscal year %d\n", *fiscalYear)
+		return 2
+	}
+
+	query := socrata.Query{Order: ":id"}
+	if *limit > 0 {
+		query.Limit = *limit
+	}
+	rows, fetch, err := client.FetchAgencyContractsWithSource(ctx, *fiscalYear, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-contracts: fetch: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-contracts: source record was not captured")
+		return 1
+	}
+
+	var upserted int
+	for _, row := range rows {
+		contract := datawa.NormalizeContract(datasetID, *fiscalYear, row)
+		if contract.SourceRowID == "" {
+			contract.SourceRowID = datawa.StableRowID(row)
+		}
+		if err := store.UpsertDataWAContract(ctx, db.UpsertDataWAContractParams{
+			SourceDatasetID:       contract.SourceDatasetID,
+			SourceRowID:           contract.SourceRowID,
+			FiscalYear:            contract.FiscalYear,
+			AgencyName:            contract.AgencyName,
+			AgencyNumber:          contract.AgencyNumber,
+			ContractNumber:        contract.ContractNumber,
+			AmendmentNumber:       contract.AmendmentNumber,
+			ContractorName:        contract.ContractorName,
+			StatewideVendorNumber: contract.StatewideVendorNum,
+			Description:           contract.Description,
+			StartDate:             contract.StartDate,
+			EndDate:               contract.EndDate,
+			PeriodStart:           contract.PeriodStart,
+			PeriodEnd:             contract.PeriodEnd,
+			FederalAmount:         normalizeMoney(contract.FederalAmount),
+			StateAmount:           normalizeMoney(contract.StateAmount),
+			OtherAmount:           normalizeMoney(contract.OtherAmount),
+			TotalAmount:           normalizeMoney(contract.TotalAmount),
+			ProcurementType:       contract.ProcurementType,
+			MinorityWomanOwned:    contract.MinorityWomanOwned,
+			SmallBusiness:         contract.SmallBusiness,
+			VeteranOwned:          contract.VeteranOwned,
+			Warnings:              contract.NormalizationWarning,
+			RawFields:             row,
+			SourceRecordID:        fetch.SourceRecordID,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-contracts: upsert row %s: %v\n", contract.SourceRowID, err)
+			return 1
+		}
+		upserted++
+	}
+	fmt.Fprintf(os.Stderr, "==> ingested %d %s contract rows for FY%d\n", upserted, datasetID, *fiscalYear)
+	return 0
+}
+
+func normalizeMoney(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(s), "$", ""), ",", "")
+}
+
 // runIngestLegislators implements `wa-dd ingest-legislators`: pulls the
 // full House + Senate roster for a biennium from LWS SponsorService and
 // upserts each member into the `legislator` table. This populates
@@ -970,11 +1083,11 @@ func runIngestLegislators(args []string) int {
 	fmt.Fprintf(os.Stderr, "    received %d representatives\n", len(house))
 
 	type result struct {
-		LWSID    string `json:"lws_sponsor_id"`
-		Name     string `json:"name"`
-		Chamber  string `json:"chamber"`
-		Status   string `json:"status"`
-		Error    string `json:"error,omitempty"`
+		LWSID   string `json:"lws_sponsor_id"`
+		Name    string `json:"name"`
+		Chamber string `json:"chamber"`
+		Status  string `json:"status"`
+		Error   string `json:"error,omitempty"`
 	}
 	results := make([]result, 0, len(senate)+len(house))
 	startedAt := time.Now()
