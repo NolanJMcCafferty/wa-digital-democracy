@@ -10,7 +10,9 @@ import {
 } from "./loadBundle";
 
 export type SearchResult = {
-  type: "Bill" | "Hearing" | "Organization" | "Legislator";
+  // The "Transcript" variant is populated dynamically in SearchBox via
+  // /api/v1/search/transcripts and is not part of the prebuilt index.
+  type: "Bill" | "Hearing" | "Organization" | "Legislator" | "Transcript";
   title: string;
   subtitle: string;
   href: string;

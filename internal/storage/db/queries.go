@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -1027,4 +1028,108 @@ SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Transcript full-text search — backs `/api/v1/search/transcripts`.
+// ---------------------------------------------------------------------------
+
+// TranscriptSearchHit is one row returned by SearchTranscripts. The bill
+// fields can all be empty when the agenda_item / bill joins miss
+// (transcript_segment.agenda_item_id is nullable until SegmentTranscript
+// has run on the row).
+type TranscriptSearchHit struct {
+	ID              int64
+	BillID          string    // "HB 1501" — empty when bill join misses
+	Biennium        string
+	BillPrefix      string
+	BillNumber      int
+	AgendaItemLabel string
+	CommitteeName   string
+	MeetingDateTime time.Time // zero when hearing join misses
+	StartMS         int
+	EndMS           int
+	Text            string
+	SpeakerLabel    string
+	TVWEventID      string
+}
+
+// SearchTranscripts runs a websearch_to_tsquery full-text search over
+// the transcript_segment table and joins the result back to bill +
+// hearing + agenda_item for context.
+//
+// Returns ([]hits, total, err). total comes from a COUNT(*) OVER ()
+// window function so the caller can render "showing N of TOTAL" without
+// a second query.
+//
+// Empty / whitespace-only query returns ([]hits=nil, total=0, err=nil)
+// without touching Postgres.
+//
+// limit and offset are caller-provided; the API handler is responsible
+// for clamping them.
+func (s *Store) SearchTranscripts(
+	ctx context.Context, query string, limit, offset int,
+) ([]TranscriptSearchHit, int, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, 0, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	const sql = `
+WITH q AS (SELECT websearch_to_tsquery('english', $1) AS tsq)
+SELECT
+  ts.id,
+  COALESCE(b.bill_number, '')              AS bill_id,
+  COALESCE(b.biennium, '')                 AS biennium,
+  COALESCE(b.prefix, '')                   AS bill_prefix,
+  COALESCE(b.number, 0)                    AS bill_number,
+  COALESCE(a.label, '')                    AS agenda_item_label,
+  COALESCE(h.committee_name, '')           AS committee_name,
+  h.meeting_datetime,
+  ts.start_ms,
+  ts.end_ms,
+  ts.text,
+  COALESCE(ts.speaker_label, '')           AS speaker_label,
+  COALESCE(h.tvw_event_id, ts.tvw_event_id, '') AS tvw_event_id,
+  COUNT(*) OVER ()                         AS total_count
+FROM transcript_segment ts
+LEFT JOIN agenda_item a ON a.id = ts.agenda_item_id
+LEFT JOIN hearing     h ON h.id = a.hearing_id
+LEFT JOIN bill        b ON b.id = a.bill_id
+WHERE to_tsvector('english', ts.text) @@ (SELECT tsq FROM q)
+ORDER BY ts_rank_cd(to_tsvector('english', ts.text), (SELECT tsq FROM q)) DESC,
+         ts.start_ms ASC
+LIMIT $2 OFFSET $3;`
+
+	rows, err := s.Pool.Query(ctx, sql, q, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search transcripts: %w", err)
+	}
+	defer rows.Close()
+
+	out := []TranscriptSearchHit{}
+	total := 0
+	for rows.Next() {
+		var h TranscriptSearchHit
+		var meetingTS pgtype.Timestamptz
+		if err := rows.Scan(
+			&h.ID, &h.BillID, &h.Biennium, &h.BillPrefix, &h.BillNumber,
+			&h.AgendaItemLabel, &h.CommitteeName, &meetingTS,
+			&h.StartMS, &h.EndMS, &h.Text, &h.SpeakerLabel,
+			&h.TVWEventID, &total,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan transcript hit: %w", err)
+		}
+		if meetingTS.Valid {
+			h.MeetingDateTime = meetingTS.Time
+		}
+		out = append(out, h)
+	}
+	return out, total, rows.Err()
 }
