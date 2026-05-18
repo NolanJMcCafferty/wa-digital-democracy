@@ -429,6 +429,26 @@ Rows preserve customer type/name, contract number/title, vendor name, report
 year, quarterly and total sales, OMWBE/veteran/small/diverse-business flags,
 raw fields, normalization warnings, and `source_record_id` provenance.
 
+`wa-dd ingest-it-contracts` ingests annual DataWA IT Contracts Report datasets
+into `datawa_it_contract`:
+
+```sh
+wa-dd ingest-it-contracts --fiscal-year 2025 --limit 1000
+```
+
+Current fiscal-year dataset mapping lives in `internal/sources/datawa`:
+
+- 2025 → `3txe-z9i9` — IT Contracts Report 2025
+- 2024 → `ktim-amuz` — IT Contracts Report 2024
+- 2023 → `hycx-v82h` — IT Contracts Report 2023
+- 2022 → `dzvi-rs2c` — IT Contracts Report 2022
+
+Rows preserve agency, contract number, contractor/DBA, cooperative purchase
+fields, contract dates, IT tower percentages, fiscal-year amount columns,
+total contract amount, raw fields, normalization warnings, and source
+provenance. Monthly WaTech spend datasets are a separate grain and should be
+handled by a follow-up issue rather than forced into the contracts table.
+
 This remains intentionally bounded. Broader budget/spending work should add
-or use separate issues for IT contract/spend datasets, fiscal.wa.gov, Seattle
+or use separate issues for monthly IT spend datasets, fiscal.wa.gov, Seattle
 Open Budget, USAspending joins, and agency/vendor/entity resolution.

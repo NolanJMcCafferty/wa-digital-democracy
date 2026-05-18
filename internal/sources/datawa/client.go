@@ -39,6 +39,13 @@ var AgencyContractFiscalYears = map[int]string{
 	2022: DatasetAgencyContractsFY2022,
 }
 
+var ITContractFiscalYears = map[int]string{
+	2025: DatasetITContractsFY2025,
+	2024: DatasetITContractsFY2024,
+	2023: DatasetITContractsFY2023,
+	2022: DatasetITContractsFY2022,
+}
+
 type Client struct{ *socrata.Client }
 
 func New(h *httpx.Client, appToken string) *Client {
@@ -92,6 +99,52 @@ type MasterContractSale struct {
 	NormalizationWarning []string
 }
 
+type ITContract struct {
+	SourceDatasetID           string
+	SourceRowID               string
+	ReportFiscalYear          int
+	AgencyNumberAgencyName    string
+	AgencyNumber              string
+	AgencyName                string
+	ContractNumber            string
+	ContractorName            string
+	ContractorDBA             string
+	CooperativePurchase       *bool
+	CooperativeName           string
+	StatewideContractPurchase *bool
+	ContractStartDate         *time.Time
+	ContractEndDate           *time.Time
+	FiscalYearStart           string
+	FiscalYearEnd             string
+	ITTowerApplication        string
+	ITTowerCompute            string
+	ITTowerDataCenter         string
+	ITTowerDelivery           string
+	ITTowerEndUser            string
+	ITTowerITManagement       string
+	ITTowerNetwork            string
+	ITTowerOutput             string
+	ITTowerPlatform           string
+	ITTowerSecurity           string
+	ITTowerStorage            string
+	OtherNonIT                string
+	TotalPercentage           string
+	ContractAmountFY20        string
+	ContractAmountFY21        string
+	ContractAmountFY22        string
+	ContractAmountFY23        string
+	ContractAmountFY24        string
+	ContractAmountFY25        string
+	ContractAmountFY26        string
+	ContractAmountFY27        string
+	ContractAmountFY28        string
+	ContractAmountFY29        string
+	ContractAmountFY30        string
+	TotalContractAmount       string
+	ContractAmountExplanation string
+	NormalizationWarning      []string
+}
+
 func (c *Client) FetchAgencyContracts(ctx context.Context, fiscalYear int, q socrata.Query) ([]socrata.Row, error) {
 	rows, _, err := c.FetchAgencyContractsWithSource(ctx, fiscalYear, q)
 	return rows, err
@@ -107,6 +160,14 @@ func (c *Client) FetchAgencyContractsWithSource(ctx context.Context, fiscalYear 
 
 func (c *Client) FetchMasterContractSalesWithSource(ctx context.Context, q socrata.Query) ([]socrata.Row, httpx.RawFetch, error) {
 	return c.FetchPageWithSource(ctx, DatasetMasterContractSales, q)
+}
+
+func (c *Client) FetchITContractsWithSource(ctx context.Context, fiscalYear int, q socrata.Query) ([]socrata.Row, httpx.RawFetch, error) {
+	datasetID := ITContractFiscalYears[fiscalYear]
+	if datasetID == "" {
+		return nil, httpx.RawFetch{}, strconv.ErrSyntax
+	}
+	return c.FetchPageWithSource(ctx, datasetID, q)
 }
 
 func NormalizeContract(datasetID string, fiscalYear int, row socrata.Row) Contract {
@@ -170,6 +231,59 @@ func NormalizeMasterContractSale(row socrata.Row) MasterContractSale {
 	}
 }
 
+func NormalizeITContract(datasetID string, fiscalYear int, row socrata.Row) ITContract {
+	start, startWarn := parseContractDate(first(row, "contract_start_date", "start_date"))
+	end, endWarn := parseContractDate(first(row, "contract_end_date", "end_date"))
+	agencyNumber, agencyName := splitAgencyNumberName(first(row, "agency_number_agency_name"))
+	coopPurchase, coopPurchaseWarn := parseBoolField(first(row, "cooperative_purchase_yes", "cooperative_purchase"), "cooperative_purchase")
+	statewidePurchase, statewidePurchaseWarn := parseBoolField(first(row, "was_this_purchased_through", "statewide_contract_purchase"), "statewide_contract_purchase")
+	return ITContract{
+		SourceDatasetID:           datasetID,
+		SourceRowID:               first(row, ":id", "sid", "id"),
+		ReportFiscalYear:          fiscalYear,
+		AgencyNumberAgencyName:    first(row, "agency_number_agency_name"),
+		AgencyNumber:              agencyNumber,
+		AgencyName:                agencyName,
+		ContractNumber:            first(row, "contract_no", "contract_number"),
+		ContractorName:            first(row, "contractor_name"),
+		ContractorDBA:             first(row, "contractor_name_d_b_a_optional", "contractor_dba"),
+		CooperativePurchase:       coopPurchase,
+		CooperativeName:           first(row, "cooperative_name_if_applicable", "cooperative_name"),
+		StatewideContractPurchase: statewidePurchase,
+		ContractStartDate:         start,
+		ContractEndDate:           end,
+		FiscalYearStart:           first(row, "fiscal_year_start"),
+		FiscalYearEnd:             first(row, "fiscal_year_end"),
+		ITTowerApplication:        first(row, "it_tower_application"),
+		ITTowerCompute:            first(row, "it_tower_compute"),
+		ITTowerDataCenter:         first(row, "it_tower_data_center"),
+		ITTowerDelivery:           first(row, "it_tower_delivery"),
+		ITTowerEndUser:            first(row, "it_tower_end_user"),
+		ITTowerITManagement:       first(row, "it_tower_it_management"),
+		ITTowerNetwork:            first(row, "it_tower_network"),
+		ITTowerOutput:             first(row, "it_tower_output"),
+		ITTowerPlatform:           first(row, "it_tower_platform"),
+		ITTowerSecurity:           first(row, "it_tower_security"),
+		ITTowerStorage:            first(row, "it_tower_storage"),
+		OtherNonIT:                first(row, "other_non_it"),
+		TotalPercentage:           first(row, "total_percentage_auto", "total_percentage"),
+		ContractAmountFY20:        first(row, "contract_amount_fy20"),
+		ContractAmountFY21:        first(row, "contract_amount_fy21"),
+		ContractAmountFY22:        first(row, "contract_amount_fy22"),
+		ContractAmountFY23:        first(row, "contract_amount_fy23"),
+		ContractAmountFY24:        first(row, "contract_amount_fy24"),
+		ContractAmountFY25:        first(row, "contract_amount_fy25"),
+		ContractAmountFY26:        first(row, "contract_amount_fy26"),
+		ContractAmountFY27:        first(row, "contract_amount_fy27"),
+		ContractAmountFY28:        first(row, "contract_amount_fy28"),
+		ContractAmountFY29:        first(row, "contract_amount_fy29"),
+		ContractAmountFY30:        first(row, "contract_amount_fy30"),
+		TotalContractAmount:       first(row, "total_contract_amount"),
+		ContractAmountExplanation: first(row, "explanation_of_contract_amount", "contract_amount_explanation"),
+		NormalizationWarning:      compact(startWarn, endWarn, coopPurchaseWarn, statewidePurchaseWarn),
+	}
+}
+
 func StableRowID(row socrata.Row) string {
 	body, _ := json.Marshal(row)
 	sum := sha256.Sum256(body)
@@ -194,6 +308,8 @@ func toString(v any) string {
 		return x
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
 	default:
 		return ""
 	}
@@ -225,6 +341,26 @@ func sumMoneyStrings(xs ...string) string {
 		total += v
 	}
 	return strconv.FormatFloat(total, 'f', 2, 64)
+}
+
+func splitAgencyNumberName(raw string) (string, string) {
+	parts := strings.SplitN(strings.TrimSpace(raw), " - ", 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	}
+	return "", strings.TrimSpace(raw)
+}
+
+func parseBoolField(raw, field string) (*bool, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, ""
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, "invalid_" + field + ":" + raw
+	}
+	return &b, ""
 }
 
 func parseContractDate(raw string) (*time.Time, string) {
