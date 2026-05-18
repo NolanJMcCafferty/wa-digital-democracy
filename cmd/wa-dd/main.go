@@ -37,6 +37,7 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/usaspending"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
@@ -1393,6 +1394,97 @@ func runIngestWEBSVendors(args []string) int {
 		upserted++
 	}
 	fmt.Fprintf(os.Stderr, "==> ingested %d %s WEBS vendor rows\n", upserted, datawa.DatasetWEBSVendors)
+	return 0
+}
+
+// runIngestUSASpendingWAAwards implements `wa-dd ingest-usaspending-wa-awards`:
+// pulls a scoped USAspending award search page for awards performed in
+// Washington. The first scope is deliberately broad-but-bounded: place of
+// performance = WA over a caller-specified date range, sorted by award amount.
+// Entity matching remains candidate-only and reviewable; this command stores
+// source awards without asserting joins to local entities.
+func runIngestUSASpendingWAAwards(args []string) int {
+	fs := flag.NewFlagSet("ingest-usaspending-wa-awards", flag.ContinueOnError)
+	var (
+		startDate = fs.String("start-date", "2025-10-01", "award action date range start, YYYY-MM-DD")
+		endDate   = fs.String("end-date", "2026-09-30", "award action date range end, YYYY-MM-DD")
+		limit     = fs.Int("limit", 100, "maximum awards to request from USAspending")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 2.0, "max requests/sec for api.usaspending.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *limit <= 0 || *limit > 100 {
+		fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: --limit must be between 1 and 100 for the first MVP page")
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      45 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"api.usaspending.gov": *rateLimit,
+		},
+	})
+	client := usaspending.New(httpClient)
+	req := usaspending.WashingtonAwardSearchRequest(*startDate, *endDate)
+	req.Limit = *limit
+	resp, fetch, err := client.SearchAwardsWithSource(ctx, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: fetch: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: source record was not captured")
+		return 1
+	}
+
+	var upserted int
+	for _, row := range resp.Results {
+		award := usaspending.NormalizeAward(row)
+		if award.AwardID == "" {
+			fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: skipping award with empty Award ID")
+			continue
+		}
+		if err := store.UpsertFederalAward(ctx, db.UpsertFederalAwardParams{
+			AwardID:        award.AwardID,
+			RecipientName:  award.RecipientName,
+			RecipientUEI:   award.RecipientUEI,
+			AwardingAgency: award.AwardingAgency,
+			FundingAgency:  award.FundingAgency,
+			AwardType:      award.AwardType,
+			AwardAmount:    normalizeMoney(award.AwardAmount),
+			StartDate:      award.StartDate,
+			EndDate:        award.EndDate,
+			PlaceStateCode: award.PlaceStateCode,
+			PlaceCounty:    award.PlaceCounty,
+			RawFields:      award.Raw,
+			SourceRecordID: fetch.SourceRecordID,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: upsert award %s: %v\n", award.AwardID, err)
+			return 1
+		}
+		upserted++
+	}
+	fmt.Fprintf(os.Stderr, "==> ingested %d USAspending WA award rows\n", upserted)
 	return 0
 }
 
