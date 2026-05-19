@@ -2916,6 +2916,47 @@ func (s *Store) EnsureTVWAudioAsset(ctx context.Context, eventID string) (Latest
 	}, true, nil
 }
 
+// ListEventsPendingDiarization returns tvw_event_ids that have at least one
+// resolvable audio source URL and no successful diarization_job yet. Used by
+// `wa-dd diarize-pending` to skip already-processed events idempotently.
+func (s *Store) ListEventsPendingDiarization(ctx context.Context, limit int) ([]string, error) {
+	const q = `
+SELECT e.tvw_event_id
+  FROM tvw_event e
+ WHERE (
+        NULLIF(e.audio_download_url, '') IS NOT NULL
+     OR NULLIF(e.published_audio_url, '') IS NOT NULL
+     OR NULLIF(e.video_download_url, '') IS NOT NULL
+     OR EXISTS (
+          SELECT 1 FROM tvw_media_asset m
+           WHERE m.tvw_event_id = e.tvw_event_id
+             AND (m.asset_type ILIKE 'audio' OR m.asset_type ILIKE 'video')
+             AND NULLIF(m.file_url, '') IS NOT NULL
+       )
+   )
+   AND NOT EXISTS (
+        SELECT 1 FROM diarization_job j
+         WHERE j.tvw_event_id = e.tvw_event_id
+           AND j.status = 'succeeded'
+   )
+ ORDER BY e.start_datetime DESC NULLS LAST, e.tvw_event_id
+ LIMIT NULLIF($1, 0);`
+	rows, err := s.Pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list events pending diarization: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan event id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 type CreateDiarizationJobParams struct {
 	TVWEventID   string
 	AudioAssetID int64
@@ -3354,15 +3395,20 @@ type PopulateOrganizationsStats struct {
 // source-local: no cross-source merge is asserted here.
 func (s *Store) PopulateOrganizationsFromCSI(ctx context.Context) (PopulateOrganizationsStats, error) {
 	const q = `
-SELECT MIN(t.id) AS source_pk,
-       trim(t.raw_organization) AS source_name,
-       wa_dd_normalize_entity_name(trim(t.raw_organization)) AS normalized_name,
-       COUNT(*) AS occurrence_count,
-       MIN(t.source_record_id) AS source_record_id
-  FROM testifier t
- WHERE NULLIF(trim(t.raw_organization), '') IS NOT NULL
- GROUP BY trim(t.raw_organization), wa_dd_normalize_entity_name(trim(t.raw_organization))
- ORDER BY COUNT(*) DESC, trim(t.raw_organization);`
+WITH orgs AS (
+    SELECT MIN(t.id) AS source_pk,
+           trim(t.raw_organization) AS source_name,
+           wa_dd_normalize_entity_name(trim(t.raw_organization)) AS normalized_name,
+           COUNT(*) AS occurrence_count,
+           MIN(t.source_record_id) AS source_record_id
+      FROM testifier t
+     WHERE NULLIF(trim(t.raw_organization), '') IS NOT NULL
+     GROUP BY trim(t.raw_organization), wa_dd_normalize_entity_name(trim(t.raw_organization))
+)
+SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_id
+  FROM orgs
+ WHERE normalized_name IS NOT NULL
+ ORDER BY occurrence_count DESC, source_name;`
 	rows, err := s.Pool.Query(ctx, q)
 	if err != nil {
 		return PopulateOrganizationsStats{}, fmt.Errorf("list CSI organizations: %w", err)
@@ -3372,11 +3418,12 @@ SELECT MIN(t.id) AS source_pk,
 	var stats PopulateOrganizationsStats
 	for rows.Next() {
 		var sourcePK, count, sourceRecordID int64
-		var sourceName, normalized string
+		var sourceName string
+		var normalized *string
 		if err := rows.Scan(&sourcePK, &sourceName, &normalized, &count, &sourceRecordID); err != nil {
 			return stats, fmt.Errorf("scan CSI organization: %w", err)
 		}
-		if junkOrganizationName(sourceName, normalized) {
+		if normalized == nil || junkOrganizationName(sourceName, *normalized) {
 			stats.Skipped++
 			continue
 		}
@@ -3399,7 +3446,7 @@ SELECT MIN(t.id) AS source_pk,
 			return stats, err
 		}
 		stats.OrganizationsUpserted++
-		if err := s.upsertOrganizationSourceMention(ctx, "csi_testifier", "testifier", sourcePK, sourceName, normalized, orgID, int(count), sourceRecordID, "possible"); err != nil {
+		if err := s.upsertOrganizationSourceMention(ctx, "csi_testifier", "testifier", sourcePK, sourceName, *normalized, orgID, int(count), sourceRecordID, "possible"); err != nil {
 			return stats, err
 		}
 		stats.MentionsUpserted++

@@ -29,6 +29,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -88,6 +90,7 @@ SUBCOMMANDS:
                      Pull fiscal.wa.gov Open Checkbook vendor payments into Postgres
   audio-cache        Download and normalize TVW/Invintus audio for diarization
   diarize-event      Run provider diarization for a cached TVW event audio asset
+  diarize-pending    Diarize every TVW event that has not yet been successfully diarized
   extract-speaker-evidence
                      Generate reviewable speaker identity tasks from diarization text
   version            Print version info
@@ -148,6 +151,8 @@ func main() {
 		os.Exit(runAudioCache(args))
 	case "diarize-event":
 		os.Exit(runDiarizeEvent(args))
+	case "diarize-pending":
+		os.Exit(runDiarizePending(args))
 	case "extract-speaker-evidence":
 		os.Exit(runExtractSpeakerEvidence(args))
 	case "ingest-bill", "ingest-csi", "match-hearing":
@@ -2119,73 +2124,81 @@ func runDiarizeEvent(args []string) int {
 	}
 	defer store.Close()
 
-	audio, createdAsset, err := store.EnsureTVWAudioAsset(ctx, *eventID)
+	p, err := newDiarizationProvider(*provider, *apiKey, *model)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "diarize-event: resolve audio source: %v\n", err)
+		fmt.Fprintf(os.Stderr, "diarize-event: %v\n", err)
+		return 2
+	}
+
+	if err := diarizeOneEvent(ctx, store, p, *eventID, *provider, *model, *outDir, *useURL); err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-event: %v\n", err)
 		return 1
+	}
+	return 0
+}
+
+func newDiarizationProvider(provider, apiKey, model string) (diarization.Provider, error) {
+	switch strings.ToLower(provider) {
+	case "deepgram":
+		dg, err := diarization.NewDeepgramProvider(diarization.DeepgramConfig{APIKey: apiKey, Model: model})
+		if err != nil {
+			return nil, fmt.Errorf("deepgram: %w", err)
+		}
+		return dg, nil
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", provider)
+	}
+}
+
+// diarizeOneEvent runs a single diarization pass for eventID, persisting the
+// job + segments + entity mentions. Returns nil on success.
+func diarizeOneEvent(ctx context.Context, store *db.Store, p diarization.Provider, eventID, provider, model, outDir string, useURL bool) error {
+	audio, createdAsset, err := store.EnsureTVWAudioAsset(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("resolve audio source: %w", err)
 	}
 	if createdAsset {
 		fmt.Fprintf(os.Stderr, "==> created audio source asset %d from %s (%s)\n", audio.ID, audio.SourceURL, audio.SourceKind)
 	}
 
-	var p diarization.Provider
-	switch strings.ToLower(*provider) {
-	case "deepgram":
-		dg, err := diarization.NewDeepgramProvider(diarization.DeepgramConfig{APIKey: *apiKey, Model: *model})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "diarize-event: deepgram: %v\n", err)
-			return 1
-		}
-		p = dg
-	default:
-		fmt.Fprintf(os.Stderr, "diarize-event: unsupported provider %q\n", *provider)
-		return 2
-	}
-
-	jobID, err := store.CreateDiarizationJob(ctx, db.CreateDiarizationJobParams{TVWEventID: *eventID, AudioAssetID: audio.ID, Provider: *provider, Model: *model})
+	jobID, err := store.CreateDiarizationJob(ctx, db.CreateDiarizationJobParams{TVWEventID: eventID, AudioAssetID: audio.ID, Provider: provider, Model: model})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "diarize-event: create job: %v\n", err)
-		return 1
+		return fmt.Errorf("create job: %w", err)
 	}
 
-	in := diarization.AudioInput{EventID: *eventID}
-	if *useURL && audio.SourceURL != "" {
+	in := diarization.AudioInput{EventID: eventID}
+	if useURL && audio.SourceURL != "" {
 		in.URL = audio.SourceURL
 	} else {
 		if strings.TrimSpace(audio.NormalizedPath) == "" {
 			_ = store.FailDiarizationJob(ctx, jobID, "no normalized audio path; run audio-cache first or omit --use-source-url=false")
-			fmt.Fprintln(os.Stderr, "diarize-event: no normalized audio path; run `wa-dd audio-cache --event-id <id>` first or omit --use-source-url=false")
-			return 1
+			return fmt.Errorf("no normalized audio path; run `wa-dd audio-cache --event-id %s` first or omit --use-source-url=false", eventID)
 		}
 		b, err := os.ReadFile(audio.NormalizedPath)
 		if err != nil {
 			_ = store.FailDiarizationJob(ctx, jobID, err.Error())
-			fmt.Fprintf(os.Stderr, "diarize-event: read normalized audio: %v\n", err)
-			return 1
+			return fmt.Errorf("read normalized audio: %w", err)
 		}
 		in.Bytes = b
 		in.ContentType = "audio/wav"
 	}
 
-	fmt.Fprintf(os.Stderr, "==> diarizing event %s with %s (%s), job_id=%d\n", *eventID, *provider, *model, jobID)
+	fmt.Fprintf(os.Stderr, "==> diarizing event %s with %s (%s), job_id=%d\n", eventID, provider, model, jobID)
 	res, err := p.Diarize(ctx, in)
 	if err != nil {
 		_ = store.FailDiarizationJob(ctx, jobID, err.Error())
-		fmt.Fprintf(os.Stderr, "diarize-event: provider: %v\n", err)
-		return 1
+		return fmt.Errorf("provider: %w", err)
 	}
 	rawPath := ""
 	if len(res.Raw) > 0 {
-		rawPath = filepath.Join(*outDir, safePathPart(*eventID), fmt.Sprintf("%s_job_%d.json", safePathPart(*provider), jobID))
+		rawPath = filepath.Join(outDir, safePathPart(eventID), fmt.Sprintf("%s_job_%d.json", safePathPart(provider), jobID))
 		if err := os.MkdirAll(filepath.Dir(rawPath), 0o755); err != nil {
 			_ = store.FailDiarizationJob(ctx, jobID, err.Error())
-			fmt.Fprintf(os.Stderr, "diarize-event: mkdir raw output: %v\n", err)
-			return 1
+			return fmt.Errorf("mkdir raw output: %w", err)
 		}
 		if err := os.WriteFile(rawPath, res.Raw, 0o644); err != nil {
 			_ = store.FailDiarizationJob(ctx, jobID, err.Error())
-			fmt.Fprintf(os.Stderr, "diarize-event: write raw output: %v\n", err)
-			return 1
+			return fmt.Errorf("write raw output: %w", err)
 		}
 	}
 	segments := make([]db.DiarizedSegmentParams, 0, len(res.Segments))
@@ -2219,12 +2232,118 @@ func runDiarizeEvent(args []string) int {
 			Raw:            ent.Raw,
 		})
 	}
-	if err := store.InsertDiarizationResult(ctx, db.InsertDiarizationResultParams{JobID: jobID, TVWEventID: *eventID, Provider: res.Provider, Model: res.Model, RawResultPath: rawPath, Segments: segments, Entities: entities}); err != nil {
+	if err := store.InsertDiarizationResult(ctx, db.InsertDiarizationResultParams{JobID: jobID, TVWEventID: eventID, Provider: res.Provider, Model: res.Model, RawResultPath: rawPath, Segments: segments, Entities: entities}); err != nil {
 		_ = store.FailDiarizationJob(ctx, jobID, err.Error())
-		fmt.Fprintf(os.Stderr, "diarize-event: store result: %v\n", err)
-		return 1
+		return fmt.Errorf("store result: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "diarize-event: stored %d segments and %d entity mentions for job_id=%d raw=%s\n", len(segments), len(entities), jobID, rawPath)
+	return nil
+}
+
+func runDiarizePending(args []string) int {
+	fs := flag.NewFlagSet("diarize-pending", flag.ContinueOnError)
+	var (
+		dsn      = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		provider = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
+		model    = fs.String("model", "nova-3", "provider model")
+		outDir   = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
+		apiKey   = fs.String("api-key", env("DEEPGRAM_API_KEY", ""), "provider API key (defaults to DEEPGRAM_API_KEY)")
+		useURL   = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
+		limit       = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
+		dryRun      = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
+		concurrency = fs.Int("concurrency", 10, "max diarization jobs to run in parallel")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-pending: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	pending, err := store.ListEventsPendingDiarization(ctx, *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-pending: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "diarize-pending: %d events without a successful diarization_job\n", len(pending))
+	if *dryRun {
+		for _, id := range pending {
+			fmt.Println(id)
+		}
+		return 0
+	}
+	if len(pending) == 0 {
+		return 0
+	}
+
+	p, err := newDiarizationProvider(*provider, *apiKey, *model)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-pending: %v\n", err)
+		return 2
+	}
+
+	workers := *concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(pending) {
+		workers = len(pending)
+	}
+	fmt.Fprintf(os.Stderr, "diarize-pending: running with concurrency=%d\n", workers)
+
+	jobs := make(chan struct {
+		index int
+		id    string
+	})
+	var wg sync.WaitGroup
+	var failed atomic.Int64
+	var done atomic.Int64
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				if err := ctx.Err(); err != nil {
+					return
+				}
+				n := done.Add(1)
+				fmt.Fprintf(os.Stderr, "==> [%d/%d] %s\n", n, len(pending), j.id)
+				if err := diarizeOneEvent(ctx, store, p, j.id, *provider, *model, *outDir, *useURL); err != nil {
+					failed.Add(1)
+					fmt.Fprintf(os.Stderr, "diarize-pending: event %s: %v\n", j.id, err)
+				}
+			}
+		}()
+	}
+
+	for i, id := range pending {
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "diarize-pending: aborted: %v\n", ctx.Err())
+			close(jobs)
+			wg.Wait()
+			return 1
+		case jobs <- struct {
+			index int
+			id    string
+		}{i, id}:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	failedN := int(failed.Load())
+	fmt.Fprintf(os.Stderr, "diarize-pending: done — %d succeeded, %d failed\n", len(pending)-failedN, failedN)
+	if failedN > 0 {
+		return 1
+	}
 	return 0
 }
 
