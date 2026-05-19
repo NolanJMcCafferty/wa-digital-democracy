@@ -710,3 +710,64 @@ export async function loadBundle(
   }
   return (await res.json()) as Bundle;
 }
+
+export type SpeakerReviewSegment = {
+  StartMS: number;
+  EndMS: number;
+  Text: string;
+};
+
+export type SpeakerReviewTask = {
+  ID: number;
+  DiarizationJobID: number;
+  TVWEventID: string;
+  ClusterID: number;
+  ClusterLabel: string;
+  TotalSpeechMS: number;
+  TurnCount: number;
+  Status: string;
+  Priority: number;
+  CandidateKind: string;
+  CandidateID: number;
+  CandidateLabel: string;
+  CandidateConfidence: number;
+  EvidenceIDs: number[];
+  EvidenceText: string;
+  EvidenceStartMS: number;
+  EvidenceEndMS: number;
+  SampleSegments?: SpeakerReviewSegment[];
+};
+
+export async function listSpeakerReviewTasks(status = "pending"): Promise<SpeakerReviewTask[]> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers?status=${encodeURIComponent(status)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`listSpeakerReviewTasks returned ${res.status}`);
+  }
+  const body = (await res.json()) as { tasks: SpeakerReviewTask[] };
+  return body.tasks ?? [];
+}
+
+export async function loadSpeakerReviewTask(taskId: string): Promise<SpeakerReviewTask | null> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}`, {
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`loadSpeakerReviewTask returned ${res.status}`);
+  }
+  return (await res.json()) as SpeakerReviewTask;
+}
+
+export async function decideSpeakerReviewTask(taskId: string, action: "accept" | "reject" | "needs-more-evidence", reviewer: string, notes: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviewer, notes }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`decideSpeakerReviewTask ${action} returned ${res.status}: ${await res.text()}`);
+  }
+}

@@ -64,6 +64,11 @@ func main() {
 	r.Get("/api/v1/hearings/{csiAgendaItemId}", getHearingHandler(store))
 	r.Get("/api/v1/sources", listSourcesHandler(store))
 	r.Get("/api/v1/search/transcripts", searchTranscriptsHandler(store))
+	r.Get("/api/v1/admin/review/speakers", adminListSpeakerReviewTasksHandler(store))
+	r.Get("/api/v1/admin/review/speakers/{taskId}", adminGetSpeakerReviewTaskHandler(store))
+	r.Post("/api/v1/admin/review/speakers/{taskId}/accept", adminSpeakerReviewDecisionHandler(store, "accept"))
+	r.Post("/api/v1/admin/review/speakers/{taskId}/reject", adminSpeakerReviewDecisionHandler(store, "reject"))
+	r.Post("/api/v1/admin/review/speakers/{taskId}/needs-more-evidence", adminSpeakerReviewDecisionHandler(store, "needs_more_evidence"))
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -1222,5 +1227,70 @@ func searchTranscriptsHandler(store *db.Store) http.HandlerFunc {
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+func adminListSpeakerReviewTasksHandler(store *db.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		status := strings.TrimSpace(req.URL.Query().Get("status"))
+		limit := 50
+		if v := req.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		tasks, err := store.ListSpeakerReviewTasks(req.Context(), status, limit)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
+	}
+}
+
+func adminGetSpeakerReviewTaskHandler(store *db.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(req, "taskId"), 10, 64)
+		if err != nil || id <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad task id"})
+			return
+		}
+		task, err := store.GetSpeakerReviewTask(req.Context(), id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, task)
+	}
+}
+
+func adminSpeakerReviewDecisionHandler(store *db.Store, action string) http.HandlerFunc {
+	type body struct {
+		Reviewer string `json:"reviewer"`
+		Notes    string `json:"notes"`
+	}
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(req, "taskId"), 10, 64)
+		if err != nil || id <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad task id"})
+			return
+		}
+		var b body
+		_ = json.NewDecoder(req.Body).Decode(&b)
+		switch action {
+		case "accept":
+			err = store.AcceptSpeakerReviewTask(req.Context(), id, b.Reviewer, b.Notes)
+		case "reject":
+			err = store.RejectSpeakerReviewTask(req.Context(), id, b.Reviewer, b.Notes)
+		case "needs_more_evidence":
+			err = store.NeedsMoreEvidenceSpeakerReviewTask(req.Context(), id, b.Reviewer, b.Notes)
+		default:
+			err = fmt.Errorf("unsupported action")
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
