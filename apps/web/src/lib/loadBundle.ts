@@ -114,6 +114,8 @@ export type LegislatorBundleEntry = {
   party?: string;          // "D" | "R"
   email?: string;
   phone?: string;
+  photoUrl?: string;
+  thumbnailUrl?: string;
   billCount?: number;
   appearances: Array<{
     biennium: string;
@@ -512,13 +514,22 @@ type legislatorListItem = {
   party?: string;
   email?: string;
   phone?: string;
+  photo_url?: string;
+  thumbnail_url?: string;
   bill_count: number;
 };
 
 type legislatorDetailResponse = {
   slug: string;
   name: string;
+  display_name?: string;
+  first_name?: string;
+  last_name?: string;
   chamber?: string;
+  district?: string;
+  party?: string;
+  photo_url?: string;
+  thumbnail_url?: string;
   appearances: Array<{
     biennium: string;
     bill_id: string;
@@ -553,6 +564,8 @@ export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> 
     party: l.party,
     email: l.email,
     phone: l.phone,
+    photoUrl: l.photo_url,
+    thumbnailUrl: l.thumbnail_url,
     billCount: l.bill_count,
     appearances: [],
   }));
@@ -569,7 +582,14 @@ export async function loadLegislatorBundle(slug: string): Promise<LegislatorBund
   return {
     slug: detail.slug,
     name: detail.name,
+    displayName: detail.display_name,
+    firstName: detail.first_name,
+    lastName: detail.last_name,
     chamber: detail.chamber,
+    district: detail.district,
+    party: detail.party,
+    photoUrl: detail.photo_url,
+    thumbnailUrl: detail.thumbnail_url,
     appearances: detail.appearances.map((a) => ({
       biennium: a.biennium,
       billId: a.bill_id,

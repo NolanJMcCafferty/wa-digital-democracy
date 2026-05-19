@@ -278,19 +278,21 @@ func upper(s string) string {
 
 func listLegislatorsHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
-		Slug        string `json:"slug"`
-		Name        string `json:"name"`         // "Senator Alvarado"
-		DisplayName string `json:"display_name"` // "Emily Alvarado"
-		FirstName   string `json:"first_name,omitempty"`
-		LastName    string `json:"last_name,omitempty"`
-		Role        string `json:"role,omitempty"` // "State Senator" | "State Representative"
-		Chamber     string `json:"chamber,omitempty"`
-		District    string `json:"district,omitempty"`
-		Party       string `json:"party,omitempty"`
-		Email       string `json:"email,omitempty"`
-		Phone       string `json:"phone,omitempty"`
-		OfficialURL string `json:"official_url,omitempty"`
-		BillCount   int    `json:"bill_count"`
+		Slug         string `json:"slug"`
+		Name         string `json:"name"`         // "Senator Alvarado"
+		DisplayName  string `json:"display_name"` // "Emily Alvarado"
+		FirstName    string `json:"first_name,omitempty"`
+		LastName     string `json:"last_name,omitempty"`
+		Role         string `json:"role,omitempty"` // "State Senator" | "State Representative"
+		Chamber      string `json:"chamber,omitempty"`
+		District     string `json:"district,omitempty"`
+		Party        string `json:"party,omitempty"`
+		Email        string `json:"email,omitempty"`
+		Phone        string `json:"phone,omitempty"`
+		OfficialURL  string `json:"official_url,omitempty"`
+		PhotoURL     string `json:"photo_url,omitempty"`
+		ThumbnailURL string `json:"thumbnail_url,omitempty"`
+		BillCount    int    `json:"bill_count"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		legs, err := store.ListLegislators(req.Context())
@@ -300,20 +302,23 @@ func listLegislatorsHandler(store *db.Store) http.HandlerFunc {
 		}
 		out := make([]item, 0, len(legs))
 		for _, l := range legs {
+			photoURL, thumbnailURL := legislatorPhotoURLs(l.LWSSponsorID)
 			out = append(out, item{
-				Slug:        slugify(l.Name), // unchanged so existing /legislators/{slug} routes still resolve
-				Name:        l.Name,
-				DisplayName: strings.TrimSpace(l.FirstName + " " + l.LastName),
-				FirstName:   l.FirstName,
-				LastName:    l.LastName,
-				Role:        legislatorRole(l.Chamber),
-				Chamber:     l.Chamber,
-				District:    l.District,
-				Party:       l.Party,
-				Email:       l.Email,
-				Phone:       l.Phone,
-				OfficialURL: l.OfficialURL,
-				BillCount:   l.BillCount,
+				Slug:         slugify(l.Name), // unchanged so existing /legislators/{slug} routes still resolve
+				Name:         l.Name,
+				DisplayName:  strings.TrimSpace(l.FirstName + " " + l.LastName),
+				FirstName:    l.FirstName,
+				LastName:     l.LastName,
+				Role:         legislatorRole(l.Chamber),
+				Chamber:      l.Chamber,
+				District:     l.District,
+				Party:        l.Party,
+				Email:        l.Email,
+				Phone:        l.Phone,
+				OfficialURL:  l.OfficialURL,
+				PhotoURL:     photoURL,
+				ThumbnailURL: thumbnailURL,
+				BillCount:    l.BillCount,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -351,14 +356,16 @@ func suggestAddressesHandler() http.HandlerFunc {
 
 func lookupLegislatorsByAddressHandler(store *db.Store) http.HandlerFunc {
 	type legislatorItem struct {
-		Slug        string `json:"slug"`
-		Name        string `json:"name"`
-		DisplayName string `json:"display_name,omitempty"`
-		Role        string `json:"role,omitempty"`
-		Chamber     string `json:"chamber,omitempty"`
-		District    string `json:"district,omitempty"`
-		Party       string `json:"party,omitempty"`
-		BillCount   int    `json:"bill_count"`
+		Slug         string `json:"slug"`
+		Name         string `json:"name"`
+		DisplayName  string `json:"display_name,omitempty"`
+		Role         string `json:"role,omitempty"`
+		Chamber      string `json:"chamber,omitempty"`
+		District     string `json:"district,omitempty"`
+		Party        string `json:"party,omitempty"`
+		PhotoURL     string `json:"photo_url,omitempty"`
+		ThumbnailURL string `json:"thumbnail_url,omitempty"`
+		BillCount    int    `json:"bill_count"`
 	}
 	type body struct {
 		QueryAddress   string           `json:"query_address"`
@@ -408,15 +415,18 @@ func lookupLegislatorsByAddressHandler(store *db.Store) http.HandlerFunc {
 				}
 				representatives++
 			}
+			photoURL, thumbnailURL := legislatorPhotoURLs(l.LWSSponsorID)
 			out = append(out, legislatorItem{
-				Slug:        slugify(l.Name),
-				Name:        l.Name,
-				DisplayName: strings.TrimSpace(l.FirstName + " " + l.LastName),
-				Role:        legislatorRole(l.Chamber),
-				Chamber:     l.Chamber,
-				District:    l.District,
-				Party:       l.Party,
-				BillCount:   l.BillCount,
+				Slug:         slugify(l.Name),
+				Name:         l.Name,
+				DisplayName:  strings.TrimSpace(l.FirstName + " " + l.LastName),
+				Role:         legislatorRole(l.Chamber),
+				Chamber:      l.Chamber,
+				District:     l.District,
+				Party:        l.Party,
+				PhotoURL:     photoURL,
+				ThumbnailURL: thumbnailURL,
+				BillCount:    l.BillCount,
 			})
 		}
 		writeJSON(w, http.StatusOK, body{
@@ -438,15 +448,17 @@ func getLegislatorHandler(store *db.Store) http.HandlerFunc {
 		SponsorType string `json:"sponsor_type,omitempty"`
 	}
 	type body struct {
-		Slug        string       `json:"slug"`
-		Name        string       `json:"name"`
-		DisplayName string       `json:"display_name,omitempty"`
-		FirstName   string       `json:"first_name,omitempty"`
-		LastName    string       `json:"last_name,omitempty"`
-		Chamber     string       `json:"chamber,omitempty"`
-		District    string       `json:"district,omitempty"`
-		Party       string       `json:"party,omitempty"`
-		Appearances []appearance `json:"appearances"`
+		Slug         string       `json:"slug"`
+		Name         string       `json:"name"`
+		DisplayName  string       `json:"display_name,omitempty"`
+		FirstName    string       `json:"first_name,omitempty"`
+		LastName     string       `json:"last_name,omitempty"`
+		Chamber      string       `json:"chamber,omitempty"`
+		District     string       `json:"district,omitempty"`
+		Party        string       `json:"party,omitempty"`
+		PhotoURL     string       `json:"photo_url,omitempty"`
+		ThumbnailURL string       `json:"thumbnail_url,omitempty"`
+		Appearances  []appearance `json:"appearances"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		slug := chi.URLParam(req, "slug")
@@ -483,16 +495,19 @@ func getLegislatorHandler(store *db.Store) http.HandlerFunc {
 			})
 		}
 		display := strings.TrimSpace(match.FirstName + " " + match.LastName)
+		photoURL, thumbnailURL := legislatorPhotoURLs(match.LWSSponsorID)
 		writeJSON(w, http.StatusOK, body{
-			Slug:        slug,
-			Name:        match.Name,
-			DisplayName: display,
-			FirstName:   match.FirstName,
-			LastName:    match.LastName,
-			Chamber:     match.Chamber,
-			District:    match.District,
-			Party:       match.Party,
-			Appearances: apps,
+			Slug:         slug,
+			Name:         match.Name,
+			DisplayName:  display,
+			FirstName:    match.FirstName,
+			LastName:     match.LastName,
+			Chamber:      match.Chamber,
+			District:     match.District,
+			Party:        match.Party,
+			PhotoURL:     photoURL,
+			ThumbnailURL: thumbnailURL,
+			Appearances:  apps,
 		})
 	}
 }
@@ -803,6 +818,16 @@ func legislatorRole(chamber string) string {
 	default:
 		return "Legislator"
 	}
+}
+
+func legislatorPhotoURLs(lwsSponsorID string) (string, string) {
+	id := strings.TrimSpace(lwsSponsorID)
+	if id == "" {
+		return "", ""
+	}
+	escaped := url.PathEscape(id)
+	return "https://leg.wa.gov/memberphoto/" + escaped + ".jpg",
+		"https://leg.wa.gov/memberthumbnail/" + escaped + ".jpg"
 }
 
 func listOrganizationsHandler(store *db.Store) http.HandlerFunc {

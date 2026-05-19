@@ -31,6 +31,15 @@ type SuggestResponse = {
   suggestions: AddressSuggestion[];
 };
 
+function legislatorRenderKey(legislator: LookupLegislator): string {
+  return [
+    legislator.slug,
+    legislator.display_name ?? legislator.name,
+    legislator.chamber ?? "",
+    legislator.district ?? "",
+  ].join("|");
+}
+
 const SUGGEST_DEBOUNCE_MS = 220;
 const MIN_SUGGEST_LENGTH = 4;
 
@@ -234,7 +243,7 @@ export function FindLegislators({
             ) : (
               <ul className="divide-y divide-stone-200 rounded border border-stone-200">
                 {result.legislators.map((legislator) => (
-                  <li key={legislator.slug}>
+                  <li key={legislatorRenderKey(legislator)}>
                     <Link
                       href={`/legislators/${legislator.slug}`}
                       className="block p-3 hover:bg-stone-50"

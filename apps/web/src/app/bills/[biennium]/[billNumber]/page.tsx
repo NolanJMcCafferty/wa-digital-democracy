@@ -6,7 +6,6 @@ import { HearingCard } from "./_sections/HearingCard";
 import { TestifierTable } from "./_sections/TestifierTable";
 import { TranscriptSection } from "./_sections/TranscriptSection";
 import { OrganizationsSection } from "./_sections/OrganizationsSection";
-import { SourcePanel } from "./_sections/SourcePanel";
 
 type Params = { biennium: string; billNumber: string };
 
@@ -47,12 +46,6 @@ export default async function BillHearingPage({
           <OrganizationsSection organizations={bundle.organizations} />
         </>
       ) : null}
-
-      <SourcePanel
-        sources={bundle.sources}
-        knownLimitations={bundle.known_limitations}
-        generatedAt={bundle.generated_at}
-      />
     </article>
   );
 }

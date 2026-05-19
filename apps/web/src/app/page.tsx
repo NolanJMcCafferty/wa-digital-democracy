@@ -19,11 +19,12 @@ const ISSUE_TILES: Array<{
   href: string;
   status: "live" | "planned";
 }> = [
+  { slug: "health", title: "Health", emoji: "🏥", href: "/issues/health", status: "live" },
   { slug: "housing", title: "Housing", emoji: "🏠", href: "/issues/housing", status: "live" },
   { slug: "transportation", title: "Transportation", emoji: "🚆", href: "/issues/transportation", status: "live" },
-  { slug: "education", title: "Education", emoji: "🎓", href: "#", status: "planned" },
-  { slug: "climate", title: "Climate", emoji: "🌲", href: "#", status: "planned" },
-  { slug: "public-safety", title: "Public Safety", emoji: "⚖️", href: "#", status: "planned" },
+  { slug: "education", title: "Education", emoji: "🎓", href: "/issues/education", status: "live" },
+  { slug: "climate", title: "Climate", emoji: "🌲", href: "/issues/climate", status: "live" },
+  { slug: "public-safety", title: "Public Safety", emoji: "⚖️", href: "/issues/public-safety", status: "live" },
 ];
 
 export default async function HomePage() {
@@ -183,8 +184,6 @@ function LegislatorMosaic({
   legislators: Awaited<ReturnType<typeof listLegislatorBundles>>;
 }) {
   if (legislators.length === 0) return null;
-  // Stable color from the slug so the mosaic doesn't reshuffle each render.
-  const palette = ["bg-stone-200", "bg-blue-100", "bg-emerald-100", "bg-rose-100", "bg-amber-100", "bg-purple-100"];
   const senate = legislators.filter((l) => l.chamber === "Senate").length;
   const house = legislators.filter((l) => l.chamber === "House").length;
   return (
@@ -203,8 +202,19 @@ function LegislatorMosaic({
         sponsored bills.
       </p>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-        {legislators.map((l, i) => {
-          const color = palette[i % palette.length];
+        {legislators.map((l) => {
+          const fallbackColor =
+            l.party === "D"
+              ? "bg-blue-100"
+              : l.party === "R"
+                ? "bg-rose-100"
+                : "bg-stone-200";
+          const borderColor =
+            l.party === "D"
+              ? "border-blue-300"
+              : l.party === "R"
+                ? "border-rose-300"
+                : "border-stone-300";
           const display = l.displayName ?? l.name;
           const tag = [
             l.party ?? "",
@@ -212,27 +222,50 @@ function LegislatorMosaic({
           ].filter(Boolean).join(" ");
           return (
             <Link
-              key={l.slug}
+              key={legislatorRenderKey(l)}
               href={`/legislators/${l.slug}`}
-              className={`${color} flex aspect-square flex-col items-center justify-center rounded p-2 text-center text-xs leading-tight text-stone-800 transition hover:scale-105 hover:shadow-sm`}
+              className={`group relative flex aspect-square overflow-hidden rounded border ${borderColor} ${fallbackColor} text-center text-xs leading-tight text-stone-800 transition hover:scale-105 hover:shadow-sm`}
               title={`${display}${tag ? " (" + tag + ")" : ""}`}
             >
-              <span className="line-clamp-3 font-medium">{display}</span>
-              {tag ? (
-                <span className="mt-1 text-[10px] uppercase tracking-wider text-stone-600">
-                  {tag}
+              {l.thumbnailUrl ? (
+                <img
+                  src={l.thumbnailUrl}
+                  alt=""
+                  loading="lazy"
+                  className="absolute inset-1.5 h-[calc(100%-0.75rem)] w-[calc(100%-0.75rem)] rounded-sm object-contain object-top transition duration-200 group-hover:scale-105"
+                />
+              ) : (
+                <span className="m-auto text-lg font-semibold text-stone-700">
+                  {legislatorInitials(display)}
                 </span>
-              ) : l.chamber ? (
-                <span className="mt-1 text-[10px] uppercase tracking-wider text-stone-600">
-                  {l.chamber === "House" ? "Rep" : "Sen"}
-                </span>
-              ) : null}
+              )}
+              <span className="absolute inset-x-0 bottom-0 bg-white px-1.5 py-1.5 shadow-sm">
+                <span className="line-clamp-2 font-medium text-stone-900">{display}</span>
+              </span>
             </Link>
           );
         })}
       </div>
     </section>
   );
+}
+
+function legislatorRenderKey(l: Awaited<ReturnType<typeof listLegislatorBundles>>[number]): string {
+  return [
+    l.slug,
+    l.displayName ?? l.name,
+    l.chamber ?? "",
+    l.district ?? "",
+  ].join("|");
+}
+
+function legislatorInitials(displayName: string): string {
+  return displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 function Leaderboard({
@@ -292,7 +325,7 @@ async function LeaderboardServer({
       </p>
       <ol className="divide-y divide-stone-200 rounded-lg border border-stone-300 bg-white">
         {ranked.map((l, i) => (
-          <li key={l.slug}>
+          <li key={[l.slug, l.display_name ?? l.name, l.chamber ?? "", l.district ?? ""].join("|")}>
             <Link
               href={`/legislators/${l.slug}`}
               className="flex items-center gap-4 px-4 py-3 hover:bg-stone-50"

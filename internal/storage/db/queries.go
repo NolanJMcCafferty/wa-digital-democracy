@@ -1137,17 +1137,18 @@ func lowerTrim(s string) string {
 // `wa-dd ingest-legislators` from LWS SponsorService; older rows
 // created by IngestBill alone may have them empty.
 type LegislatorAggregate struct {
-	ID          int64
-	Name        string // "Senator Alvarado" — the LongName form, kept for back-compat
-	FirstName   string
-	LastName    string
-	Chamber     string
-	District    string
-	Party       string
-	Email       string
-	Phone       string
-	OfficialURL string
-	BillCount   int
+	ID           int64
+	LWSSponsorID string
+	Name         string // "Senator Alvarado" — the LongName form, kept for back-compat
+	FirstName    string
+	LastName     string
+	Chamber      string
+	District     string
+	Party        string
+	Email        string
+	Phone        string
+	OfficialURL  string
+	BillCount    int
 }
 
 // ListLegislators returns currently-seated members of the WA legislature
@@ -1179,7 +1180,7 @@ WITH ranked AS (
      AND l.chamber IN ('House', 'Senate')
      AND l.district IS NOT NULL
 )
-SELECT r.id, r.name,
+SELECT r.id, COALESCE(r.lws_sponsor_id, ''), r.name,
        COALESCE(r.first_name, ''), COALESCE(r.last_name, ''),
        COALESCE(r.chamber, ''),
        COALESCE(r.district, ''), COALESCE(r.party, ''),
@@ -1189,7 +1190,7 @@ SELECT r.id, r.name,
   LEFT JOIN bill_sponsor bs ON bs.legislator_id = r.id
  WHERE (r.chamber = 'House'  AND r.rn <= 2)
     OR (r.chamber = 'Senate' AND r.rn <= 1)
- GROUP BY r.id, r.name, r.first_name, r.last_name, r.chamber,
+ GROUP BY r.id, r.lws_sponsor_id, r.name, r.first_name, r.last_name, r.chamber,
           r.district, r.party, r.email, r.phone, r.official_url
  ORDER BY r.last_name, r.first_name;`
 	rows, err := s.Pool.Query(ctx, q)
@@ -1200,7 +1201,7 @@ SELECT r.id, r.name,
 	out := []LegislatorAggregate{}
 	for rows.Next() {
 		var l LegislatorAggregate
-		if err := rows.Scan(&l.ID, &l.Name, &l.FirstName, &l.LastName,
+		if err := rows.Scan(&l.ID, &l.LWSSponsorID, &l.Name, &l.FirstName, &l.LastName,
 			&l.Chamber, &l.District, &l.Party, &l.Email, &l.Phone,
 			&l.OfficialURL, &l.BillCount); err != nil {
 			return nil, fmt.Errorf("scan legislator: %w", err)
@@ -1215,7 +1216,7 @@ SELECT r.id, r.name,
 // so the query compares their numeric form.
 func (s *Store) ListLegislatorsByDistrict(ctx context.Context, district string) ([]LegislatorAggregate, error) {
 	const q = `
-SELECT l.id, l.name,
+SELECT l.id, COALESCE(l.lws_sponsor_id, ''), l.name,
        COALESCE(l.first_name, ''), COALESCE(l.last_name, ''),
        COALESCE(l.chamber, ''),
        COALESCE(l.district, ''), COALESCE(l.party, ''),
@@ -1237,7 +1238,7 @@ SELECT l.id, l.name,
 	out := []LegislatorAggregate{}
 	for rows.Next() {
 		var l LegislatorAggregate
-		if err := rows.Scan(&l.ID, &l.Name, &l.FirstName, &l.LastName,
+		if err := rows.Scan(&l.ID, &l.LWSSponsorID, &l.Name, &l.FirstName, &l.LastName,
 			&l.Chamber, &l.District, &l.Party, &l.Email, &l.Phone,
 			&l.OfficialURL, &l.BillCount); err != nil {
 			return nil, fmt.Errorf("scan legislator: %w", err)
@@ -2421,6 +2422,33 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 	return nil
 }
 
+// ListFreshBillKeys returns the set of "PREFIX|NUMBER" keys for bills in
+// the given biennium whose row was upserted within the last `since`
+// duration. Used by `wa-dd ingest-session --skip-fresh` to resume a
+// killed run without re-fetching bills already pulled this cycle.
+func (s *Store) ListFreshBillKeys(ctx context.Context, biennium string, since time.Duration) (map[string]struct{}, error) {
+	const q = `
+SELECT prefix, number
+  FROM bill
+ WHERE biennium = $1
+   AND updated_at >= NOW() - $2::interval;`
+	rows, err := s.Pool.Query(ctx, q, biennium, fmt.Sprintf("%d seconds", int64(since.Seconds())))
+	if err != nil {
+		return nil, fmt.Errorf("list fresh bill keys: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var prefix string
+		var number int
+		if err := rows.Scan(&prefix, &number); err != nil {
+			return nil, fmt.Errorf("scan fresh bill: %w", err)
+		}
+		out[fmt.Sprintf("%s|%d", prefix, number)] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 // ---------------------------------------------------------------------------
 // Auto-discovery queries — back the `wa-dd discover-hearings` and
 // `wa-dd ingest-hearings` commands.
@@ -2491,9 +2519,13 @@ type DiscoveredAgendaItemRow struct {
 }
 
 // ListDiscoveredAgendaItems returns agenda_item rows where (a) the
-// hearing has a tvw_event_id (so transcript ingest can run) and (b) no
-// testifier rows have been ingested yet for that agenda_item. Used by
-// `wa-dd ingest-hearings` to feed buildOne.
+// hearing has a tvw_event_id (so transcript ingest can run) and (b) the
+// full ingest pipeline has not yet succeeded end-to-end for that agenda
+// item. The terminal step is `pdc-context`: a `succeeded` ingestion_run
+// row tagged with this agenda's csi_agenda_item_id proves all 6 steps
+// ran. Items that died mid-pipeline (e.g. testifiers ingested but
+// transcript segmentation failed) come back into the work list for a
+// retry. Used by `wa-dd ingest-hearings` to feed buildOne.
 func (s *Store) ListDiscoveredAgendaItems(ctx context.Context, biennium string) ([]DiscoveredAgendaItemRow, error) {
 	const q = `
 SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
@@ -2503,7 +2535,10 @@ SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
  WHERE b.biennium = $1
    AND h.tvw_event_id IS NOT NULL
    AND NOT EXISTS (
-     SELECT 1 FROM testifier t WHERE t.agenda_item_id = a.id
+     SELECT 1 FROM ingestion_run r
+      WHERE r.job = 'pdc-context'
+        AND r.status = 'succeeded'
+        AND r.args ->> 'agenda_item_id' = a.csi_agenda_item_id
    )
  ORDER BY h.meeting_datetime DESC;`
 	rows, err := s.Pool.Query(ctx, q, biennium)

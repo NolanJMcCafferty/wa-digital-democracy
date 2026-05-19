@@ -481,6 +481,7 @@ func runIngestSession(args []string) int {
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
 		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
 		onlyTypes = fs.String("only-types", "", "comma-separated list of bill prefixes to keep (e.g. \"HB,SB\"). Empty = all.")
+		skipFresh = fs.Duration("skip-fresh", 24*time.Hour, "skip bills whose DB row was upserted within this window (0 disables). Lets a killed run resume without re-fetching already-ingested bills.")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -542,10 +543,32 @@ func runIngestSession(args []string) int {
 			})
 		}
 	}
+	skipped := 0
+	if *skipFresh > 0 {
+		fresh, err := deps.store.ListFreshBillKeys(ctx, *biennium, *skipFresh)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-session: list fresh bills: %v\n", err)
+			return 1
+		}
+		filtered := bills[:0]
+		for _, b := range bills {
+			key := fmt.Sprintf("%s|%d", b.prefix, b.number)
+			if _, ok := fresh[key]; ok {
+				skipped++
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		bills = filtered
+	}
 	if *limit > 0 && len(bills) > *limit {
 		bills = bills[:*limit]
 	}
-	fmt.Fprintf(os.Stderr, "==> %d unique bills to ingest\n", len(bills))
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "==> %d unique bills to ingest (%d skipped as fresh within %s)\n", len(bills), skipped, *skipFresh)
+	} else {
+		fmt.Fprintf(os.Stderr, "==> %d unique bills to ingest\n", len(bills))
+	}
 
 	// 2. Loop with per-bill failure isolation.
 	type result struct {

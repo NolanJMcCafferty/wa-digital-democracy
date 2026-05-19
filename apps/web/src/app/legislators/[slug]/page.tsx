@@ -21,20 +21,39 @@ export default async function LegislatorPage({
     (a) => a.sponsorType === "Primary"
   ).length;
   const secondary = legislator.appearances.length - primary;
+  const displayName = legislator.displayName ?? legislator.name;
+  const subtitle = [
+    legislator.chamber ?? "Chamber unknown",
+    legislator.district ? `District ${legislator.district}` : "",
+    legislator.party ?? "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <article className="space-y-10">
-      <section className="space-y-4">
-        <p className="text-sm uppercase tracking-wider text-stone-500">
-          Legislator
-        </p>
-        <div className="space-y-3">
-          <h1 className="text-3xl font-bold tracking-tight text-stone-900">
-            {legislator.name}
-          </h1>
-          <p className="text-stone-600">
-            {legislator.chamber ?? "Chamber unknown"} sponsorship activity in the current public-record coverage.
+      <section className="flex flex-col gap-5 sm:flex-row sm:items-start">
+        <div className="flex h-44 w-36 shrink-0 items-center justify-center overflow-hidden rounded border border-stone-300 bg-stone-100">
+          {legislator.photoUrl || legislator.thumbnailUrl ? (
+            <img
+              src={legislator.photoUrl ?? legislator.thumbnailUrl}
+              alt=""
+              className="h-full w-full object-contain object-top"
+            />
+          ) : (
+            <span className="text-3xl font-semibold text-stone-500">
+              {legislatorInitials(displayName)}
+            </span>
+          )}
+        </div>
+        <div className="space-y-4">
+          <p className="text-sm uppercase tracking-wider text-stone-500">
+            Legislator
           </p>
+          <div className="space-y-3">
+            <h1 className="text-3xl font-bold tracking-tight text-stone-900">
+              {displayName}
+            </h1>
+            {subtitle ? <p className="text-stone-600">{subtitle}</p> : null}
+          </div>
         </div>
       </section>
 
@@ -93,6 +112,15 @@ export default async function LegislatorPage({
       </section>
     </article>
   );
+}
+
+function legislatorInitials(displayName: string): string {
+  return displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
