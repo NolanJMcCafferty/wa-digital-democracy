@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM tvw_media_asset WHERE source_record_id = ANY($1)`,
 		`DELETE FROM federal_award WHERE source_record_id = ANY($1)`,
 		`DELETE FROM seattle_operating_budget WHERE source_record_id = ANY($1)`,
 		`DELETE FROM fiscalwa_vendor_payment WHERE source_record_id = ANY($1)`,
@@ -162,6 +163,82 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	}
 	if got := count(); got != 1 {
 		t.Errorf("count after replace = %d, want 1 (Alice/Bob removed, Carol present)", got)
+	}
+}
+
+func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "invintus", "tvw-media-test-1")
+
+	wpID := int64(77334)
+	if _, err := store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
+		TVWEventID:          "test-media-event",
+		WPPostID:            &wpID,
+		WPSlug:              "senate-housing-test-media-event",
+		WPLink:              "https://tvw.org/video/senate-housing-test-media-event/",
+		Title:               "Senate Housing",
+		Description:         "Public hearing",
+		StartDateTime:       time.Date(2026, 2, 4, 18, 30, 0, 0, time.UTC),
+		CaptionURL:          "https://example.com/caption.vtt",
+		ThumbnailURL:        "https://example.com/thumb.jpg",
+		CustomID:            "33828",
+		LocationName:        "Senate Hearing Rm 4 and Virtual",
+		TotalRuntime:        "01:30:01",
+		TotalRuntimeSeconds: 5401,
+		PublishedAudioURL:   "https://example.com/audio.mp3",
+		VideoDownloadURL:    "https://example.com/video.mp4",
+		StreamingURIs:       map[string]any{"main": "https://example.com/media.m3u8"},
+		RawCategories:       []string{"Legislative", "Senate Housing"},
+		RawKeywords:         []string{"1501"},
+		RawWPTags:           []int{7507},
+		RawWPCategories:     []int{6090},
+		SourceRecordID:      srID,
+	}); err != nil {
+		t.Fatalf("upsert tvw_event: %v", err)
+	}
+	rows := []db.UpsertTVWMediaAssetParams{
+		{TVWEventID: "test-media-event", AssetID: "caption-1", AssetType: "caption", Name: "caption.vtt", FileURL: "https://example.com/caption.vtt", SourceRecordID: srID},
+		{
+			TVWEventID:          "test-media-event",
+			AssetID:             "video-1",
+			AssetType:           "video",
+			Name:                "Edit",
+			FileURL:             "https://example.com/video.mp4",
+			FileSizeBytes:       2213283547,
+			TotalRuntime:        "01:30:01",
+			TotalRuntimeSeconds: 5401,
+			AdvancedDetails:     map[string]any{"audio": []any{map[string]any{"channels": "2.0ch"}}},
+			SourceRecordID:      srID,
+		},
+	}
+	if err := store.ReplaceTVWMediaAssets(ctx, "test-media-event", rows); err != nil {
+		t.Fatalf("replace media assets: %v", err)
+	}
+	rows = rows[:1]
+	rows[0].Name = "caption-updated.vtt"
+	if err := store.ReplaceTVWMediaAssets(ctx, "test-media-event", rows); err != nil {
+		t.Fatalf("replace media assets 2: %v", err)
+	}
+
+	var slug, stream, tags string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT wp_slug, streaming_uris->>'main', raw_wp_tags::text
+  FROM tvw_event WHERE tvw_event_id = 'test-media-event';`).Scan(&slug, &stream, &tags); err != nil {
+		t.Fatalf("query tvw_event: %v", err)
+	}
+	if slug != "senate-housing-test-media-event" || stream == "" || tags != "[7507]" {
+		t.Fatalf("slug=%q stream=%q tags=%q", slug, stream, tags)
+	}
+	var count int
+	var captionName string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(name) FROM tvw_media_asset WHERE tvw_event_id = 'test-media-event';`).Scan(&count, &captionName); err != nil {
+		t.Fatalf("query assets: %v", err)
+	}
+	if count != 1 || captionName != "caption-updated.vtt" {
+		t.Fatalf("count=%d captionName=%q", count, captionName)
 	}
 }
 

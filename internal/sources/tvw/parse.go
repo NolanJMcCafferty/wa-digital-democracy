@@ -27,6 +27,7 @@ type ScheduleEvent struct {
 type WPVideoPost struct {
 	ID    int    `json:"id"`
 	Date  string `json:"date"`
+	Slug  string `json:"slug"`
 	Link  string `json:"link"`
 	Title struct {
 		Rendered string `json:"rendered"`
@@ -37,23 +38,51 @@ type WPVideoPost struct {
 	Excerpt struct {
 		Rendered string `json:"rendered"`
 	} `json:"excerpt"`
+	InvintusCategory []int `json:"invintus_category"`
+	InvintusTag      []int `json:"invintus_tag"`
 }
 
 // InvintusEvent is the parsed Invintus Event/getDetailed payload.
 type InvintusEvent struct {
-	EventID        string   `json:"eventID"`
-	ClientID       string   `json:"clientID"`
-	Title          string   `json:"title"`
-	Description    string   `json:"description"`
-	StartDateTime  string   `json:"startDateTime"`
-	EventStatus    string   `json:"eventStatus"`
-	Categories     []string `json:"categories"`
-	LocationName   string   `json:"locationName"`
-	CaptionPath    string   `json:"captionPath"`
-	StreamingURIs  []any    `json:"streamingURIs"`
-	EstRuntime     int      `json:"estRuntime"`
-	VideoThumbnail string   `json:"videoThumbnail"`
-	EventNotes     string   `json:"eventNotes"`
+	EventID          string          `json:"eventID"`
+	ClientID         string          `json:"clientID"`
+	CustomID         string          `json:"customID"`
+	Title            string          `json:"title"`
+	Description      string          `json:"description"`
+	StartDateTime    string          `json:"startDateTime"`
+	EventStatus      string          `json:"eventStatus"`
+	Categories       []string        `json:"categories"`
+	LocationName     string          `json:"locationName"`
+	CaptionPath      string          `json:"captionPath"`
+	StreamingURIs    json.RawMessage `json:"streamingURIs"`
+	EstRuntime       int             `json:"estRuntime"`
+	TotalRunTime     string          `json:"totalRunTime"`
+	VideoThumbnail   string          `json:"videoThumbnail"`
+	PublishedAudio   string          `json:"publishedAudio"`
+	AudioDownloadURI string          `json:"audioDownloadURI"`
+	VideoDownloadURI string          `json:"videoDownloadURI"`
+	Keywords         []string        `json:"keywords"`
+	MediaAssets      []MediaAsset    `json:"mediaAssets"`
+	EventNotes       string          `json:"eventNotes"`
+}
+
+// MediaAsset is one Invintus media/document/link asset attached to an event.
+type MediaAsset struct {
+	AssetID         string          `json:"assetID"`
+	ClientID        string          `json:"clientID"`
+	EventID         string          `json:"eventID"`
+	Name            string          `json:"name"`
+	Type            string          `json:"type"`
+	DateCreated     string          `json:"dateCreated"`
+	FileSize        string          `json:"fileSize"`
+	TotalRunTime    string          `json:"totalRunTime"`
+	TotalRunTimeS   int             `json:"totalRunTimeS"`
+	CurrentStatus   string          `json:"currentStatus"`
+	FileURL         string          `json:"fileUrl"`
+	Thumbnail       string          `json:"thumbnail"`
+	Sprite          string          `json:"sprite"`
+	PreviewURI      string          `json:"previewURI"`
+	AdvancedDetails json.RawMessage `json:"advancedDetails"`
 }
 
 // TranscriptSegment is one cue parsed from a WebVTT caption file.
@@ -86,14 +115,16 @@ func ParseWPVideoList(body []byte) ([]WPVideoPost, error) {
 	return posts, nil
 }
 
-// ParseEventDetail decodes the {errors, data, meta} envelope; data.captionPath
-// may be JSON null (hence we read into *string then flatten).
+// ParseEventDetail decodes the {errors, data, meta} envelope; nullable
+// polymorphic fields are normalized to zero values.
 func ParseEventDetail(body []byte) (*InvintusEvent, error) {
 	var env struct {
 		Errors any `json:"errors"`
 		Data   struct {
 			InvintusEvent
-			CaptionPath *string `json:"captionPath"`
+			CaptionPath    *string         `json:"captionPath"`
+			StreamingURIs  json.RawMessage `json:"streamingURIs"`
+			AdvancedAssets []MediaAsset    `json:"mediaAssets"`
 		} `json:"data"`
 		Meta any `json:"meta"`
 	}
@@ -104,7 +135,20 @@ func ParseEventDetail(body []byte) (*InvintusEvent, error) {
 	if env.Data.CaptionPath != nil {
 		out.CaptionPath = *env.Data.CaptionPath
 	}
+	out.StreamingURIs = normalizeRawJSON(env.Data.StreamingURIs, "{}")
+	out.MediaAssets = env.Data.AdvancedAssets
+	for i := range out.MediaAssets {
+		out.MediaAssets[i].AdvancedDetails = normalizeRawJSON(out.MediaAssets[i].AdvancedDetails, "{}")
+	}
 	return &out, nil
+}
+
+func normalizeRawJSON(raw json.RawMessage, fallback string) json.RawMessage {
+	trim := strings.TrimSpace(string(raw))
+	if trim == "" || trim == "null" {
+		return json.RawMessage(fallback)
+	}
+	return raw
 }
 
 // ParseVTT parses a WebVTT body into ordered segments.
@@ -118,10 +162,10 @@ func ParseVTT(body []byte) ([]TranscriptSegment, error) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var (
-		out           []TranscriptSegment
-		curStart      = -1
-		curEnd        = -1
-		curText       []string
+		out      []TranscriptSegment
+		curStart = -1
+		curEnd   = -1
+		curText  []string
 	)
 	flush := func() {
 		if curStart < 0 {
