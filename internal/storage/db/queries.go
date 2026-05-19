@@ -1923,6 +1923,62 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 	return nil
 }
 
+// UpsertFederalAwardParams is the normalized row shape for federal_award.
+type UpsertFederalAwardParams struct {
+	AwardID        string
+	RecipientName  string
+	RecipientUEI   string
+	AwardingAgency string
+	FundingAgency  string
+	AwardType      string
+	AwardAmount    string
+	StartDate      *time.Time
+	EndDate        *time.Time
+	PlaceStateCode string
+	PlaceCounty    string
+	RawFields      map[string]any
+	SourceRecordID int64
+}
+
+// UpsertFederalAward inserts or updates one USAspending award row.
+func (s *Store) UpsertFederalAward(ctx context.Context, p UpsertFederalAwardParams) error {
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO federal_award (
+  award_id, recipient_name, recipient_uei, awarding_agency, funding_agency,
+  award_type, award_amount, start_date, end_date, place_state_code,
+  place_county, raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,$4,$5,$6,NULLIF($7,'')::numeric,$8,$9,$10,$11,$12::jsonb,$13
+)
+ON CONFLICT (award_id) DO UPDATE SET
+  recipient_name = EXCLUDED.recipient_name,
+  recipient_uei = EXCLUDED.recipient_uei,
+  awarding_agency = EXCLUDED.awarding_agency,
+  funding_agency = EXCLUDED.funding_agency,
+  award_type = EXCLUDED.award_type,
+  award_amount = EXCLUDED.award_amount,
+  start_date = EXCLUDED.start_date,
+  end_date = EXCLUDED.end_date,
+  place_state_code = EXCLUDED.place_state_code,
+  place_county = EXCLUDED.place_county,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.AwardID, strOrNull(p.RecipientName), strOrNull(p.RecipientUEI), strOrNull(p.AwardingAgency), strOrNull(p.FundingAgency),
+		strOrNull(p.AwardType), p.AwardAmount, datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), strOrNull(p.PlaceStateCode),
+		strOrNull(p.PlaceCounty), string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert federal_award: %w", err)
+	}
+	return nil
+}
+
 // UpsertSeattleOperatingBudgetParams is the normalized row shape for
 // seattle_operating_budget.
 type UpsertSeattleOperatingBudgetParams struct {

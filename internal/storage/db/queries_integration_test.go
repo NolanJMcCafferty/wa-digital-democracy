@@ -46,6 +46,7 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM federal_award WHERE source_record_id = ANY($1)`,
 		`DELETE FROM seattle_operating_budget WHERE source_record_id = ANY($1)`,
 		`DELETE FROM fiscalwa_vendor_payment WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
@@ -380,6 +381,51 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 	}
 	if count != 1 || company != "Sunrise Technologies Updated" || normalized != "SUNRISE TECHNOLOGIES UPDATED" {
 		t.Fatalf("count=%d company=%q normalized=%q", count, company, normalized)
+	}
+}
+
+func TestUpsertFederalAward_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "usaspending", "usaspending-award-test-1")
+	start := time.Date(2025, 10, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+
+	params := db.UpsertFederalAwardParams{
+		AwardID:        "ASST_NON_123",
+		RecipientName:  "CITY OF SEATTLE",
+		RecipientUEI:   "ABC123",
+		AwardingAgency: "Department of Transportation",
+		FundingAgency:  "Federal Highway Administration",
+		AwardType:      "Grant",
+		AwardAmount:    "12345.67",
+		StartDate:      &start,
+		EndDate:        &end,
+		PlaceStateCode: "WA",
+		PlaceCounty:    "King",
+		RawFields:      map[string]any{"source": "first"},
+		SourceRecordID: srID,
+	}
+	if err := store.UpsertFederalAward(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.AwardAmount = "20000"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertFederalAward(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(award_amount)::text
+  FROM federal_award
+ WHERE award_id = 'ASST_NON_123';`).Scan(&count, &amount); err != nil {
+		t.Fatalf("query award: %v", err)
+	}
+	if count != 1 || amount != "20000" {
+		t.Fatalf("count=%d amount=%q", count, amount)
 	}
 }
 

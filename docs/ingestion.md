@@ -487,6 +487,33 @@ This remains intentionally bounded. Broader budget/spending work should add
 or use separate issues for monthly IT spend datasets, fiscal.wa.gov, Seattle
 Open Budget, USAspending joins, and reviewed agency/vendor/entity resolution.
 
+## Optional Phase 4 USAspending ingestion
+
+`wa-dd ingest-usaspending-wa-awards` ingests a scoped USAspending award-search
+page into `federal_award`:
+
+```sh
+wa-dd ingest-usaspending-wa-awards --start-date 2025-10-01 --end-date 2026-09-30 --limit 100
+```
+
+The current MVP scope is awards whose place of performance is Washington (`WA`)
+for the requested date range, sorted by award amount through USAspending's
+`/api/v2/search/spending_by_award/` endpoint.
+
+Rows preserve award ID, recipient name/UEI, awarding and funding agencies, award
+type, amount, start/end dates, place-of-performance state/county, raw award JSON,
+and `source_record_id` provenance. The raw API response is also stored through
+the shared `source_record`/object-store path.
+
+Matching strategy: recipient names and UEIs should generate reviewable candidate
+joins against Washington agencies, Seattle/King County entities, WEBS vendors,
+contract vendors, and organization records. Do not present uncertain joins as
+confirmed without a confidence/evidence layer or human-reviewed decision.
+
+Scope caveat: this command ingests one bounded award-search page. Pagination,
+recipient-specific backfills, agency/account-level data, subawards, and richer
+entity-resolution workflows should remain separate follow-up work.
+
 ## Optional Phase 4 Seattle Open Budget ingestion
 
 `wa-dd ingest-seattle-operating-budget` ingests the City of Seattle Operating
