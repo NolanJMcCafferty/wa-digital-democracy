@@ -151,7 +151,7 @@ func runFindCandidates(args []string) int {
 		maxMeetings = fs.Int("max-meetings", 8, "max recent meetings per committee")
 		out         = fs.String("out", "data/processed/candidates.json", "output JSON path")
 		topN        = fs.Int("top", 10, "show top-N candidates in stderr summary")
-		rateLimit   = fs.Float64("rate", 5.0, "max requests/sec to app.leg.wa.gov")
+		rateLimit   = fs.Float64("rate", 10.0, "max requests/sec to app.leg.wa.gov")
 		quiet       = fs.Bool("quiet", false, "suppress per-step progress logs")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -269,7 +269,7 @@ func runBuildBundle(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundle is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for legislative APIs")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for legislative APIs")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -451,7 +451,7 @@ func runIngestSession(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _session.json is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for the LWS host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
 		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
 		onlyTypes = fs.String("only-types", "", "comma-separated list of bill prefixes to keep (e.g. \"HB,SB\"). Empty = all.")
 	)
@@ -705,7 +705,7 @@ func runDiscoverHearings(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _discovery.json is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per CSI/TVW host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per CSI/TVW host")
 		limit     = fs.Int("limit", 0, "stop after N hearings (0 = no limit). For smoke tests.")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -883,7 +883,7 @@ func runIngestHearings(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed/bundles", "where bundle JSON is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per legislative host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per legislative host")
 		limit     = fs.Int("limit", 0, "stop after N agenda items (0 = no limit). For smoke tests.")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -1000,7 +1000,7 @@ func runIngestContracts(args []string) int {
 		limit      = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
 		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir     = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		rateLimit  = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
+		rateLimit  = fs.Float64("rate", 10.0, "max requests/sec for data.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -1108,7 +1108,7 @@ func runIngestMasterContractSales(args []string) int {
 		limit     = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for data.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -1500,7 +1500,7 @@ func runIngestLegislators(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _legislators.json is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for the LWS host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2

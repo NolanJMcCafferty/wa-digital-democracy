@@ -12,6 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// nonEmptyStrings returns trimmed, non-empty entries from in. Used by
+// query builders that accept multi-value filters.
+func nonEmptyStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if t := strings.TrimSpace(v); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // timeOrNull returns t for non-zero times, or pgtype Null otherwise. We
 // use pgtype.Timestamptz because nullable TIMESTAMPTZ fields don't accept
 // Go's zero time.Time gracefully.
@@ -1289,19 +1301,108 @@ type HearingAggregate struct {
 // ordered by meeting datetime descending. Only includes rows where the
 // hearing has a TVW event mapping (the curated subset).
 func (s *Store) ListHearings(ctx context.Context) ([]HearingAggregate, error) {
-	const q = `
+	hits, _, err := s.SearchHearings(ctx, HearingSearchParams{Limit: 100000, Offset: 0})
+	return hits, err
+}
+
+// HearingSearchParams are the filter knobs SearchHearings accepts. Empty
+// strings/slices are no-ops. The handler is responsible for clamping
+// limit and offset to safe ranges.
+type HearingSearchParams struct {
+	Committee     string   // ILIKE match on hearing.committee_name
+	Bill          string   // ILIKE match on bill.bill_number or bill.title
+	Speaker       string   // ILIKE match on testifier.raw_name
+	Chambers      []string // OR-set of hearing.chamber values
+	TopicKeywords []string // OR-set of ILIKE keywords matched against bill title/desc, agenda label, committee name
+	Biennium      string   // exact match on bill.biennium
+	Limit         int
+	Offset        int
+}
+
+// HearingSearchFacets carries the distinct values we render in the
+// hearings sidebar so the UI doesn't hard-code lists.
+type HearingSearchFacets struct {
+	Chambers   []string
+	Committees []string
+	Biennia    []string
+}
+
+// SearchHearings is the paginated, filtered query backing /api/v1/hearings.
+// Returns (hits, total, err).
+func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]HearingAggregate, int, error) {
+	if p.Limit <= 0 {
+		p.Limit = 50
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+
+	args := []any{}
+	where := []string{"h.tvw_event_id IS NOT NULL"}
+	push := func(v any) int {
+		args = append(args, v)
+		return len(args)
+	}
+	if c := strings.TrimSpace(p.Committee); c != "" {
+		idx := push(c)
+		where = append(where, fmt.Sprintf("h.committee_name ILIKE '%%' || $%d || '%%'", idx))
+	}
+	if bq := strings.TrimSpace(p.Bill); bq != "" {
+		idx := push(bq)
+		where = append(where, fmt.Sprintf(
+			"(b.bill_number ILIKE '%%' || $%d || '%%' OR b.title ILIKE '%%' || $%d || '%%')", idx, idx))
+	}
+	if sp := strings.TrimSpace(p.Speaker); sp != "" {
+		idx := push(sp)
+		where = append(where, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM testifier t WHERE t.agenda_item_id = a.id AND t.raw_name ILIKE '%%' || $%d || '%%')", idx))
+	}
+	if chambers := nonEmptyStrings(p.Chambers); len(chambers) > 0 {
+		placeholders := make([]string, 0, len(chambers))
+		for _, c := range chambers {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", push(c)))
+		}
+		where = append(where, "h.chamber IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if keywords := nonEmptyStrings(p.TopicKeywords); len(keywords) > 0 {
+		ors := make([]string, 0, len(keywords))
+		for _, kw := range keywords {
+			idx := push(kw)
+			ors = append(ors, fmt.Sprintf(
+				"(b.title ILIKE '%%' || $%d || '%%' OR COALESCE(b.description,'') ILIKE '%%' || $%d || '%%' OR a.label ILIKE '%%' || $%d || '%%' OR h.committee_name ILIKE '%%' || $%d || '%%')",
+				idx, idx, idx, idx))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if p.Biennium != "" {
+		idx := push(p.Biennium)
+		where = append(where, fmt.Sprintf("b.biennium = $%d", idx))
+	}
+	whereSQL := strings.Join(where, " AND ")
+
+	const baseFROM = `
+FROM agenda_item a
+JOIN hearing h ON h.id = a.hearing_id
+JOIN bill    b ON b.id = a.bill_id`
+
+	countQ := "SELECT COUNT(*) " + baseFROM + " WHERE " + whereSQL
+	var total int
+	if err := s.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count hearings: %w", err)
+	}
+
+	args = append(args, p.Limit, p.Offset)
+	q := `
 SELECT a.csi_agenda_item_id, a.label,
        h.committee_name, h.chamber, h.meeting_datetime,
        b.biennium, b.bill_number, b.prefix, b.number,
        (h.tvw_event_id IS NOT NULL) AS has_tvw
-  FROM agenda_item a
-  JOIN hearing h ON h.id = a.hearing_id
-  JOIN bill    b ON b.id = a.bill_id
- WHERE h.tvw_event_id IS NOT NULL
- ORDER BY h.meeting_datetime DESC;`
-	rows, err := s.Pool.Query(ctx, q)
+` + baseFROM + ` WHERE ` + whereSQL + `
+ ORDER BY h.meeting_datetime DESC
+ LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
+	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list hearings: %w", err)
+		return nil, 0, fmt.Errorf("search hearings: %w", err)
 	}
 	defer rows.Close()
 	out := []HearingAggregate{}
@@ -1311,11 +1412,78 @@ SELECT a.csi_agenda_item_id, a.label,
 			&hh.CommitteeName, &hh.Chamber, &hh.MeetingDateTime,
 			&hh.Biennium, &hh.BillID, &hh.BillPrefix, &hh.BillNumber,
 			&hh.HasTVW); err != nil {
-			return nil, fmt.Errorf("scan hearing: %w", err)
+			return nil, 0, fmt.Errorf("scan hearing: %w", err)
 		}
 		out = append(out, hh)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// ListHearingSearchFacets returns the distinct chamber/committee/biennium
+// values present in hearings with a TVW event mapping, for the sidebar.
+func (s *Store) ListHearingSearchFacets(ctx context.Context) (HearingSearchFacets, error) {
+	var f HearingSearchFacets
+
+	rows, err := s.Pool.Query(ctx, `
+SELECT DISTINCT h.chamber
+  FROM hearing h
+ WHERE h.tvw_event_id IS NOT NULL
+   AND h.chamber IS NOT NULL AND h.chamber <> ''
+ ORDER BY h.chamber`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing chamber: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Chambers = append(f.Chambers, v)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `
+SELECT DISTINCT h.committee_name
+  FROM hearing h
+ WHERE h.tvw_event_id IS NOT NULL
+   AND h.committee_name IS NOT NULL AND h.committee_name <> ''
+ ORDER BY h.committee_name`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing committee: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Committees = append(f.Committees, v)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `
+SELECT DISTINCT b.biennium
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE h.tvw_event_id IS NOT NULL
+   AND b.biennium <> ''
+ ORDER BY b.biennium DESC`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing biennium: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Biennia = append(f.Biennia, v)
+	}
+	rows.Close()
+
+	return f, nil
 }
 
 // SourceSummaryRow is the row shape ListSourceSummaries returns.

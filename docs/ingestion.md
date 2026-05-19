@@ -11,19 +11,17 @@ where things land, and how to debug a stuck or misbehaving run.
 
 ```
                      nightly cron: make daily
-        ┌──────────────────┬──────────────────┬──────────────────┐
-        │                  │                  │                  │
-   ingest-session    discover-hearings    ingest-hearings
-   (~70 min)         (~few min)           (variable)
-        │                  │                  │
-   LWS metadata      CSI agenda IDs       full pipeline
-   for ~5,000 bills  + TVW event IDs      (CSI testifiers,
-   in the biennium   on every hearing      TVW captions,
-                     LWS reports           transcript segments,
-                                           speakers, PDC)
-        │                  │                  │
-        └──────────────────┴────────┬─────────┘
-                                    ▼
+        ┌──────────────────┬────────────────────────────────────┐
+        │                  │                                    │
+   ingest-session                 ingest-hearings
+   (~70 min)                discovery + full ingest (variable)
+        │                  │                                    │
+   LWS metadata         CSI agenda IDs + TVW event IDs, then
+   for ~5,000 bills     CSI testifiers, TVW captions, transcript
+   in the biennium      segments, speaker matching, PDC context
+        │                  │                                    │
+        └──────────────────┴───────────────┬────────────────────┘
+                                           ▼
                               Postgres (truth)
                                     ▼
                        wa-dd-api at :8080  (HTTP / JSON)
@@ -85,8 +83,8 @@ path); when it's empty, it stores every hearing LWS reports
 - A summary at `data/processed/_session.json` with per-bill durations
   and any failures.
 
-**Cost:** ~5,000 bills × 4 LWS calls = 20,000 calls. At 5 req/sec to
-`wslwebservices.leg.wa.gov`, that's ~70 minutes.
+**Cost:** ~5,000 bills × 4 LWS calls = 20,000 calls. At 10 req/sec to
+`wslwebservices.leg.wa.gov`, that's ~35-40 minutes.
 
 **Code:** `cmd/wa-dd/main.go` (`runIngestSession`), `internal/jobs/jobs.go`
 (`Pipeline.RunMetadataOnly`), `internal/jobs/ingest_bill.go`
@@ -233,7 +231,7 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
 
 **Cost:** ~6 HTTP calls per bill (3 LWS for the re-ingest, 1 CSI for
 testifiers, 2 TVW/Invintus for event detail + captions, plus PDC if
-matched orgs). At 5 req/sec, ~1.2–1.6 seconds per bill. Hundreds of
+matched orgs). At 10 req/sec, ~0.6–0.8 seconds per bill. Hundreds of
 hearings → tens of minutes.
 
 **Code:** `cmd/wa-dd/main.go` (`runIngestHearings`),
@@ -287,10 +285,10 @@ source_record row with no per-step boilerplate.
 
 ## Daily orchestration
 
-`make daily` chains the three passes:
+`make daily` chains the public operator passes:
 
 ```makefile
-daily: ingest-session discover-hearings ingest-hearings
+daily: ingest-legislators ingest-session ingest-hearings
 ```
 
 For nightly cron:
@@ -301,12 +299,17 @@ For nightly cron:
 
 The order matters when fresh:
 
-1. `ingest-session` creates `bill` and `hearing` rows for every bill in
-   the biennium.
-2. `discover-hearings` enriches those `hearing` rows with CSI/TVW IDs
-   and creates `agenda_item` rows.
-3. `ingest-hearings` runs the full pipeline against discovered agenda
-   items.
+1. `ingest-legislators` refreshes the roster and owns `legislator`
+   rows.
+2. `ingest-session` creates `bill`, `bill_sponsor`, status, and
+   `hearing` rows for every bill in the biennium.
+3. `ingest-hearings` first runs discovery to enrich those `hearing`
+   rows with CSI/TVW IDs and create `agenda_item` rows, then runs the
+   full pipeline against discovered agenda items.
+
+`make discover-hearings` remains available as a lower-level debugging
+or backfill target, but it is an implementation detail of
+`make ingest-hearings` in the daily path.
 
 If any pass exits non-zero, cron mail will surface it. Each step's
 per-bill isolation means most failures are partial, not blocking.
@@ -314,7 +317,7 @@ per-bill isolation means most failures are partial, not blocking.
 ## Rate limits and politeness
 
 The httpx client (`internal/sources/httpx/client.go`) enforces per-host
-token-bucket rate limits. Default is 5 req/sec across all upstream
+token-bucket rate limits. Default is 10 req/sec across all upstream
 hosts (`wslwebservices.leg.wa.gov`, `app.leg.wa.gov`, `tvw.org`,
 `api.v3.invintus.com`, `data.wa.gov`). Override per CLI invocation
 with `--rate=N`.
@@ -343,7 +346,7 @@ parse layer and tested.
 
 ## Re-running
 
-All three passes are safe to re-run. What changes:
+All daily stages are safe to re-run. What changes:
 
 - `bill`, `legislator`, `bill_sponsor`, `bill_status_change`,
   `hearing`, `agenda_item`, `tvw_event`, `organization` — UPSERT, so
@@ -381,7 +384,7 @@ All three passes are safe to re-run. What changes:
 
 ## Out of scope today
 
-- Parallelism across bills. All three passes are serial. At 5 req/sec
+- Parallelism across bills. The daily stages are serial. At 10 req/sec
   the bottleneck is upstream rate limits, not local CPU; concurrency
   would primarily help if we raise the rate.
 - Per-step selective re-fetching. Today every run re-hits every
