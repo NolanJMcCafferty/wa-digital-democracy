@@ -2625,3 +2625,267 @@ LIMIT $2 OFFSET $3;`
 	}
 	return out, total, rows.Err()
 }
+
+// ---------------------------------------------------------------------------
+// audio cache + diarization
+// ---------------------------------------------------------------------------
+
+type TVWAudioSource struct {
+	TVWEventID string
+	URL        string
+	Kind       string
+}
+
+// BestTVWAudioSource returns the preferred downloadable source for an event:
+// direct audio first, then audio media assets, then video fallback for ffmpeg
+// extraction.
+func (s *Store) BestTVWAudioSource(ctx context.Context, eventID string) (TVWAudioSource, error) {
+	const q = `
+WITH candidates AS (
+  SELECT tvw_event_id, audio_download_url AS url, 'audio_download_url' AS kind, 1 AS priority
+    FROM tvw_event WHERE tvw_event_id = $1 AND NULLIF(audio_download_url, '') IS NOT NULL
+  UNION ALL
+  SELECT tvw_event_id, published_audio_url AS url, 'published_audio_url' AS kind, 2 AS priority
+    FROM tvw_event WHERE tvw_event_id = $1 AND NULLIF(published_audio_url, '') IS NOT NULL
+  UNION ALL
+  SELECT tvw_event_id, file_url AS url, 'media_asset_audio' AS kind, 3 AS priority
+    FROM tvw_media_asset WHERE tvw_event_id = $1 AND asset_type ILIKE 'audio' AND NULLIF(file_url, '') IS NOT NULL
+  UNION ALL
+  SELECT tvw_event_id, video_download_url AS url, 'video_download_url' AS kind, 4 AS priority
+    FROM tvw_event WHERE tvw_event_id = $1 AND NULLIF(video_download_url, '') IS NOT NULL
+  UNION ALL
+  SELECT tvw_event_id, file_url AS url, 'media_asset_video' AS kind, 5 AS priority
+    FROM tvw_media_asset WHERE tvw_event_id = $1 AND asset_type ILIKE 'video' AND NULLIF(file_url, '') IS NOT NULL
+)
+SELECT tvw_event_id, url, kind FROM candidates ORDER BY priority LIMIT 1;`
+	var out TVWAudioSource
+	if err := s.Pool.QueryRow(ctx, q, eventID).Scan(&out.TVWEventID, &out.URL, &out.Kind); err != nil {
+		return TVWAudioSource{}, fmt.Errorf("best tvw audio source: %w", err)
+	}
+	return out, nil
+}
+
+type UpsertTVWAudioAssetParams struct {
+	TVWEventID     string
+	SourceURL      string
+	SourceKind     string
+	OriginalPath   string
+	NormalizedPath string
+	ContentHash    string
+	DurationMS     int
+	SampleRate     int
+	Channels       int
+	Codec          string
+}
+
+func (s *Store) UpsertTVWAudioAsset(ctx context.Context, p UpsertTVWAudioAssetParams) (int64, error) {
+	const q = `
+INSERT INTO tvw_audio_asset (tvw_event_id, source_url, source_kind, original_path,
+                             normalized_path, content_hash, duration_ms,
+                             sample_rate, channels, codec)
+VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,0),NULLIF($8,0),NULLIF($9,0),NULLIF($10,''))
+ON CONFLICT (tvw_event_id, content_hash) DO UPDATE SET
+  source_url = EXCLUDED.source_url,
+  source_kind = EXCLUDED.source_kind,
+  original_path = EXCLUDED.original_path,
+  normalized_path = EXCLUDED.normalized_path,
+  duration_ms = EXCLUDED.duration_ms,
+  sample_rate = EXCLUDED.sample_rate,
+  channels = EXCLUDED.channels,
+  codec = EXCLUDED.codec
+RETURNING id;`
+	var id int64
+	err := s.Pool.QueryRow(ctx, q, p.TVWEventID, p.SourceURL, p.SourceKind,
+		p.OriginalPath, p.NormalizedPath, p.ContentHash, p.DurationMS,
+		p.SampleRate, p.Channels, p.Codec).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("upsert tvw_audio_asset: %w", err)
+	}
+	return id, nil
+}
+
+type LatestTVWAudioAsset struct {
+	ID             int64
+	TVWEventID     string
+	SourceURL      string
+	SourceKind     string
+	OriginalPath   string
+	NormalizedPath string
+	ContentHash    string
+	DurationMS     int
+}
+
+func (s *Store) LatestTVWAudioAsset(ctx context.Context, eventID string) (LatestTVWAudioAsset, error) {
+	const q = `
+SELECT id, tvw_event_id, source_url, source_kind, original_path,
+       normalized_path, content_hash, COALESCE(duration_ms, 0)
+  FROM tvw_audio_asset
+ WHERE tvw_event_id = $1
+ ORDER BY created_at DESC, id DESC
+ LIMIT 1;`
+	var out LatestTVWAudioAsset
+	if err := s.Pool.QueryRow(ctx, q, eventID).Scan(&out.ID, &out.TVWEventID, &out.SourceURL,
+		&out.SourceKind, &out.OriginalPath, &out.NormalizedPath, &out.ContentHash, &out.DurationMS); err != nil {
+		return LatestTVWAudioAsset{}, fmt.Errorf("latest tvw_audio_asset: %w", err)
+	}
+	return out, nil
+}
+
+type CreateDiarizationJobParams struct {
+	TVWEventID   string
+	AudioAssetID int64
+	Provider     string
+	Model        string
+}
+
+func (s *Store) CreateDiarizationJob(ctx context.Context, p CreateDiarizationJobParams) (int64, error) {
+	const q = `
+INSERT INTO diarization_job (tvw_event_id, audio_asset_id, provider, model, status, submitted_at)
+VALUES ($1, $2, $3, NULLIF($4,''), 'running', NOW())
+RETURNING id;`
+	var id int64
+	if err := s.Pool.QueryRow(ctx, q, p.TVWEventID, p.AudioAssetID, p.Provider, p.Model).Scan(&id); err != nil {
+		return 0, fmt.Errorf("create diarization_job: %w", err)
+	}
+	return id, nil
+}
+
+func (s *Store) FailDiarizationJob(ctx context.Context, jobID int64, msg string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE diarization_job SET status = 'failed', finished_at = NOW(), error = $2 WHERE id = $1`, jobID, msg)
+	if err != nil {
+		return fmt.Errorf("fail diarization_job: %w", err)
+	}
+	return nil
+}
+
+type InsertDiarizationResultParams struct {
+	JobID         int64
+	TVWEventID    string
+	Provider      string
+	Model         string
+	RawResultPath string
+	Segments      []DiarizedSegmentParams
+	Entities      []EntityMentionParams
+}
+
+type DiarizedSegmentParams struct {
+	ClusterLabel string
+	StartMS      int
+	EndMS        int
+	Confidence   *float64
+	Text         string
+	Raw          map[string]any
+}
+
+type EntityMentionParams struct {
+	SourceKind     string
+	SourceID       int64
+	Extractor      string
+	Model          string
+	EntityType     string
+	Text           string
+	NormalizedText string
+	StartMS        *int
+	EndMS          *int
+	StartWord      *int
+	EndWord        *int
+	Confidence     *float64
+	Raw            map[string]any
+}
+
+func (s *Store) InsertDiarizationResult(ctx context.Context, p InsertDiarizationResultParams) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM entity_mention WHERE diarization_job_id = $1`, p.JobID); err != nil {
+		return fmt.Errorf("delete entity mentions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM diarized_speech_segment WHERE diarization_job_id = $1`, p.JobID); err != nil {
+		return fmt.Errorf("delete diarized segments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM speaker_cluster WHERE diarization_job_id = $1`, p.JobID); err != nil {
+		return fmt.Errorf("delete speaker clusters: %w", err)
+	}
+
+	type agg struct{ total, count int }
+	aggs := map[string]agg{}
+	for _, seg := range p.Segments {
+		a := aggs[seg.ClusterLabel]
+		a.total += seg.EndMS - seg.StartMS
+		a.count++
+		aggs[seg.ClusterLabel] = a
+	}
+
+	clusterIDs := map[string]int64{}
+	for label, a := range aggs {
+		var id int64
+		if err := tx.QueryRow(ctx, `
+INSERT INTO speaker_cluster (diarization_job_id, tvw_event_id, cluster_label, total_speech_ms, turn_count)
+VALUES ($1,$2,$3,$4,$5)
+RETURNING id;`, p.JobID, p.TVWEventID, label, a.total, a.count).Scan(&id); err != nil {
+			return fmt.Errorf("insert speaker_cluster: %w", err)
+		}
+		clusterIDs[label] = id
+	}
+
+	const segQ = `
+INSERT INTO diarized_speech_segment (diarization_job_id, speaker_cluster_id, tvw_event_id,
+                                     cluster_label, start_ms, end_ms, confidence, text, raw)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9);`
+	for _, seg := range p.Segments {
+		raw, err := marshalJSONDefault(seg.Raw, map[string]any{})
+		if err != nil {
+			return fmt.Errorf("marshal diarized segment raw: %w", err)
+		}
+		if _, err := tx.Exec(ctx, segQ, p.JobID, clusterIDs[seg.ClusterLabel], p.TVWEventID,
+			seg.ClusterLabel, seg.StartMS, seg.EndMS, floatPtrOrNull(seg.Confidence), strOrNull(seg.Text), string(raw)); err != nil {
+			return fmt.Errorf("insert diarized segment: %w", err)
+		}
+	}
+
+	const entQ = `
+INSERT INTO entity_mention (tvw_event_id, diarization_job_id, source_kind, source_id,
+                            extractor, model, entity_type, text, normalized_text,
+                            start_ms, end_ms, start_word, end_word, confidence, raw)
+VALUES ($1,$2,$3,NULLIF($4,0),$5,NULLIF($6,''),$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,$15);`
+	for _, ent := range p.Entities {
+		raw, err := marshalJSONDefault(ent.Raw, map[string]any{})
+		if err != nil {
+			return fmt.Errorf("marshal entity mention raw: %w", err)
+		}
+		sourceKind := defaultStr(ent.SourceKind, "diarization_job")
+		extractor := defaultStr(ent.Extractor, p.Provider)
+		model := ent.Model
+		if model == "" {
+			model = p.Model
+		}
+		if _, err := tx.Exec(ctx, entQ, p.TVWEventID, p.JobID, sourceKind, ent.SourceID,
+			extractor, model, ent.EntityType, ent.Text, ent.NormalizedText,
+			intPtrOrNull(ent.StartMS), intPtrOrNull(ent.EndMS), intPtrOrNull(ent.StartWord),
+			intPtrOrNull(ent.EndWord), floatPtrOrNull(ent.Confidence), string(raw)); err != nil {
+			return fmt.Errorf("insert entity mention: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE diarization_job SET status = 'succeeded', finished_at = NOW(), raw_result_path = NULLIF($2,'') WHERE id = $1`, p.JobID, p.RawResultPath); err != nil {
+		return fmt.Errorf("update diarization_job: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+func floatPtrOrNull(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func intPtrOrNull(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}

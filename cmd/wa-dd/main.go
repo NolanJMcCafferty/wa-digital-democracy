@@ -15,10 +15,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -28,6 +33,7 @@ import (
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/candidate"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/config"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/diarization"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/entitymatch"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
@@ -77,6 +83,8 @@ SUBCOMMANDS:
                      Pull Seattle operating budget rows into Postgres
   ingest-fiscal-vendor-payments
                      Pull fiscal.wa.gov Open Checkbook vendor payments into Postgres
+  audio-cache        Download and normalize TVW/Invintus audio for diarization
+  diarize-event      Run provider diarization for a cached TVW event audio asset
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -127,6 +135,10 @@ func main() {
 		os.Exit(runIngestSeattleOperatingBudget(args))
 	case "ingest-fiscal-vendor-payments":
 		os.Exit(runIngestFiscalVendorPayments(args))
+	case "audio-cache":
+		os.Exit(runAudioCache(args))
+	case "diarize-event":
+		os.Exit(runDiarizeEvent(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -1845,4 +1857,331 @@ func runIngestLegislators(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func runAudioCache(args []string) int {
+	fs := flag.NewFlagSet("audio-cache", flag.ContinueOnError)
+	var (
+		eventID    = fs.String("event-id", "", "TVW/Invintus event ID to cache audio for")
+		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		outDir     = fs.String("out-dir", "data/audio", "audio cache output root")
+		rateLimit  = fs.Float64("rate", 4.0, "max requests/sec for media download host")
+		keepSource = fs.Bool("keep-source", true, "keep downloaded original media next to normalized WAV")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*eventID) == "" {
+		fmt.Fprintln(os.Stderr, "audio-cache: --event-id is required")
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	src, err := store.BestTVWAudioSource(ctx, *eventID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: find audio source: %v\n", err)
+		return 1
+	}
+	cacheDir := filepath.Join(*outDir, "tvw", safePathPart(*eventID))
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: mkdir: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(os.Stderr, "==> downloading %s (%s)\n", src.URL, src.Kind)
+	origPath, hash, err := downloadMedia(ctx, src.URL, cacheDir, *rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: download: %v\n", err)
+		return 1
+	}
+	wavPath := filepath.Join(cacheDir, "mono_16k.wav")
+	if err := normalizeAudio(ctx, origPath, wavPath); err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: ffmpeg normalize: %v\n", err)
+		return 1
+	}
+	meta := probeAudio(ctx, wavPath)
+	id, err := store.UpsertTVWAudioAsset(ctx, db.UpsertTVWAudioAssetParams{
+		TVWEventID:     *eventID,
+		SourceURL:      src.URL,
+		SourceKind:     src.Kind,
+		OriginalPath:   origPath,
+		NormalizedPath: wavPath,
+		ContentHash:    hash,
+		DurationMS:     meta.DurationMS,
+		SampleRate:     meta.SampleRate,
+		Channels:       meta.Channels,
+		Codec:          meta.Codec,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: store metadata: %v\n", err)
+		return 1
+	}
+	if !*keepSource {
+		_ = os.Remove(origPath)
+	}
+	fmt.Fprintf(os.Stderr, "cached audio_asset_id=%d\noriginal=%s\nnormalized=%s\nsha256=%s\n", id, origPath, wavPath, hash)
+	return 0
+}
+
+func runDiarizeEvent(args []string) int {
+	fs := flag.NewFlagSet("diarize-event", flag.ContinueOnError)
+	var (
+		eventID  = fs.String("event-id", "", "TVW/Invintus event ID to diarize")
+		dsn      = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		provider = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
+		model    = fs.String("model", "nova-3", "provider model")
+		outDir   = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
+		apiKey   = fs.String("api-key", env("DEEPGRAM_API_KEY", ""), "provider API key (defaults to DEEPGRAM_API_KEY)")
+		useURL   = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*eventID) == "" {
+		fmt.Fprintln(os.Stderr, "diarize-event: --event-id is required")
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-event: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	audio, err := store.LatestTVWAudioAsset(ctx, *eventID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-event: latest audio asset: %v\n", err)
+		fmt.Fprintln(os.Stderr, "hint: run `wa-dd audio-cache --event-id <id>` first")
+		return 1
+	}
+
+	var p diarization.Provider
+	switch strings.ToLower(*provider) {
+	case "deepgram":
+		dg, err := diarization.NewDeepgramProvider(diarization.DeepgramConfig{APIKey: *apiKey, Model: *model})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "diarize-event: deepgram: %v\n", err)
+			return 1
+		}
+		p = dg
+	default:
+		fmt.Fprintf(os.Stderr, "diarize-event: unsupported provider %q\n", *provider)
+		return 2
+	}
+
+	jobID, err := store.CreateDiarizationJob(ctx, db.CreateDiarizationJobParams{TVWEventID: *eventID, AudioAssetID: audio.ID, Provider: *provider, Model: *model})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-event: create job: %v\n", err)
+		return 1
+	}
+
+	in := diarization.AudioInput{EventID: *eventID}
+	if *useURL && audio.SourceURL != "" {
+		in.URL = audio.SourceURL
+	} else {
+		b, err := os.ReadFile(audio.NormalizedPath)
+		if err != nil {
+			_ = store.FailDiarizationJob(ctx, jobID, err.Error())
+			fmt.Fprintf(os.Stderr, "diarize-event: read normalized audio: %v\n", err)
+			return 1
+		}
+		in.Bytes = b
+		in.ContentType = "audio/wav"
+	}
+
+	fmt.Fprintf(os.Stderr, "==> diarizing event %s with %s (%s), job_id=%d\n", *eventID, *provider, *model, jobID)
+	res, err := p.Diarize(ctx, in)
+	if err != nil {
+		_ = store.FailDiarizationJob(ctx, jobID, err.Error())
+		fmt.Fprintf(os.Stderr, "diarize-event: provider: %v\n", err)
+		return 1
+	}
+	rawPath := ""
+	if len(res.Raw) > 0 {
+		rawPath = filepath.Join(*outDir, safePathPart(*eventID), fmt.Sprintf("%s_job_%d.json", safePathPart(*provider), jobID))
+		if err := os.MkdirAll(filepath.Dir(rawPath), 0o755); err != nil {
+			_ = store.FailDiarizationJob(ctx, jobID, err.Error())
+			fmt.Fprintf(os.Stderr, "diarize-event: mkdir raw output: %v\n", err)
+			return 1
+		}
+		if err := os.WriteFile(rawPath, res.Raw, 0o644); err != nil {
+			_ = store.FailDiarizationJob(ctx, jobID, err.Error())
+			fmt.Fprintf(os.Stderr, "diarize-event: write raw output: %v\n", err)
+			return 1
+		}
+	}
+	segments := make([]db.DiarizedSegmentParams, 0, len(res.Segments))
+	for _, seg := range res.Segments {
+		segments = append(segments, db.DiarizedSegmentParams{
+			ClusterLabel: seg.SpeakerCluster,
+			StartMS:      seg.StartMS,
+			EndMS:        seg.EndMS,
+			Confidence:   seg.Confidence,
+			Text:         seg.Text,
+			Raw: map[string]any{
+				"provider": res.Provider,
+				"model":    res.Model,
+			},
+		})
+	}
+	entities := make([]db.EntityMentionParams, 0, len(res.Entities))
+	for _, ent := range res.Entities {
+		entities = append(entities, db.EntityMentionParams{
+			SourceKind:     "diarization_job",
+			Extractor:      res.Provider,
+			Model:          res.Model,
+			EntityType:     ent.Type,
+			Text:           ent.Text,
+			NormalizedText: ent.NormalizedText,
+			StartMS:        ent.StartMS,
+			EndMS:          ent.EndMS,
+			StartWord:      ent.StartWord,
+			EndWord:        ent.EndWord,
+			Confidence:     ent.Confidence,
+			Raw:            ent.Raw,
+		})
+	}
+	if err := store.InsertDiarizationResult(ctx, db.InsertDiarizationResultParams{JobID: jobID, TVWEventID: *eventID, Provider: res.Provider, Model: res.Model, RawResultPath: rawPath, Segments: segments, Entities: entities}); err != nil {
+		_ = store.FailDiarizationJob(ctx, jobID, err.Error())
+		fmt.Fprintf(os.Stderr, "diarize-event: store result: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "diarize-event: stored %d segments and %d entity mentions for job_id=%d raw=%s\n", len(segments), len(entities), jobID, rawPath)
+	return 0
+}
+
+type audioProbe struct {
+	DurationMS int
+	SampleRate int
+	Channels   int
+	Codec      string
+}
+
+func downloadMedia(ctx context.Context, mediaURL, dir string, rateLimit float64) (path, sha string, err error) {
+	// Keep this streaming: TVW direct audio is usually manageable, but video
+	// fallback assets can be multi-GB. Do not route through httpx.Do, which
+	// intentionally buffers source API responses for provenance capture.
+	_ = rateLimit // reserved for a future shared streaming downloader limiter
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	client := &http.Client{Timeout: time.Hour}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	ext := mediaExt(mediaURL, resp.Header.Get("Content-Type"))
+	tmp, err := os.CreateTemp(dir, "download_*")
+	if err != nil {
+		return "", "", err
+	}
+	tmpPath := tmp.Name()
+	h := sha256.New()
+	_, copyErr := io.Copy(tmp, io.TeeReader(resp.Body, h))
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		return "", "", copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return "", "", closeErr
+	}
+	sha = hex.EncodeToString(h.Sum(nil))
+	path = filepath.Join(dir, "original_"+sha[:12]+ext)
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", "", err
+	}
+	return path, sha, nil
+}
+
+func normalizeAudio(ctx context.Context, inPath, outPath string) error {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return fmt.Errorf("ffmpeg not found on PATH: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", inPath, "-ac", "1", "-ar", "16000", "-vn", outPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func probeAudio(ctx context.Context, path string) audioProbe {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		return audioProbe{}
+	}
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,sample_rate,channels,duration", "-of", "json", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return audioProbe{}
+	}
+	var parsed struct {
+		Streams []struct {
+			CodecName  string `json:"codec_name"`
+			SampleRate string `json:"sample_rate"`
+			Channels   int    `json:"channels"`
+			Duration   string `json:"duration"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil || len(parsed.Streams) == 0 {
+		return audioProbe{}
+	}
+	s := parsed.Streams[0]
+	sr, _ := strconv.Atoi(s.SampleRate)
+	durSec, _ := strconv.ParseFloat(s.Duration, 64)
+	return audioProbe{DurationMS: int(durSec*1000 + 0.5), SampleRate: sr, Channels: s.Channels, Codec: s.CodecName}
+}
+
+func mediaExt(rawURL, contentType string) string {
+	lowCT := strings.ToLower(contentType)
+	if strings.Contains(lowCT, "mpeg") || strings.Contains(lowCT, "mp3") {
+		return ".mp3"
+	}
+	if strings.Contains(lowCT, "mp4") {
+		return ".mp4"
+	}
+	base := strings.ToLower(rawURL)
+	for _, ext := range []string{".mp3", ".mp4", ".m4a", ".wav", ".aac"} {
+		if strings.Contains(base, ext) {
+			return ext
+		}
+	}
+	return ".bin"
+}
+
+func safePathPart(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "unknown"
+	}
+	return b.String()
 }

@@ -1,0 +1,99 @@
+name: Diarize TVW Event
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_id:
+        description: "TVW/Invintus event ID to diarize"
+        required: true
+        type: string
+      provider:
+        description: "Diarization provider"
+        required: true
+        default: "deepgram"
+        type: choice
+        options:
+          - deepgram
+      model:
+        description: "Provider model"
+        required: true
+        default: "nova-3"
+        type: string
+      use_source_url:
+        description: "Send the original TVW/Invintus audio URL to the provider instead of uploading cached WAV"
+        required: true
+        default: true
+        type: boolean
+      run_audio_cache:
+        description: "Run audio-cache before diarize-event"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  diarize-event:
+    name: Diarize TVW event
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: diarize-event-${{ github.event.inputs.event_id }}
+      cancel-in-progress: false
+    env:
+      WADD_DSN: ${{ secrets.WADD_DSN }}
+      DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+      EVENT_ID: ${{ github.event.inputs.event_id }}
+      PROVIDER: ${{ github.event.inputs.provider }}
+      MODEL: ${{ github.event.inputs.model }}
+      USE_SOURCE_URL: ${{ github.event.inputs.use_source_url }}
+      RUN_AUDIO_CACHE: ${{ github.event.inputs.run_audio_cache }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install ffmpeg
+        if: ${{ github.event.inputs.run_audio_cache == 'true' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Validate required secrets
+        run: |
+          test -n "$WADD_DSN" || { echo "Missing WADD_DSN repository secret"; exit 1; }
+          test -n "$DEEPGRAM_API_KEY" || { echo "Missing DEEPGRAM_API_KEY repository secret"; exit 1; }
+
+      - name: Build CLI
+        run: make build
+
+      - name: Optionally cache TVW audio
+        if: ${{ github.event.inputs.run_audio_cache == 'true' }}
+        run: |
+          ./bin/wa-dd audio-cache \
+            --event-id "$EVENT_ID" \
+            --dsn "$WADD_DSN" \
+            --out-dir data/audio
+
+      - name: Run diarization
+        run: |
+          ./bin/wa-dd diarize-event \
+            --event-id "$EVENT_ID" \
+            --dsn "$WADD_DSN" \
+            --provider "$PROVIDER" \
+            --model "$MODEL" \
+            --use-source-url="$USE_SOURCE_URL"
+
+      - name: Upload raw diarization output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diarization-${{ github.event.inputs.event_id }}
+          path: |
+            data/processed/diarization/${{ github.event.inputs.event_id }}/**/*
+            data/audio/tvw/${{ github.event.inputs.event_id }}/**/*
+          if-no-files-found: ignore
+          retention-days: 14
