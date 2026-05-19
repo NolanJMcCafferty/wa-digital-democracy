@@ -92,24 +92,43 @@ func (p *DeepgramProvider) Diarize(ctx context.Context, in AudioInput) (*Result,
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
+	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("deepgram body buffer: %w", err)
 	}
-	req.Header.Set("Authorization", "Token "+p.cfg.APIKey)
-	req.Header.Set("Content-Type", contentType)
 
-	resp, err := p.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("deepgram request: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("deepgram read: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("deepgram status %d: %s", resp.StatusCode, trimForError(raw))
+	const maxAttempts = 6
+	var raw []byte
+	for attempt := 1; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Token "+p.cfg.APIKey)
+		req.Header.Set("Content-Type", contentType)
+
+		resp, err := p.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("deepgram request: %w", err)
+		}
+		raw, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("deepgram read: %w", err)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			break
+		}
+		retryable := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		if !retryable || attempt >= maxAttempts {
+			return nil, fmt.Errorf("deepgram status %d: %s", resp.StatusCode, trimForError(raw))
+		}
+		wait := backoffDelay(attempt, resp.Header.Get("Retry-After"))
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
 	}
 
 	parsed, err := parseDeepgram(raw)
@@ -121,6 +140,23 @@ func (p *DeepgramProvider) Diarize(ctx context.Context, in AudioInput) (*Result,
 	parsed.EventID = in.EventID
 	parsed.Raw = raw
 	return parsed, nil
+}
+
+// backoffDelay returns the wait time before retrying after a 429/5xx.
+// Honors a numeric Retry-After header when present, otherwise exponential
+// backoff with jitter capped at 30s.
+func backoffDelay(attempt int, retryAfter string) time.Duration {
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	base := time.Duration(1<<attempt) * time.Second
+	if base > 30*time.Second {
+		base = 30 * time.Second
+	}
+	jitter := time.Duration(rand.Int63n(int64(base / 2)))
+	return base/2 + jitter
 }
 
 func trimForError(b []byte) string {

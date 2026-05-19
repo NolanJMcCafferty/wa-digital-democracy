@@ -2252,6 +2252,7 @@ func runDiarizePending(args []string) int {
 		limit       = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
 		dryRun      = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
 		concurrency = fs.Int("concurrency", 10, "max diarization jobs to run in parallel")
+		maxAttempts = fs.Int("max-attempts", 5, "max attempts per event before giving up")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -2305,6 +2306,11 @@ func runDiarizePending(args []string) int {
 	var failed atomic.Int64
 	var done atomic.Int64
 
+	attempts := *maxAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
@@ -2315,9 +2321,37 @@ func runDiarizePending(args []string) int {
 				}
 				n := done.Add(1)
 				fmt.Fprintf(os.Stderr, "==> [%d/%d] %s\n", n, len(pending), j.id)
-				if err := diarizeOneEvent(ctx, store, p, j.id, *provider, *model, *outDir, *useURL); err != nil {
+				var lastErr error
+				for attempt := 1; attempt <= attempts; attempt++ {
+					if err := ctx.Err(); err != nil {
+						lastErr = err
+						break
+					}
+					err := diarizeOneEvent(ctx, store, p, j.id, *provider, *model, *outDir, *useURL)
+					if err == nil {
+						lastErr = nil
+						break
+					}
+					lastErr = err
+					if attempt >= attempts {
+						break
+					}
+					wait := time.Duration(1<<attempt) * time.Second
+					if wait > 60*time.Second {
+						wait = 60 * time.Second
+					}
+					fmt.Fprintf(os.Stderr, "diarize-pending: event %s attempt %d/%d failed: %v — retrying in %s\n", j.id, attempt, attempts, err, wait)
+					select {
+					case <-ctx.Done():
+						lastErr = ctx.Err()
+					case <-time.After(wait):
+						continue
+					}
+					break
+				}
+				if lastErr != nil {
 					failed.Add(1)
-					fmt.Fprintf(os.Stderr, "diarize-pending: event %s: %v\n", j.id, err)
+					fmt.Fprintf(os.Stderr, "diarize-pending: event %s: gave up after %d attempts: %v\n", j.id, attempts, lastErr)
 				}
 			}
 		}()
