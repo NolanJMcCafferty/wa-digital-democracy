@@ -1923,6 +1923,62 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 	return nil
 }
 
+// UpsertSeattleOperatingBudgetParams is the normalized row shape for
+// seattle_operating_budget.
+type UpsertSeattleOperatingBudgetParams struct {
+	SourceDatasetID string
+	SourceRowID     string
+	FiscalYear      int
+	Service         string
+	Department      string
+	Program         string
+	Fund            string
+	FundType        string
+	ExpenseType     string
+	Description     string
+	ApprovedAmount  string
+	RawFields       map[string]any
+	SourceRecordID  int64
+}
+
+// UpsertSeattleOperatingBudget inserts or updates one Seattle operating budget row.
+func (s *Store) UpsertSeattleOperatingBudget(ctx context.Context, p UpsertSeattleOperatingBudgetParams) error {
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO seattle_operating_budget (
+  source_dataset_id, source_row_id, fiscal_year, service, department, program,
+  fund, fund_type, expense_type, description, approved_amount, raw_fields,
+  source_record_id
+) VALUES (
+  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::numeric,$12::jsonb,$13
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  fiscal_year = EXCLUDED.fiscal_year,
+  service = EXCLUDED.service,
+  department = EXCLUDED.department,
+  program = EXCLUDED.program,
+  fund = EXCLUDED.fund,
+  fund_type = EXCLUDED.fund_type,
+  expense_type = EXCLUDED.expense_type,
+  description = EXCLUDED.description,
+  approved_amount = EXCLUDED.approved_amount,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, p.FiscalYear, strOrNull(p.Service), strOrNull(p.Department), strOrNull(p.Program),
+		strOrNull(p.Fund), strOrNull(p.FundType), strOrNull(p.ExpenseType), strOrNull(p.Description), p.ApprovedAmount,
+		string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert seattle_operating_budget: %w", err)
+	}
+	return nil
+}
+
 // UpsertFiscalWAVendorPaymentParams is the normalized row shape for
 // fiscalwa_vendor_payment.
 type UpsertFiscalWAVendorPaymentParams struct {
