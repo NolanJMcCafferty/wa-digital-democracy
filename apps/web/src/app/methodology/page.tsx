@@ -8,132 +8,164 @@ export default function MethodologyPage() {
           Methodology
         </p>
         <h1 className="text-4xl font-bold tracking-tight text-stone-900">
-          How this works
+          How WA Digital Democracy works
         </h1>
         <p className="text-lg text-stone-700">
-          WA Digital Democracy is source-linked by design. Every public fact
-          on the site traces back to an official feed, public record,
-          document, video, transcript, or dataset.
+          WA Digital Democracy helps people follow Washington public decisions
+          by connecting bills, hearings, testimony, video, transcripts,
+          organizations, and public money records. The goal is simple: make it
+          easier to see what happened, who participated, and where the original
+          evidence lives.
         </p>
       </header>
 
       <section className="space-y-4">
         <h2 className="text-2xl font-semibold text-stone-900">
-          Architectural ground rules
-        </h2>
-        <ol className="list-decimal space-y-3 pl-6 text-stone-700">
-          <li>
-            <strong>Postgres owns truth.</strong> Search, AI summaries, and
-            derived analytics are rebuildable from the underlying
-            normalized tables.
-          </li>
-          <li>
-            <strong>Raw source records are immutable.</strong> Every API
-            response we fetch is stored verbatim under{" "}
-            <code>data/raw/&lt;system&gt;/</code> with a content hash.
-            Re-fetching identical bytes deduplicates.
-          </li>
-          <li>
-            <strong>Every public fact needs provenance.</strong> Each row
-            in a normalized table points at an immutable{" "}
-            <code>source_record</code> with the canonical URL, fetched-at
-            timestamp, and content hash. The "Sources & confidence" panel
-            on every bill page renders these directly.
-          </li>
-          <li>
-            <strong>Confidence is a first-class field.</strong> Speaker
-            attribution and entity matches carry confidence labels rather
-            than being presented as certainty.
-          </li>
-          <li>
-            <strong>Manual review is a feature, not a failure.</strong>{" "}
-            High-stakes joins (organization → PDC employer ID, speaker →
-            legislator) flow through a human-reviewed override file
-            before they're treated as confirmed.
-          </li>
-          <li>
-            <strong>Start static, grow dynamic.</strong> The MVP renders
-            from precomputed bundles; the Go API serves Postgres directly.
-          </li>
-        </ol>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-2xl font-semibold text-stone-900">
-          The nightly pipeline
+          We start with official public records
         </h2>
         <p className="text-stone-700">
-          Three cooperating ingestions, chained by{" "}
-          <code>make daily</code>. All three are idempotent and safe to
-          re-run.
+          The site is built from public government sources: legislative bill
+          records, committee hearing schedules, public testimony sign-ins,
+          TVW hearing video and captions, campaign-finance and lobbying data,
+          contracts, budgets, and other public datasets where available.
         </p>
-        <ol className="list-decimal space-y-4 pl-6 text-stone-700">
-          <li>
-            <strong>ingest-session</strong> — pulls every bill in the
-            current biennium from the Washington Legislative Web Services
-            (LWS) and stores metadata, sponsors, status timeline, and
-            hearing references. ~5,000 bills per session at 5 req/sec,
-            ~70 minutes wall-clock.
-          </li>
-          <li>
-            <strong>discover-hearings</strong> — for every LWS-reported
-            hearing whose CSI agenda ID and TVW event ID are still blank,
-            walks four lookups: CSI committee → CSI meeting (±15-minute
-            match) → CSI agenda item (matched by leading bill number) →
-            TVW event (committee-name sanity check, ±2-hour window).
-            About three quarters of LWS-reported hearings match cleanly;
-            the rest are LWS-optimistic non-hearings that get correctly
-            rejected.
-          </li>
-          <li>
-            <strong>ingest-hearings</strong> — for every agenda item
-            discovery populated whose hearing has a TVW event, runs the
-            full pipeline: CSI testifier sign-ins, TVW WebVTT captions,
-            transcript segmentation by bill-mention regex, deterministic
-            speaker attribution, and PDC lobbying / campaign-finance
-            context for reviewed organization matches.
-          </li>
-        </ol>
+        <p className="text-stone-700">
+          Wherever possible, pages link back to the original record — an
+          official bill page, hearing source, TVW video, transcript/caption
+          file, or public dataset row. You should be able to check important
+          claims against the source rather than taking our word for it.
+        </p>
       </section>
 
       <section className="space-y-4">
         <h2 className="text-2xl font-semibold text-stone-900">
-          What the source feeds are
+          We connect records that usually live apart
         </h2>
         <p className="text-stone-700">
-          The{" "}
+          Washington publishes a lot of civic data, but it is fragmented. A
+          bill, a hearing video, a testimony sign-in sheet, a lobbying record,
+          and a contract record may all live in different systems. WA Digital
+          Democracy brings those pieces together so a user can move from a bill
+          to the people and organizations involved, the testimony around it,
+          and related public-record context.
+        </p>
+        <p className="text-stone-700">
+          These connections are not always obvious. Names may be abbreviated,
+          misspelled, or entered differently across systems. When a match is
+          uncertain, we label it cautiously or hold it for review instead of
+          presenting it as fact.
+        </p>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-semibold text-stone-900">
+          We use transcripts carefully
+        </h2>
+        <p className="text-stone-700">
+          Hearing transcripts come from TVW caption files and, where useful,
+          speech-processing tools that help separate who spoke when. Captions
+          and automated transcripts can contain mistakes, so transcript text is
+          treated as evidence to inspect — not as a perfect official quote.
+        </p>
+        <p className="text-stone-700">
+          Speaker names are especially sensitive. Automated tools may identify
+          anonymous speaker clusters, but they do not know who those speakers
+          are. Named speaker labels should come from reviewable evidence, such
+          as a person introducing themselves, official rosters, public testimony
+          records, or human review.
+        </p>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-semibold text-stone-900">
+          We show confidence and limits
+        </h2>
+        <ul className="list-disc space-y-2 pl-6 text-stone-700">
+          <li>
+            <strong>Confirmed facts</strong> come directly from official public
+            records or reviewed matches.
+          </li>
+          <li>
+            <strong>Likely matches</strong> are useful leads, but they should be
+            treated with caution until reviewed.
+          </li>
+          <li>
+            <strong>Unknown speakers or organizations</strong> stay unknown
+            rather than being guessed into certainty.
+          </li>
+          <li>
+            <strong>Money, lobbying, and contract records</strong> are shown as
+            context. They do not prove why someone testified or why a policy
+            moved.
+          </li>
+        </ul>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-semibold text-stone-900">
+          What each page is trying to answer
+        </h2>
+        <ul className="list-disc space-y-2 pl-6 text-stone-700">
+          <li>
+            <strong>Bill pages</strong> explain what the proposal does, where it
+            is in the process, who sponsored it, and what hearings/testimony are
+            connected to it.
+          </li>
+          <li>
+            <strong>Hearing pages</strong> bring together the agenda, testimony
+            positions, video, and transcript excerpts for a public meeting.
+          </li>
+          <li>
+            <strong>Organization pages</strong> show where an organization
+            appears in testimony and, when confidently matched, related public
+            lobbying, campaign-finance, contract, or spending context.
+          </li>
+          <li>
+            <strong>Issue pages</strong> collect related bills, hearings,
+            testimony, organizations, and source coverage around a topic.
+          </li>
+        </ul>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-semibold text-stone-900">
+          What this site is not
+        </h2>
+        <ul className="list-disc space-y-2 pl-6 text-stone-700">
+          <li>
+            <strong>Not the official record.</strong> The official source remains
+            the legislature, TVW, the Public Disclosure Commission, and other
+            public agencies. This site points you back to them.
+          </li>
+          <li>
+            <strong>Not a claim of causation.</strong> Showing testimony,
+            lobbying, donations, contracts, or spending side by side does not
+            prove one caused another.
+          </li>
+          <li>
+            <strong>Not complete.</strong> Coverage depends on what public
+            sources expose and what has been processed so far.
+          </li>
+          <li>
+            <strong>Not a replacement for human judgment.</strong> Automated
+            matching and transcription help organize records, but important
+            names, quotes, and entity links should be checked against sources.
+          </li>
+        </ul>
+      </section>
+
+      <section className="space-y-4 rounded-lg border border-stone-300 bg-white p-5">
+        <h2 className="text-xl font-semibold text-stone-900">
+          Want to inspect the sources?
+        </h2>
+        <p className="text-stone-700">
+          Visit the{" "}
           <Link href="/sources" className="text-blue-700 underline hover:text-blue-900">
             Sources page
           </Link>{" "}
-          lists every official feed with live recorded-call counts and
-          the endpoints we actually call. The active families today are
-          the Washington Legislative Web Services, the Committee Sign In
-          public testimony record, TVW (the public-affairs network) and
-          its Invintus video platform, and the Washington Public
-          Disclosure Commission via data.wa.gov.
+          for the public source families currently used by the site and the
+          limitations of each.
         </p>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-2xl font-semibold text-stone-900">What this is not</h2>
-        <ul className="list-disc space-y-2 pl-6 text-stone-700">
-          <li>
-            <strong>Not a substitute for the official record.</strong>{" "}
-            Every claim links back to its source so you can verify and,
-            where appropriate, cite the original.
-          </li>
-          <li>
-            <strong>Not editorial.</strong> The structured graph here
-            doesn&apos;t carry analysis or opinion. Money and lobbying
-            records appear as <em>context</em>, not proof of causation.
-          </li>
-          <li>
-            <strong>Not complete.</strong> Coverage is bounded by what
-            ingestion has reached and what the upstream sources expose.
-            Speaker attribution is partial; written testimony access is
-            still being negotiated.
-          </li>
-        </ul>
       </section>
     </article>
   );
