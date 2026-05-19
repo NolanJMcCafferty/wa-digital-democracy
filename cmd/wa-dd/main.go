@@ -28,6 +28,7 @@ import (
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/candidate"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/config"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/entitymatch"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
@@ -65,6 +66,8 @@ SUBCOMMANDS:
                      Pull DataWA IT contracts report rows into Postgres
   ingest-webs-vendors
                      Pull DataWA WEBS vendor rows into Postgres
+  generate-vendor-entity-matches
+                     Generate reviewable vendor/customer organization match candidates
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -107,6 +110,8 @@ func main() {
 		os.Exit(runIngestITContracts(args))
 	case "ingest-webs-vendors":
 		os.Exit(runIngestWEBSVendors(args))
+	case "generate-vendor-entity-matches":
+		os.Exit(runGenerateVendorEntityMatches(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -1054,31 +1059,32 @@ func runIngestContracts(args []string) int {
 			contract.SourceRowID = datawa.StableRowID(row)
 		}
 		if err := store.UpsertDataWAContract(ctx, db.UpsertDataWAContractParams{
-			SourceDatasetID:       contract.SourceDatasetID,
-			SourceRowID:           contract.SourceRowID,
-			FiscalYear:            contract.FiscalYear,
-			AgencyName:            contract.AgencyName,
-			AgencyNumber:          contract.AgencyNumber,
-			ContractNumber:        contract.ContractNumber,
-			AmendmentNumber:       contract.AmendmentNumber,
-			ContractorName:        contract.ContractorName,
-			StatewideVendorNumber: contract.StatewideVendorNum,
-			Description:           contract.Description,
-			StartDate:             contract.StartDate,
-			EndDate:               contract.EndDate,
-			PeriodStart:           contract.PeriodStart,
-			PeriodEnd:             contract.PeriodEnd,
-			FederalAmount:         normalizeMoney(contract.FederalAmount),
-			StateAmount:           normalizeMoney(contract.StateAmount),
-			OtherAmount:           normalizeMoney(contract.OtherAmount),
-			TotalAmount:           normalizeMoney(contract.TotalAmount),
-			ProcurementType:       contract.ProcurementType,
-			MinorityWomanOwned:    contract.MinorityWomanOwned,
-			SmallBusiness:         contract.SmallBusiness,
-			VeteranOwned:          contract.VeteranOwned,
-			Warnings:              contract.NormalizationWarning,
-			RawFields:             row,
-			SourceRecordID:        fetch.SourceRecordID,
+			SourceDatasetID:          contract.SourceDatasetID,
+			SourceRowID:              contract.SourceRowID,
+			FiscalYear:               contract.FiscalYear,
+			AgencyName:               contract.AgencyName,
+			AgencyNumber:             contract.AgencyNumber,
+			ContractNumber:           contract.ContractNumber,
+			AmendmentNumber:          contract.AmendmentNumber,
+			ContractorName:           contract.ContractorName,
+			NormalizedContractorName: entitymatch.NormalizedName(contract.ContractorName),
+			StatewideVendorNumber:    contract.StatewideVendorNum,
+			Description:              contract.Description,
+			StartDate:                contract.StartDate,
+			EndDate:                  contract.EndDate,
+			PeriodStart:              contract.PeriodStart,
+			PeriodEnd:                contract.PeriodEnd,
+			FederalAmount:            normalizeMoney(contract.FederalAmount),
+			StateAmount:              normalizeMoney(contract.StateAmount),
+			OtherAmount:              normalizeMoney(contract.OtherAmount),
+			TotalAmount:              normalizeMoney(contract.TotalAmount),
+			ProcurementType:          contract.ProcurementType,
+			MinorityWomanOwned:       contract.MinorityWomanOwned,
+			SmallBusiness:            contract.SmallBusiness,
+			VeteranOwned:             contract.VeteranOwned,
+			Warnings:                 contract.NormalizationWarning,
+			RawFields:                row,
+			SourceRecordID:           fetch.SourceRecordID,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-contracts: upsert row %s: %v\n", contract.SourceRowID, err)
 			return 1
@@ -1154,26 +1160,28 @@ func runIngestMasterContractSales(args []string) int {
 			sale.SourceRowID = datawa.StableRowID(row)
 		}
 		if err := store.UpsertDataWAMasterContractSale(ctx, db.UpsertDataWAMasterContractSaleParams{
-			SourceDatasetID:    sale.SourceDatasetID,
-			SourceRowID:        sale.SourceRowID,
-			CustomerType:       sale.CustomerType,
-			CustomerName:       sale.CustomerName,
-			ContractNumber:     sale.ContractNumber,
-			ContractTitle:      sale.ContractTitle,
-			VendorName:         sale.VendorName,
-			ReportYear:         sale.ReportYear,
-			Q1SalesReported:    normalizeMoney(sale.Q1SalesReported),
-			Q2SalesReported:    normalizeMoney(sale.Q2SalesReported),
-			Q3SalesReported:    normalizeMoney(sale.Q3SalesReported),
-			Q4SalesReported:    normalizeMoney(sale.Q4SalesReported),
-			TotalSalesReported: normalizeMoney(sale.TotalSalesReported),
-			OMWBE:              sale.OMWBE,
-			VeteranOwned:       sale.VeteranOwned,
-			SmallBusiness:      sale.SmallBusiness,
-			DiverseOptions:     sale.DiverseOptions,
-			Warnings:           sale.NormalizationWarning,
-			RawFields:          row,
-			SourceRecordID:     fetch.SourceRecordID,
+			SourceDatasetID:        sale.SourceDatasetID,
+			SourceRowID:            sale.SourceRowID,
+			CustomerType:           sale.CustomerType,
+			CustomerName:           sale.CustomerName,
+			NormalizedCustomerName: entitymatch.NormalizedName(sale.CustomerName),
+			ContractNumber:         sale.ContractNumber,
+			ContractTitle:          sale.ContractTitle,
+			VendorName:             sale.VendorName,
+			NormalizedVendorName:   entitymatch.NormalizedName(sale.VendorName),
+			ReportYear:             sale.ReportYear,
+			Q1SalesReported:        normalizeMoney(sale.Q1SalesReported),
+			Q2SalesReported:        normalizeMoney(sale.Q2SalesReported),
+			Q3SalesReported:        normalizeMoney(sale.Q3SalesReported),
+			Q4SalesReported:        normalizeMoney(sale.Q4SalesReported),
+			TotalSalesReported:     normalizeMoney(sale.TotalSalesReported),
+			OMWBE:                  sale.OMWBE,
+			VeteranOwned:           sale.VeteranOwned,
+			SmallBusiness:          sale.SmallBusiness,
+			DiverseOptions:         sale.DiverseOptions,
+			Warnings:               sale.NormalizationWarning,
+			RawFields:              row,
+			SourceRecordID:         fetch.SourceRecordID,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-master-contract-sales: upsert row %s: %v\n", sale.SourceRowID, err)
 			return 1
@@ -1259,7 +1267,9 @@ func runIngestITContracts(args []string) int {
 			AgencyName:                contract.AgencyName,
 			ContractNumber:            contract.ContractNumber,
 			ContractorName:            contract.ContractorName,
+			NormalizedContractorName:  entitymatch.NormalizedName(contract.ContractorName),
 			ContractorDBA:             contract.ContractorDBA,
+			NormalizedContractorDBA:   entitymatch.NormalizedName(contract.ContractorDBA),
 			CooperativePurchase:       contract.CooperativePurchase,
 			CooperativeName:           contract.CooperativeName,
 			StatewideContractPurchase: contract.StatewideContractPurchase,
@@ -1393,6 +1403,46 @@ func runIngestWEBSVendors(args []string) int {
 		upserted++
 	}
 	fmt.Fprintf(os.Stderr, "==> ingested %d %s WEBS vendor rows\n", upserted, datawa.DatasetWEBSVendors)
+	return 0
+}
+
+// runGenerateVendorEntityMatches generates reviewable candidate links between
+// procurement/vendor source rows and existing organizations. It stores evidence
+// and confidence labels but does not mark uncertain matches authoritative.
+func runGenerateVendorEntityMatches(args []string) int {
+	fs := flag.NewFlagSet("generate-vendor-entity-matches", flag.ContinueOnError)
+	var (
+		limit   = fs.Int("limit", 0, "maximum source rows to inspect (0 = no practical limit)")
+		dsn     = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		jsonOut = fs.Bool("json", false, "write generated candidates as JSON to stdout")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "generate-vendor-entity-matches: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	candidates, err := store.GenerateVendorEntityMatchCandidates(ctx, *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "generate-vendor-entity-matches: %v\n", err)
+		return 1
+	}
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(candidates); err != nil {
+			fmt.Fprintf(os.Stderr, "generate-vendor-entity-matches: encode: %v\n", err)
+			return 1
+		}
+	}
+	fmt.Fprintf(os.Stderr, "==> generated %d reviewable vendor/entity match candidates\n", len(candidates))
 	return 0
 }
 

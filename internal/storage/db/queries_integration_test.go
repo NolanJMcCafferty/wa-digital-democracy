@@ -46,6 +46,8 @@ func (c *dbCleanup) addSourceRecord(id int64) {
 func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
+		`DELETE FROM vendor_entity_match_decision WHERE candidate_id IN (SELECT id FROM vendor_entity_match_candidate WHERE source_record_id = ANY($1))`,
+		`DELETE FROM vendor_entity_match_candidate WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
@@ -332,6 +334,73 @@ SELECT count(*), max(contractor_name), max(total_contract_amount)::text
 	}
 	if count != 1 || contractor != "Vendor B" || total != "80000.00" {
 		t.Fatalf("count=%d contractor=%q total=%q", count, contractor, total)
+	}
+}
+
+func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "vendor-match-test-1")
+
+	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "Acme Technologies Inc.",
+		Aliases:         []string{"Acme Tech"},
+		MatchConfidence: "confirmed",
+		MatchNotes:      "integration test",
+	})
+	if err != nil {
+		t.Fatalf("upsert org: %v", err)
+	}
+	defer store.Pool.Exec(ctx, `DELETE FROM organization WHERE id = $1`, orgID)
+
+	if err := store.UpsertDataWAContract(ctx, db.UpsertDataWAContractParams{
+		SourceDatasetID: "test-contracts",
+		SourceRowID:     "vendor-match-row-1",
+		FiscalYear:      2025,
+		AgencyName:      "Dept",
+		ContractorName:  "ACME TECHNOLOGIES LLC",
+		TotalAmount:     "100.00",
+		RawFields:       map[string]any{"source": "contract"},
+		SourceRecordID:  srID,
+	}); err != nil {
+		t.Fatalf("upsert contract: %v", err)
+	}
+
+	candidates, err := store.GenerateVendorEntityMatchCandidates(ctx, 100)
+	if err != nil {
+		t.Fatalf("GenerateVendorEntityMatchCandidates: %v", err)
+	}
+	var found *db.VendorEntityMatchCandidate
+	for i := range candidates {
+		if candidates[i].SourceRowID == "vendor-match-row-1" && candidates[i].OrganizationID == orgID {
+			found = &candidates[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected candidate for ACME contract; got %#v", candidates)
+	}
+	if found.CandidateConfidence != "probable" {
+		t.Fatalf("confidence = %q, want probable", found.CandidateConfidence)
+	}
+
+	if _, err := store.UpsertVendorEntityMatchDecision(ctx, db.InsertVendorEntityMatchDecisionParams{
+		CandidateID:    found.ID,
+		OrganizationID: orgID,
+		Decision:       "confirmed",
+		Confidence:     "confirmed",
+		ReviewedBy:     "integration-test",
+		ReviewNotes:    "obvious normalized-name match",
+	}); err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	var reviewed int
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM reviewed_vendor_entity_match WHERE candidate_id = $1`, found.ID).Scan(&reviewed); err != nil {
+		t.Fatalf("reviewed query: %v", err)
+	}
+	if reviewed != 1 {
+		t.Fatalf("reviewed count = %d, want 1", reviewed)
 	}
 }
 
