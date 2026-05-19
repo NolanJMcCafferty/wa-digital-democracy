@@ -7,8 +7,8 @@ export const metadata: Metadata = {
   description:
     "A source-linked public graph of Washington State government — bills, hearings, testimony, video, money, and lobbying.",
   icons: {
-    icon: [{ url: "/wa-state.svg", type: "image/svg+xml" }],
-    shortcut: ["/wa-state.svg"],
+    icon: [{ url: "/wa-state.webp", type: "image/webp" }],
+    shortcut: ["/wa-state.webp"],
   },
 };
 
@@ -27,7 +27,7 @@ export default function RootLayout({
               className="inline-flex items-center gap-2 text-xl font-bold tracking-tight text-stone-900 hover:text-stone-700"
             >
               <img
-                src="/wa-state.svg"
+                src="/wa-state.webp"
                 alt=""
                 aria-hidden="true"
                 className="h-8 w-8 shrink-0 rounded-md"
