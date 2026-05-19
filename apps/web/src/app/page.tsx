@@ -41,16 +41,11 @@ export default async function HomePage() {
       {/* Hero */}
       <section className="space-y-6 rounded-lg border border-stone-300 bg-white p-8 sm:p-10">
         <div className="space-y-3">
-          <p className="text-sm font-medium uppercase tracking-wider text-stone-500">
-            A source-linked public graph of Washington State government
-          </p>
           <h1 className="text-4xl font-bold tracking-tight text-stone-900 sm:text-5xl">
             WA Digital Democracy
           </h1>
           <p className="max-w-3xl text-lg text-stone-700">
             Technology that reveals how decisions are made in Washington.
-            Search bills, hearings, testimony, transcripts, organizations,
-            and legislators — every fact links back to its official source.
           </p>
         </div>
         <SearchBox results={searchResults} />
@@ -67,7 +62,7 @@ export default async function HomePage() {
             {ISSUE_TILES.length} live
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {ISSUE_TILES.map((issue) => {
             const isLive = issue.status === "live";
             const Wrapper = ({ children }: { children: React.ReactNode }) =>

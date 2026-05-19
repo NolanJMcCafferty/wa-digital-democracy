@@ -30,6 +30,8 @@ export type Sponsor = {
   name: string;
   chamber?: string;
   sponsor_type?: string;
+  photo_url?: string;
+  thumbnail_url?: string;
 };
 
 export type Status = {

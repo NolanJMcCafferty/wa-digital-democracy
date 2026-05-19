@@ -2,11 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loadHearingBundle, listHearingBundles } from "@/lib/loadBundle";
 import { formatDateTime, formatMS } from "@/lib/format";
-import { HearingCard } from "../../bills/[biennium]/[billNumber]/_sections/HearingCard";
 import { TestifierTable } from "../../bills/[biennium]/[billNumber]/_sections/TestifierTable";
 import { TranscriptSection } from "../../bills/[biennium]/[billNumber]/_sections/TranscriptSection";
 import { OrganizationsSection } from "../../bills/[biennium]/[billNumber]/_sections/OrganizationsSection";
-import { SourcePanel } from "../../bills/[biennium]/[billNumber]/_sections/SourcePanel";
 
 type Params = { csiAgendaItemId: string };
 
@@ -43,6 +41,7 @@ export default async function HearingPage({
           </h1>
           <p className="text-stone-600">
             {hearing.committee_name} · {formatDateTime(hearing.meeting_datetime)}
+            {hearing.location ? ` · ${hearing.location}` : ""}
           </p>
         </div>
 
@@ -72,8 +71,6 @@ export default async function HearingPage({
           ) : null}
         </div>
       </section>
-
-      <HearingCard hearing={hearing} />
 
       <section aria-labelledby="agenda-heading" className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
         <h2 id="agenda-heading" className="text-xl font-semibold text-stone-900">
@@ -114,12 +111,6 @@ export default async function HearingPage({
       />
 
       <OrganizationsSection organizations={bundle.organizations} />
-
-      <SourcePanel
-        sources={bundle.sources}
-        knownLimitations={bundle.known_limitations}
-        generatedAt={bundle.generated_at}
-      />
     </article>
   );
 }

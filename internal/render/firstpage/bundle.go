@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,15 +24,15 @@ import (
 // produces bills without any agenda_item rows. The frontend hides those
 // sections when absent.
 type Bundle struct {
-	GeneratedAt      time.Time       `json:"generated_at"`
-	Bill             Bill            `json:"bill"`
-	Status           Status          `json:"status"`
-	Hearing          *Hearing        `json:"hearing,omitempty"`
-	Testifiers       []Testifier     `json:"testifiers"`
-	Transcript       *Transcript     `json:"transcript,omitempty"`
-	Organizations    []Organization  `json:"organizations"`
-	Sources          []Source        `json:"sources"`
-	KnownLimitations []string        `json:"known_limitations,omitempty"`
+	GeneratedAt      time.Time      `json:"generated_at"`
+	Bill             Bill           `json:"bill"`
+	Status           Status         `json:"status"`
+	Hearing          *Hearing       `json:"hearing,omitempty"`
+	Testifiers       []Testifier    `json:"testifiers"`
+	Transcript       *Transcript    `json:"transcript,omitempty"`
+	Organizations    []Organization `json:"organizations"`
+	Sources          []Source       `json:"sources"`
+	KnownLimitations []string       `json:"known_limitations,omitempty"`
 }
 
 type Bill struct {
@@ -44,9 +46,11 @@ type Bill struct {
 }
 
 type Sponsor struct {
-	Name        string `json:"name"`
-	Chamber     string `json:"chamber,omitempty"`
-	SponsorType string `json:"sponsor_type,omitempty"`
+	Name         string `json:"name"`
+	Chamber      string `json:"chamber,omitempty"`
+	SponsorType  string `json:"sponsor_type,omitempty"`
+	PhotoURL     string `json:"photo_url,omitempty"`
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 }
 
 type Status struct {
@@ -268,7 +272,7 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 
 	// Sponsors.
 	const sponsorQ = `
-SELECT l.name, l.chamber, bs.sponsor_type
+SELECT l.name, l.chamber, bs.sponsor_type, COALESCE(l.lws_sponsor_id, '')
   FROM bill_sponsor bs
   JOIN legislator l ON l.id = bs.legislator_id
  WHERE bs.bill_id = $1
@@ -281,10 +285,12 @@ SELECT l.name, l.chamber, bs.sponsor_type
 	for rows.Next() {
 		var s Sponsor
 		var ch *string
-		if err := rows.Scan(&s.Name, &ch, &s.SponsorType); err != nil {
+		var lwsSponsorID string
+		if err := rows.Scan(&s.Name, &ch, &s.SponsorType, &lwsSponsorID); err != nil {
 			return err
 		}
 		s.Chamber = deref(ch)
+		s.PhotoURL, s.ThumbnailURL = legislatorPhotoURLs(lwsSponsorID)
 		b.Bill.Sponsors = append(b.Bill.Sponsors, s)
 	}
 
@@ -611,6 +617,16 @@ func computeLimitations(b *Bundle) []string {
 		out = append(out, "Organization context section is empty — populate config/reviewed_matches.yml to surface PDC/lobbying records.")
 	}
 	return out
+}
+
+func legislatorPhotoURLs(lwsSponsorID string) (string, string) {
+	id := strings.TrimSpace(lwsSponsorID)
+	if id == "" {
+		return "", ""
+	}
+	escaped := url.PathEscape(id)
+	return "https://leg.wa.gov/memberphoto/" + escaped + ".jpg",
+		"https://leg.wa.gov/memberthumbnail/" + escaped + ".jpg"
 }
 
 func deref(s *string) string {
