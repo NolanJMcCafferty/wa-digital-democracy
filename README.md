@@ -76,31 +76,27 @@ and starter dashboard ideas.
 
 ## Daily batch
 
-Three cooperating ingestions, chained by `make daily`. All three are
+Three cooperating ingestions, chained by `make daily`. Each stage is
 idempotent and safe to re-run:
 
 1. **`make ingest-session`** — pulls **every bill in the biennium** from
    LWS `GetLegislationByYear` and stores metadata + sponsors + status
    timeline + hearing references. Hearings/testimony/video are **not**
    touched here — just the LWS-side claims about each bill. ~5,000
-   bills at 5 req/sec, runtime ~70 minutes. Summary:
+   bills at 10 req/sec, runtime ~35-40 minutes. Summary:
    `data/processed/_session.json`.
 
-2. **`make discover-hearings`** — for every LWS-reported hearing whose
-   CSI/TVW IDs are still blank, scans CSI committees + meetings + agenda
-   items and TVW WP video posts to fill them in. Failure isolation per
-   hearing; missing TVW match is non-fatal (the CSI testifier list
-   still gets ingested). Caches CSI committee/meeting lists and TVW
-   per-day archives so the wall-clock cost is dominated by
-   `ListAgendaItems` (~one call per unique meeting). Summary:
-   `data/processed/_discovery.json`.
-
-3. **`make ingest-hearings`** — for every agenda_item that discovery
-   populated, runs the full pipeline (CSI testifiers + TVW captions +
+2. **`make ingest-hearings`** — first discovers CSI agenda IDs + TVW
+   event IDs for LWS-reported hearings, then runs the full pipeline for
+   every discovered agenda item (CSI testifiers + TVW captions +
    transcript segmentation + speaker matching + PDC context). Skips
    agenda items already ingested (no testifier rows means "not yet
    ingested"). This is what produces the rich bill-hearing pages.
-   Summary: `data/processed/_ingest.json`.
+   Summaries: `data/processed/_discovery.json` and
+   `data/processed/_ingest.json`.
+
+`make discover-hearings` remains available as a lower-level debugging
+and backfill target when you only want to refresh CSI/TVW join IDs.
 
 For nightly cron, one line is enough:
 
@@ -111,7 +107,7 @@ For nightly cron, one line is enough:
 Re-running is cheap in DB writes — `source_record` dedups on
 `(system, endpoint, url, content_hash, transform_version)` and just
 bumps `fetched_at` for unchanged content — but every run still re-hits
-every upstream API at the configured rate (5 req/sec default).
+every upstream API at the configured rate (10 req/sec default).
 
 ## Layout
 

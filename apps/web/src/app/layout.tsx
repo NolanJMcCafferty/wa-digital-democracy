@@ -6,6 +6,10 @@ export const metadata: Metadata = {
   title: "WA Digital Democracy",
   description:
     "A source-linked public graph of Washington State government — bills, hearings, testimony, video, money, and lobbying.",
+  icons: {
+    icon: [{ url: "/wa-state.svg", type: "image/svg+xml" }],
+    shortcut: ["/wa-state.svg"],
+  },
 };
 
 export default function RootLayout({
@@ -20,9 +24,15 @@ export default function RootLayout({
           <div className="mx-auto flex max-w-6xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
             <a
               href="/"
-              className="text-xl font-bold tracking-tight text-stone-900 hover:text-stone-700"
+              className="inline-flex items-center gap-2 text-xl font-bold tracking-tight text-stone-900 hover:text-stone-700"
             >
-              WA Digital Democracy
+              <img
+                src="/wa-state.svg"
+                alt=""
+                aria-hidden="true"
+                className="h-8 w-8 shrink-0 rounded-md"
+              />
+              <span>WA Digital Democracy</span>
             </a>
             <Nav />
           </div>

@@ -13,6 +13,18 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/entitymatch"
 )
 
+// nonEmptyStrings returns trimmed, non-empty entries from in. Used by
+// query builders that accept multi-value filters.
+func nonEmptyStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if t := strings.TrimSpace(v); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // timeOrNull returns t for non-zero times, or pgtype Null otherwise. We
 // use pgtype.Timestamptz because nullable TIMESTAMPTZ fields don't accept
 // Go's zero time.Time gracefully.
@@ -1290,19 +1302,108 @@ type HearingAggregate struct {
 // ordered by meeting datetime descending. Only includes rows where the
 // hearing has a TVW event mapping (the curated subset).
 func (s *Store) ListHearings(ctx context.Context) ([]HearingAggregate, error) {
-	const q = `
+	hits, _, err := s.SearchHearings(ctx, HearingSearchParams{Limit: 100000, Offset: 0})
+	return hits, err
+}
+
+// HearingSearchParams are the filter knobs SearchHearings accepts. Empty
+// strings/slices are no-ops. The handler is responsible for clamping
+// limit and offset to safe ranges.
+type HearingSearchParams struct {
+	Committee     string   // ILIKE match on hearing.committee_name
+	Bill          string   // ILIKE match on bill.bill_number or bill.title
+	Speaker       string   // ILIKE match on testifier.raw_name
+	Chambers      []string // OR-set of hearing.chamber values
+	TopicKeywords []string // OR-set of ILIKE keywords matched against bill title/desc, agenda label, committee name
+	Biennium      string   // exact match on bill.biennium
+	Limit         int
+	Offset        int
+}
+
+// HearingSearchFacets carries the distinct values we render in the
+// hearings sidebar so the UI doesn't hard-code lists.
+type HearingSearchFacets struct {
+	Chambers   []string
+	Committees []string
+	Biennia    []string
+}
+
+// SearchHearings is the paginated, filtered query backing /api/v1/hearings.
+// Returns (hits, total, err).
+func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]HearingAggregate, int, error) {
+	if p.Limit <= 0 {
+		p.Limit = 50
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+
+	args := []any{}
+	where := []string{"h.tvw_event_id IS NOT NULL"}
+	push := func(v any) int {
+		args = append(args, v)
+		return len(args)
+	}
+	if c := strings.TrimSpace(p.Committee); c != "" {
+		idx := push(c)
+		where = append(where, fmt.Sprintf("h.committee_name ILIKE '%%' || $%d || '%%'", idx))
+	}
+	if bq := strings.TrimSpace(p.Bill); bq != "" {
+		idx := push(bq)
+		where = append(where, fmt.Sprintf(
+			"(b.bill_number ILIKE '%%' || $%d || '%%' OR b.title ILIKE '%%' || $%d || '%%')", idx, idx))
+	}
+	if sp := strings.TrimSpace(p.Speaker); sp != "" {
+		idx := push(sp)
+		where = append(where, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM testifier t WHERE t.agenda_item_id = a.id AND t.raw_name ILIKE '%%' || $%d || '%%')", idx))
+	}
+	if chambers := nonEmptyStrings(p.Chambers); len(chambers) > 0 {
+		placeholders := make([]string, 0, len(chambers))
+		for _, c := range chambers {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", push(c)))
+		}
+		where = append(where, "h.chamber IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if keywords := nonEmptyStrings(p.TopicKeywords); len(keywords) > 0 {
+		ors := make([]string, 0, len(keywords))
+		for _, kw := range keywords {
+			idx := push(kw)
+			ors = append(ors, fmt.Sprintf(
+				"(b.title ILIKE '%%' || $%d || '%%' OR COALESCE(b.description,'') ILIKE '%%' || $%d || '%%' OR a.label ILIKE '%%' || $%d || '%%' OR h.committee_name ILIKE '%%' || $%d || '%%')",
+				idx, idx, idx, idx))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if p.Biennium != "" {
+		idx := push(p.Biennium)
+		where = append(where, fmt.Sprintf("b.biennium = $%d", idx))
+	}
+	whereSQL := strings.Join(where, " AND ")
+
+	const baseFROM = `
+FROM agenda_item a
+JOIN hearing h ON h.id = a.hearing_id
+JOIN bill    b ON b.id = a.bill_id`
+
+	countQ := "SELECT COUNT(*) " + baseFROM + " WHERE " + whereSQL
+	var total int
+	if err := s.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count hearings: %w", err)
+	}
+
+	args = append(args, p.Limit, p.Offset)
+	q := `
 SELECT a.csi_agenda_item_id, a.label,
        h.committee_name, h.chamber, h.meeting_datetime,
        b.biennium, b.bill_number, b.prefix, b.number,
        (h.tvw_event_id IS NOT NULL) AS has_tvw
-  FROM agenda_item a
-  JOIN hearing h ON h.id = a.hearing_id
-  JOIN bill    b ON b.id = a.bill_id
- WHERE h.tvw_event_id IS NOT NULL
- ORDER BY h.meeting_datetime DESC;`
-	rows, err := s.Pool.Query(ctx, q)
+` + baseFROM + ` WHERE ` + whereSQL + `
+ ORDER BY h.meeting_datetime DESC
+ LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
+	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list hearings: %w", err)
+		return nil, 0, fmt.Errorf("search hearings: %w", err)
 	}
 	defer rows.Close()
 	out := []HearingAggregate{}
@@ -1312,11 +1413,78 @@ SELECT a.csi_agenda_item_id, a.label,
 			&hh.CommitteeName, &hh.Chamber, &hh.MeetingDateTime,
 			&hh.Biennium, &hh.BillID, &hh.BillPrefix, &hh.BillNumber,
 			&hh.HasTVW); err != nil {
-			return nil, fmt.Errorf("scan hearing: %w", err)
+			return nil, 0, fmt.Errorf("scan hearing: %w", err)
 		}
 		out = append(out, hh)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// ListHearingSearchFacets returns the distinct chamber/committee/biennium
+// values present in hearings with a TVW event mapping, for the sidebar.
+func (s *Store) ListHearingSearchFacets(ctx context.Context) (HearingSearchFacets, error) {
+	var f HearingSearchFacets
+
+	rows, err := s.Pool.Query(ctx, `
+SELECT DISTINCT h.chamber
+  FROM hearing h
+ WHERE h.tvw_event_id IS NOT NULL
+   AND h.chamber IS NOT NULL AND h.chamber <> ''
+ ORDER BY h.chamber`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing chamber: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Chambers = append(f.Chambers, v)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `
+SELECT DISTINCT h.committee_name
+  FROM hearing h
+ WHERE h.tvw_event_id IS NOT NULL
+   AND h.committee_name IS NOT NULL AND h.committee_name <> ''
+ ORDER BY h.committee_name`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing committee: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Committees = append(f.Committees, v)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `
+SELECT DISTINCT b.biennium
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE h.tvw_event_id IS NOT NULL
+   AND b.biennium <> ''
+ ORDER BY b.biennium DESC`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing biennium: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Biennia = append(f.Biennia, v)
+	}
+	rows.Close()
+
+	return f, nil
 }
 
 // SourceSummaryRow is the row shape ListSourceSummaries returns.
@@ -1962,6 +2130,179 @@ SELECT s.source_kind, s.source_table, s.source_pk, s.source_dataset_id, s.source
     )
  ORDER BY s.source_kind, s.normalized_name, o.canonical_name
  LIMIT CASE WHEN $1 > 0 THEN $1 ELSE 100000 END;`
+
+// UpsertFederalAwardParams is the normalized row shape for federal_award.
+type UpsertFederalAwardParams struct {
+	AwardID        string
+	RecipientName  string
+	RecipientUEI   string
+	AwardingAgency string
+	FundingAgency  string
+	AwardType      string
+	AwardAmount    string
+	StartDate      *time.Time
+	EndDate        *time.Time
+	PlaceStateCode string
+	PlaceCounty    string
+	RawFields      map[string]any
+	SourceRecordID int64
+}
+
+// UpsertFederalAward inserts or updates one USAspending award row.
+func (s *Store) UpsertFederalAward(ctx context.Context, p UpsertFederalAwardParams) error {
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO federal_award (
+  award_id, recipient_name, recipient_uei, awarding_agency, funding_agency,
+  award_type, award_amount, start_date, end_date, place_state_code,
+  place_county, raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,$4,$5,$6,NULLIF($7,'')::numeric,$8,$9,$10,$11,$12::jsonb,$13
+)
+ON CONFLICT (award_id) DO UPDATE SET
+  recipient_name = EXCLUDED.recipient_name,
+  recipient_uei = EXCLUDED.recipient_uei,
+  awarding_agency = EXCLUDED.awarding_agency,
+  funding_agency = EXCLUDED.funding_agency,
+  award_type = EXCLUDED.award_type,
+  award_amount = EXCLUDED.award_amount,
+  start_date = EXCLUDED.start_date,
+  end_date = EXCLUDED.end_date,
+  place_state_code = EXCLUDED.place_state_code,
+  place_county = EXCLUDED.place_county,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.AwardID, strOrNull(p.RecipientName), strOrNull(p.RecipientUEI), strOrNull(p.AwardingAgency), strOrNull(p.FundingAgency),
+		strOrNull(p.AwardType), p.AwardAmount, datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), strOrNull(p.PlaceStateCode),
+		strOrNull(p.PlaceCounty), string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert federal_award: %w", err)
+	}
+	return nil
+}
+
+// UpsertSeattleOperatingBudgetParams is the normalized row shape for
+// seattle_operating_budget.
+type UpsertSeattleOperatingBudgetParams struct {
+	SourceDatasetID string
+	SourceRowID     string
+	FiscalYear      int
+	Service         string
+	Department      string
+	Program         string
+	Fund            string
+	FundType        string
+	ExpenseType     string
+	Description     string
+	ApprovedAmount  string
+	RawFields       map[string]any
+	SourceRecordID  int64
+}
+
+// UpsertSeattleOperatingBudget inserts or updates one Seattle operating budget row.
+func (s *Store) UpsertSeattleOperatingBudget(ctx context.Context, p UpsertSeattleOperatingBudgetParams) error {
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO seattle_operating_budget (
+  source_dataset_id, source_row_id, fiscal_year, service, department, program,
+  fund, fund_type, expense_type, description, approved_amount, raw_fields,
+  source_record_id
+) VALUES (
+  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::numeric,$12::jsonb,$13
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  fiscal_year = EXCLUDED.fiscal_year,
+  service = EXCLUDED.service,
+  department = EXCLUDED.department,
+  program = EXCLUDED.program,
+  fund = EXCLUDED.fund,
+  fund_type = EXCLUDED.fund_type,
+  expense_type = EXCLUDED.expense_type,
+  description = EXCLUDED.description,
+  approved_amount = EXCLUDED.approved_amount,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, p.FiscalYear, strOrNull(p.Service), strOrNull(p.Department), strOrNull(p.Program),
+		strOrNull(p.Fund), strOrNull(p.FundType), strOrNull(p.ExpenseType), strOrNull(p.Description), p.ApprovedAmount,
+		string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert seattle_operating_budget: %w", err)
+	}
+	return nil
+}
+
+// UpsertFiscalWAVendorPaymentParams is the normalized row shape for
+// fiscalwa_vendor_payment.
+type UpsertFiscalWAVendorPaymentParams struct {
+	SourceDatasetID string
+	SourceRowID     string
+	Biennium        string
+	FiscalYear      int
+	FiscalMonth     string
+	AgencyNumber    string
+	AgencyName      string
+	ObjectCode      string
+	ObjectCategory  string
+	SubobjectCode   string
+	SubobjectName   string
+	VendorName      string
+	Amount          string
+	RawFields       map[string]any
+	SourceRecordID  int64
+}
+
+// UpsertFiscalWAVendorPayment inserts or updates one fiscal.wa.gov vendor
+// payment row from the Open Checkbook workbook.
+func (s *Store) UpsertFiscalWAVendorPayment(ctx context.Context, p UpsertFiscalWAVendorPaymentParams) error {
+	raw, err := json.Marshal(p.RawFields)
+	if err != nil {
+		return fmt.Errorf("marshal raw fields: %w", err)
+	}
+	const q = `
+INSERT INTO fiscalwa_vendor_payment (
+  source_dataset_id, source_row_id, biennium, fiscal_year, fiscal_month,
+  agency_number, agency_name, object_code, object_category, subobject_code,
+  subobject_name, vendor_name, amount, raw_fields, source_record_id
+) VALUES (
+  $1,$2,$3,NULLIF($4,0),$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,'')::numeric,$14::jsonb,$15
+)
+ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
+  biennium = EXCLUDED.biennium,
+  fiscal_year = EXCLUDED.fiscal_year,
+  fiscal_month = EXCLUDED.fiscal_month,
+  agency_number = EXCLUDED.agency_number,
+  agency_name = EXCLUDED.agency_name,
+  object_code = EXCLUDED.object_code,
+  object_category = EXCLUDED.object_category,
+  subobject_code = EXCLUDED.subobject_code,
+  subobject_name = EXCLUDED.subobject_name,
+  vendor_name = EXCLUDED.vendor_name,
+  amount = EXCLUDED.amount,
+  raw_fields = EXCLUDED.raw_fields,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.SourceDatasetID, p.SourceRowID, strOrNull(p.Biennium), p.FiscalYear, strOrNull(p.FiscalMonth),
+		strOrNull(p.AgencyNumber), strOrNull(p.AgencyName), strOrNull(p.ObjectCode), strOrNull(p.ObjectCategory),
+		strOrNull(p.SubobjectCode), strOrNull(p.SubobjectName), strOrNull(p.VendorName), p.Amount, string(raw), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert fiscalwa_vendor_payment: %w", err)
+	}
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Auto-discovery queries — back the `wa-dd discover-hearings` and

@@ -3,6 +3,11 @@ package seattle
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"strconv"
+	"strings"
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
@@ -47,8 +52,27 @@ type Permit struct {
 	Raw             socrata.Row
 }
 
+type OperatingBudget struct {
+	SourceDatasetID string
+	SourceRowID     string
+	FiscalYear      int
+	Service         string
+	Department      string
+	Program         string
+	Fund            string
+	FundType        string
+	ExpenseType     string
+	Description     string
+	ApprovedAmount  string
+	Raw             socrata.Row
+}
+
 func (c *Client) FetchBuildingPermits(ctx context.Context, q socrata.Query) ([]socrata.Row, error) {
 	return c.FetchPage(ctx, DatasetBuildingPermitMap, q)
+}
+
+func (c *Client) FetchOperatingBudgetWithSource(ctx context.Context, q socrata.Query) ([]socrata.Row, httpx.RawFetch, error) {
+	return c.FetchPageWithSource(ctx, DatasetOperatingBudget, q)
 }
 
 func NormalizePermit(datasetID string, row socrata.Row) Permit {
@@ -68,11 +92,51 @@ func NormalizePermit(datasetID string, row socrata.Row) Permit {
 	}
 }
 
+func NormalizeOperatingBudget(row socrata.Row) OperatingBudget {
+	fy, _ := strconv.Atoi(first(row, "fiscal_year"))
+	return OperatingBudget{
+		SourceDatasetID: DatasetOperatingBudget,
+		SourceRowID:     first(row, ":id", "sid", "id"),
+		FiscalYear:      fy,
+		Service:         first(row, "service"),
+		Department:      first(row, "department"),
+		Program:         first(row, "program"),
+		Fund:            first(row, "fund"),
+		FundType:        first(row, "fund_type"),
+		ExpenseType:     first(row, "expense_type"),
+		Description:     first(row, "description"),
+		ApprovedAmount:  first(row, "approved_amount"),
+		Raw:             row,
+	}
+}
+
+func StableRowID(row socrata.Row) string {
+	body, _ := json.Marshal(row)
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
 func first(row socrata.Row, keys ...string) string {
 	for _, k := range keys {
-		if v, ok := row[k].(string); ok && v != "" {
-			return v
+		if v, ok := row[k]; ok && v != nil {
+			s := strings.TrimSpace(toString(v))
+			if s != "" {
+				return s
+			}
 		}
 	}
 	return ""
+}
+
+func toString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	default:
+		return ""
+	}
 }

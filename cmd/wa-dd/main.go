@@ -33,11 +33,14 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/datawa"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/fiscalwa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/seattle"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/usaspending"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
@@ -68,6 +71,12 @@ SUBCOMMANDS:
                      Pull DataWA WEBS vendor rows into Postgres
   generate-vendor-entity-matches
                      Generate reviewable vendor/customer organization match candidates
+  ingest-usaspending-wa-awards
+                     Pull USAspending award rows performed in Washington into Postgres
+  ingest-seattle-operating-budget
+                     Pull Seattle operating budget rows into Postgres
+  ingest-fiscal-vendor-payments
+                     Pull fiscal.wa.gov Open Checkbook vendor payments into Postgres
   version            Print version info
 
 Run 'wa-dd <subcommand> -h' for subcommand flags.
@@ -112,6 +121,12 @@ func main() {
 		os.Exit(runIngestWEBSVendors(args))
 	case "generate-vendor-entity-matches":
 		os.Exit(runGenerateVendorEntityMatches(args))
+	case "ingest-usaspending-wa-awards":
+		os.Exit(runIngestUSASpendingWAAwards(args))
+	case "ingest-seattle-operating-budget":
+		os.Exit(runIngestSeattleOperatingBudget(args))
+	case "ingest-fiscal-vendor-payments":
+		os.Exit(runIngestFiscalVendorPayments(args))
 	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
@@ -151,7 +166,7 @@ func runFindCandidates(args []string) int {
 		maxMeetings = fs.Int("max-meetings", 8, "max recent meetings per committee")
 		out         = fs.String("out", "data/processed/candidates.json", "output JSON path")
 		topN        = fs.Int("top", 10, "show top-N candidates in stderr summary")
-		rateLimit   = fs.Float64("rate", 5.0, "max requests/sec to app.leg.wa.gov")
+		rateLimit   = fs.Float64("rate", 10.0, "max requests/sec to app.leg.wa.gov")
 		quiet       = fs.Bool("quiet", false, "suppress per-step progress logs")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -269,7 +284,7 @@ func runBuildBundle(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundle is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for legislative APIs")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for legislative APIs")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -451,7 +466,7 @@ func runIngestSession(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _session.json is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for the LWS host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
 		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
 		onlyTypes = fs.String("only-types", "", "comma-separated list of bill prefixes to keep (e.g. \"HB,SB\"). Empty = all.")
 	)
@@ -705,7 +720,7 @@ func runDiscoverHearings(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _discovery.json is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per CSI/TVW host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per CSI/TVW host")
 		limit     = fs.Int("limit", 0, "stop after N hearings (0 = no limit). For smoke tests.")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -883,7 +898,7 @@ func runIngestHearings(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed/bundles", "where bundle JSON is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec per legislative host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per legislative host")
 		limit     = fs.Int("limit", 0, "stop after N agenda items (0 = no limit). For smoke tests.")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -1000,7 +1015,7 @@ func runIngestContracts(args []string) int {
 		limit      = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
 		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir     = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		rateLimit  = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
+		rateLimit  = fs.Float64("rate", 10.0, "max requests/sec for data.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -1109,7 +1124,7 @@ func runIngestMasterContractSales(args []string) int {
 		limit     = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for data.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -1446,6 +1461,267 @@ func runGenerateVendorEntityMatches(args []string) int {
 	return 0
 }
 
+// runIngestUSASpendingWAAwards implements `wa-dd ingest-usaspending-wa-awards`:
+// pulls a scoped USAspending award search page for awards performed in
+// Washington. The first scope is deliberately broad-but-bounded: place of
+// performance = WA over a caller-specified date range, sorted by award amount.
+// Entity matching remains candidate-only and reviewable; this command stores
+// source awards without asserting joins to local entities.
+func runIngestUSASpendingWAAwards(args []string) int {
+	fs := flag.NewFlagSet("ingest-usaspending-wa-awards", flag.ContinueOnError)
+	var (
+		startDate = fs.String("start-date", "2025-10-01", "award action date range start, YYYY-MM-DD")
+		endDate   = fs.String("end-date", "2026-09-30", "award action date range end, YYYY-MM-DD")
+		limit     = fs.Int("limit", 100, "maximum awards to request from USAspending")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for api.usaspending.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *limit <= 0 || *limit > 100 {
+		fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: --limit must be between 1 and 100 for the first MVP page")
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      45 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"api.usaspending.gov": *rateLimit,
+		},
+	})
+	client := usaspending.New(httpClient)
+	req := usaspending.WashingtonAwardSearchRequest(*startDate, *endDate)
+	req.Limit = *limit
+	resp, fetch, err := client.SearchAwardsWithSource(ctx, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: fetch: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: source record was not captured")
+		return 1
+	}
+
+	var upserted int
+	for _, row := range resp.Results {
+		award := usaspending.NormalizeAward(row)
+		if award.AwardID == "" {
+			fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: skipping award with empty Award ID")
+			continue
+		}
+		if err := store.UpsertFederalAward(ctx, db.UpsertFederalAwardParams{
+			AwardID:        award.AwardID,
+			RecipientName:  award.RecipientName,
+			RecipientUEI:   award.RecipientUEI,
+			AwardingAgency: award.AwardingAgency,
+			FundingAgency:  award.FundingAgency,
+			AwardType:      award.AwardType,
+			AwardAmount:    normalizeMoney(award.AwardAmount),
+			StartDate:      award.StartDate,
+			EndDate:        award.EndDate,
+			PlaceStateCode: award.PlaceStateCode,
+			PlaceCounty:    award.PlaceCounty,
+			RawFields:      award.Raw,
+			SourceRecordID: fetch.SourceRecordID,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: upsert award %s: %v\n", award.AwardID, err)
+			return 1
+		}
+		upserted++
+	}
+	fmt.Fprintf(os.Stderr, "==> ingested %d USAspending WA award rows\n", upserted)
+	return 0
+}
+
+// runIngestSeattleOperatingBudget implements `wa-dd ingest-seattle-operating-budget`:
+// pulls the City of Seattle Operating Budget Socrata dataset into a normalized
+// table keyed by fiscal year, department, program, fund, and expense category.
+func runIngestSeattleOperatingBudget(args []string) int {
+	fs := flag.NewFlagSet("ingest-seattle-operating-budget", flag.ContinueOnError)
+	var (
+		limit     = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for data.seattle.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-seattle-operating-budget: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-seattle-operating-budget: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      45 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"data.seattle.gov": *rateLimit,
+		},
+	})
+	client := seattle.New(httpClient, os.Getenv("SOCRATA_APP_TOKEN"))
+	query := socrata.Query{Order: ":id"}
+	if *limit > 0 {
+		query.Limit = *limit
+	}
+	rows, fetch, err := client.FetchOperatingBudgetWithSource(ctx, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-seattle-operating-budget: fetch: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-seattle-operating-budget: source record was not captured")
+		return 1
+	}
+
+	var upserted int
+	for _, row := range rows {
+		budget := seattle.NormalizeOperatingBudget(row)
+		if budget.SourceRowID == "" {
+			budget.SourceRowID = seattle.StableRowID(row)
+		}
+		if err := store.UpsertSeattleOperatingBudget(ctx, db.UpsertSeattleOperatingBudgetParams{
+			SourceDatasetID: budget.SourceDatasetID,
+			SourceRowID:     budget.SourceRowID,
+			FiscalYear:      budget.FiscalYear,
+			Service:         budget.Service,
+			Department:      budget.Department,
+			Program:         budget.Program,
+			Fund:            budget.Fund,
+			FundType:        budget.FundType,
+			ExpenseType:     budget.ExpenseType,
+			Description:     budget.Description,
+			ApprovedAmount:  normalizeMoney(budget.ApprovedAmount),
+			RawFields:       row,
+			SourceRecordID:  fetch.SourceRecordID,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-seattle-operating-budget: upsert row %s: %v\n", budget.SourceRowID, err)
+			return 1
+		}
+		upserted++
+	}
+	fmt.Fprintf(os.Stderr, "==> ingested %d %s Seattle operating budget rows\n", upserted, seattle.DatasetOperatingBudget)
+	return 0
+}
+
+// runIngestFiscalVendorPayments implements `wa-dd ingest-fiscal-vendor-payments`:
+// pulls the current fiscal.wa.gov Open Checkbook workbook into a normalized
+// vendor-payment table. This is a first budget/spending slice; proposal-level
+// operating/capital/transportation budgets remain separate source families.
+func runIngestFiscalVendorPayments(args []string) int {
+	fs := flag.NewFlagSet("ingest-fiscal-vendor-payments", flag.ContinueOnError)
+	var (
+		limit     = fs.Int("limit", 1000, "maximum rows to upsert after parsing (0 = all rows)")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for fiscal.wa.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      2 * time.Minute,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"fiscal.wa.gov": *rateLimit,
+		},
+	})
+	client := fiscalwa.New(httpClient)
+	rows, fetch, err := client.FetchVendorPaymentsWithSource(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: fetch/parse: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-fiscal-vendor-payments: source record was not captured")
+		return 1
+	}
+
+	var upserted int
+	for _, row := range rows {
+		if *limit > 0 && upserted >= *limit {
+			break
+		}
+		if err := store.UpsertFiscalWAVendorPayment(ctx, db.UpsertFiscalWAVendorPaymentParams{
+			SourceDatasetID: row.SourceDatasetID,
+			SourceRowID:     row.SourceRowID,
+			Biennium:        row.Biennium,
+			FiscalYear:      row.FiscalYear,
+			FiscalMonth:     row.FiscalMonth,
+			AgencyNumber:    row.AgencyNumber,
+			AgencyName:      row.AgencyName,
+			ObjectCode:      row.ObjectCode,
+			ObjectCategory:  row.ObjectCategory,
+			SubobjectCode:   row.SubobjectCode,
+			SubobjectName:   row.SubobjectName,
+			VendorName:      row.VendorName,
+			Amount:          normalizeMoney(row.Amount),
+			RawFields: map[string]any{
+				"biennium": row.Biennium, "fiscal_year": row.FiscalYear, "fiscal_month": row.FiscalMonth,
+				"agency_number": row.AgencyNumber, "agency_name": row.AgencyName,
+				"object_code": row.ObjectCode, "object_category": row.ObjectCategory,
+				"subobject_code": row.SubobjectCode, "subobject_name": row.SubobjectName,
+				"vendor_name": row.VendorName, "amount": row.Amount,
+			},
+			SourceRecordID: fetch.SourceRecordID,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: upsert row %s: %v\n", row.SourceRowID, err)
+			return 1
+		}
+		upserted++
+	}
+	fmt.Fprintf(os.Stderr, "==> ingested %d %s vendor payment rows\n", upserted, fiscalwa.VendorPaymentsDatasetID)
+	return 0
+}
+
 // runIngestLegislators implements `wa-dd ingest-legislators`: pulls the
 // full House + Senate roster for a biennium from LWS SponsorService and
 // upserts each member into the `legislator` table. This populates
@@ -1458,7 +1734,7 @@ func runIngestLegislators(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _legislators.json is written")
-		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for the LWS host")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
