@@ -929,6 +929,11 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 	}
 }
 
+const (
+	hearingsDefaultLimit = 50
+	hearingsMaxLimit     = 100
+)
+
 func listHearingsHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
 		CSIAgendaItemID string    `json:"csi_agenda_item_id"`
@@ -941,15 +946,58 @@ func listHearingsHandler(store *db.Store) http.HandlerFunc {
 		BillPrefix      string    `json:"bill_prefix"`
 		BillNumber      int       `json:"bill_number"`
 	}
+	type body struct {
+		Hearings []item                 `json:"hearings"`
+		Total    int                    `json:"total"`
+		Limit    int                    `json:"limit"`
+		Offset   int                    `json:"offset"`
+		Facets   db.HearingSearchFacets `json:"facets"`
+	}
 	return func(w http.ResponseWriter, req *http.Request) {
-		hs, err := store.ListHearings(req.Context())
+		q := req.URL.Query()
+		params := db.HearingSearchParams{
+			Committee:     strings.TrimSpace(q.Get("committee")),
+			Bill:          strings.TrimSpace(q.Get("bill")),
+			Speaker:       strings.TrimSpace(q.Get("speaker")),
+			Chambers:      q["chamber"],
+			TopicKeywords: q["topic_keyword"],
+			Biennium:      strings.TrimSpace(q.Get("biennium")),
+		}
+		params.Limit = hearingsDefaultLimit
+		if v := q.Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				params.Limit = n
+			}
+		}
+		if params.Limit > hearingsMaxLimit {
+			params.Limit = hearingsMaxLimit
+		}
+		if v := q.Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				params.Offset = n
+			}
+		}
+
+		hs, total, err := store.SearchHearings(req.Context(), params)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		out := make([]item, 0, len(hs))
+		facets, err := store.ListHearingSearchFacets(req.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		out := body{
+			Hearings: make([]item, 0, len(hs)),
+			Total:    total,
+			Limit:    params.Limit,
+			Offset:   params.Offset,
+			Facets:   facets,
+		}
 		for _, h := range hs {
-			out = append(out, item{
+			out.Hearings = append(out.Hearings, item{
 				CSIAgendaItemID: h.CSIAgendaItemID,
 				AgendaItemLabel: h.AgendaItemLabel,
 				CommitteeName:   h.CommitteeName,

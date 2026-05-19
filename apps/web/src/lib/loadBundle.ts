@@ -98,6 +98,7 @@ export type HearingBundleEntry = BundleListEntry & {
   csiAgendaItemId: string;
   title: string;
   committeeName: string;
+  chamber: string;
   meetingDatetime: string;
   billId: string;
 };
@@ -229,15 +230,43 @@ type hearingResponseItem = {
   bill_number: number;
 };
 
-export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
-  const res = await fetch(`${API_BASE}/api/v1/hearings`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`listHearingBundles: ${API_BASE}/api/v1/hearings returned ${res.status}`);
-  }
-  const items = (await res.json()) as hearingResponseItem[];
-  return items.map((h) => ({
+type hearingsResponse = {
+  hearings: hearingResponseItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  facets: {
+    Chambers?: string[];
+    Committees?: string[];
+    Biennia?: string[];
+  };
+};
+
+export type HearingSearchFilters = {
+  committee?: string;
+  bill?: string;
+  speaker?: string;
+  chambers?: string[];
+  topicKeywords?: string[];
+  biennium?: string;
+  page?: number; // 1-indexed; converted to offset when fetching
+  limit?: number;
+};
+
+export type HearingSearchResult = {
+  hearings: HearingBundleEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  facets: {
+    chambers: string[];
+    committees: string[];
+    biennia: string[];
+  };
+};
+
+function mapHearingItem(h: hearingResponseItem): HearingBundleEntry {
+  return {
     biennium: h.biennium,
     billPrefix: h.bill_prefix,
     billNumber: h.bill_number,
@@ -245,8 +274,62 @@ export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
     title: h.agenda_item_label || h.bill_id,
     csiAgendaItemId: h.csi_agenda_item_id,
     committeeName: h.committee_name,
+    chamber: h.chamber,
     meetingDatetime: h.meeting_datetime,
-  }));
+  };
+}
+
+export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
+  // Ask for the API's hard cap so callers that need an overview (home
+  // page, issue pages, generateStaticParams) get the full set in one
+  // request. Pages that paginate should call searchHearings instead.
+  const res = await fetch(`${API_BASE}/api/v1/hearings?limit=100`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`listHearingBundles: ${API_BASE}/api/v1/hearings returned ${res.status}`);
+  }
+  const body = (await res.json()) as hearingsResponse;
+  return (body.hearings ?? []).map(mapHearingItem);
+}
+
+export async function searchHearings(filters: HearingSearchFilters): Promise<HearingSearchResult> {
+  const params = new URLSearchParams();
+  if (filters.committee) params.set("committee", filters.committee);
+  if (filters.bill) params.set("bill", filters.bill);
+  if (filters.speaker) params.set("speaker", filters.speaker);
+  for (const c of filters.chambers ?? []) {
+    if (c) params.append("chamber", c);
+  }
+  for (const k of filters.topicKeywords ?? []) {
+    if (k) params.append("topic_keyword", k);
+  }
+  if (filters.biennium) params.set("biennium", filters.biennium);
+  const limit = filters.limit ?? 50;
+  params.set("limit", String(limit));
+  const page = Math.max(1, filters.page ?? 1);
+  const offset = (page - 1) * limit;
+  if (offset > 0) params.set("offset", String(offset));
+
+  const url = `${API_BASE}/api/v1/hearings?${params.toString()}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`searchHearings: ${url} returned ${res.status}`);
+  }
+  const body = (await res.json()) as hearingsResponse;
+  const hearings = (body.hearings ?? []).map(mapHearingItem);
+  const facets = body.facets ?? {};
+  return {
+    hearings,
+    total: body.total ?? hearings.length,
+    limit: body.limit ?? limit,
+    offset: body.offset ?? offset,
+    facets: {
+      chambers: facets.Chambers ?? [],
+      committees: facets.Committees ?? [],
+      biennia: facets.Biennia ?? [],
+    },
+  };
 }
 
 export async function loadHearingBundle(csiAgendaItemId: string): Promise<Bundle | null> {

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Washington State</title>
+  <rect width="64" height="64" rx="12" fill="#f8faf7"/>
+  <path
+    fill="#214e36"
+    d="M7 15h50v34l-4 1-5-2-4 1-6-2-5 2-8-2-6 2-7-3-3-6 3-5-2-6 3-4-4-4-2-6z"
+  />
+  <path
+    fill="#f8faf7"
+    d="M10 17l8 3 3 4-2 5 3 4-2 5-4 3-2-5 2-5-3-3 2-4-5-2v-5zm12 7l5 2-1 4-3 2-2-4 1-4zm7 6l4 2-2 5-3-2 1-5z"
+    opacity=".98"
+  />
+  <path
+    fill="#4f8f72"
+    d="M19 17h38v5H24l-5-5zm15 26l5 2 5-2 5 2 4-1 4 2v3l-4 1-5-2-4 1-6-2-5 2-8-2-6 2-5-2 5-2 7 2 8-4z"
+    opacity=".65"
+  />
+</svg>

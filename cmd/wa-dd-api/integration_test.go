@@ -123,7 +123,6 @@ func TestAggregationHandlers(t *testing.T) {
 	endpoints := []string{
 		"/api/v1/legislators",
 		"/api/v1/organizations",
-		"/api/v1/hearings",
 		"/api/v1/sources",
 	}
 	for _, ep := range endpoints {
@@ -145,6 +144,25 @@ func TestAggregationHandlers(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("/api/v1/hearings", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+		}
+		var body struct {
+			Hearings []any `json:"hearings"`
+			Total    int   `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal: %v; body=%s", err, w.Body.String())
+		}
+		if body.Hearings == nil {
+			t.Errorf("hearings field must serialize as JSON array, got %q", w.Body.String())
+		}
+	})
 }
 
 func TestGetHearingHandler_NotFound(t *testing.T) {

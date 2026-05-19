@@ -47,6 +47,9 @@ func (c *dbCleanup) run() {
 	ctx := context.Background()
 	for _, q := range []string{
 		`DELETE FROM tvw_media_asset WHERE source_record_id = ANY($1)`,
+		`DELETE FROM federal_award WHERE source_record_id = ANY($1)`,
+		`DELETE FROM seattle_operating_budget WHERE source_record_id = ANY($1)`,
+		`DELETE FROM fiscalwa_vendor_payment WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
@@ -455,5 +458,138 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 	}
 	if count != 1 || company != "Sunrise Technologies Updated" || normalized != "SUNRISE TECHNOLOGIES UPDATED" {
 		t.Fatalf("count=%d company=%q normalized=%q", count, company, normalized)
+	}
+}
+
+func TestUpsertFederalAward_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "usaspending", "usaspending-award-test-1")
+	start := time.Date(2025, 10, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+
+	params := db.UpsertFederalAwardParams{
+		AwardID:        "ASST_NON_123",
+		RecipientName:  "CITY OF SEATTLE",
+		RecipientUEI:   "ABC123",
+		AwardingAgency: "Department of Transportation",
+		FundingAgency:  "Federal Highway Administration",
+		AwardType:      "Grant",
+		AwardAmount:    "12345.67",
+		StartDate:      &start,
+		EndDate:        &end,
+		PlaceStateCode: "WA",
+		PlaceCounty:    "King",
+		RawFields:      map[string]any{"source": "first"},
+		SourceRecordID: srID,
+	}
+	if err := store.UpsertFederalAward(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.AwardAmount = "20000"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertFederalAward(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(award_amount)::text
+  FROM federal_award
+ WHERE award_id = 'ASST_NON_123';`).Scan(&count, &amount); err != nil {
+		t.Fatalf("query award: %v", err)
+	}
+	if count != 1 || amount != "20000" {
+		t.Fatalf("count=%d amount=%q", count, amount)
+	}
+}
+
+func TestUpsertSeattleOperatingBudget_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "seattle_socrata", "seattle-operating-budget-test-1")
+
+	params := db.UpsertSeattleOperatingBudgetParams{
+		SourceDatasetID: "8u2j-imqx",
+		SourceRowID:     "row-1",
+		FiscalYear:      2026,
+		Service:         "Administration",
+		Department:      "Office of the City Auditor",
+		Program:         "Office of the City Auditor",
+		Fund:            "00100 - General Fund",
+		FundType:        "General Fund",
+		ExpenseType:     "Expenditures",
+		Description:     "Labor",
+		ApprovedAmount:  "1632174",
+		RawFields:       map[string]any{"source": "first"},
+		SourceRecordID:  srID,
+	}
+	if err := store.UpsertSeattleOperatingBudget(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.ApprovedAmount = "1700000"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertSeattleOperatingBudget(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(approved_amount)::text
+  FROM seattle_operating_budget
+ WHERE source_dataset_id = '8u2j-imqx' AND source_row_id = 'row-1';`).Scan(&count, &amount); err != nil {
+		t.Fatalf("query budget: %v", err)
+	}
+	if count != 1 || amount != "1700000" {
+		t.Fatalf("count=%d amount=%q", count, amount)
+	}
+}
+
+func TestUpsertFiscalWAVendorPayment_Idempotent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "fiscal_wa", "fiscalwa-vendor-payment-test-1")
+
+	params := db.UpsertFiscalWAVendorPaymentParams{
+		SourceDatasetID: "vendor-payments-2025-27",
+		SourceRowID:     "row-1",
+		Biennium:        "2025-27",
+		FiscalYear:      2026,
+		FiscalMonth:     "01",
+		AgencyNumber:    "300",
+		AgencyName:      "Social and Health Services",
+		ObjectCode:      "E",
+		ObjectCategory:  "Goods and Services",
+		SubobjectCode:   "ER",
+		SubobjectName:   "Other Contractual Services",
+		VendorName:      "HOME CARE MASTERS LLC",
+		Amount:          "1402.27",
+		RawFields:       map[string]any{"source": "first"},
+		SourceRecordID:  srID,
+	}
+	if err := store.UpsertFiscalWAVendorPayment(ctx, params); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	params.Amount = "1500.00"
+	params.RawFields = map[string]any{"source": "second"}
+	if err := store.UpsertFiscalWAVendorPayment(ctx, params); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+
+	var count int
+	var amount string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*), max(amount)::text
+  FROM fiscalwa_vendor_payment
+ WHERE source_dataset_id = 'vendor-payments-2025-27' AND source_row_id = 'row-1';`).Scan(&count, &amount); err != nil {
+		t.Fatalf("query payment: %v", err)
+	}
+	if count != 1 || amount != "1500.00" {
+		t.Fatalf("count=%d amount=%q", count, amount)
 	}
 }
