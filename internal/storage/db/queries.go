@@ -3304,12 +3304,21 @@ SELECT MIN(t.id) AS source_pk,
 			stats.Skipped++
 			continue
 		}
-		orgID, err := s.UpsertOrganization(ctx, UpsertOrganizationParams{
-			CanonicalName:   sourceName,
-			Aliases:         []string{sourceName},
-			MatchConfidence: "possible",
-			MatchNotes:      "Seeded from CSI testimony organization string; source-local identity only.",
-		})
+		orgID, err := s.organizationIDForAliasOrCanonical(ctx, sourceName)
+		if err != nil {
+			return stats, err
+		}
+		if orgID == 0 {
+			orgID, err = s.UpsertOrganization(ctx, UpsertOrganizationParams{
+				CanonicalName:   sourceName,
+				Aliases:         []string{sourceName},
+				MatchConfidence: "possible",
+				MatchNotes:      "Seeded from CSI testimony organization string; source-local identity only.",
+			})
+			if err != nil {
+				return stats, err
+			}
+		}
 		if err != nil {
 			return stats, err
 		}
@@ -3350,6 +3359,25 @@ ON CONFLICT (source_kind, source_table, source_pk, source_name) DO UPDATE SET
 	return nil
 }
 
+func (s *Store) organizationIDForAliasOrCanonical(ctx context.Context, name string) (int64, error) {
+	const q = `
+SELECT id
+  FROM organization
+ WHERE lower(canonical_name) = lower($1)
+    OR lower($1) = ANY(SELECT lower(alias) FROM unnest(aliases) alias)
+ ORDER BY CASE WHEN match_confidence = 'confirmed' THEN 0 ELSE 1 END, id
+ LIMIT 1;`
+	var id int64
+	err := s.Pool.QueryRow(ctx, q, name).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("organization alias lookup: %w", err)
+	}
+	return id, nil
+}
+
 func junkOrganizationName(raw, normalized string) bool {
 	r := strings.TrimSpace(raw)
 	n := strings.TrimSpace(normalized)
@@ -3363,7 +3391,7 @@ func junkOrganizationName(raw, normalized string) bool {
 	junk := map[string]bool{
 		"none": true, "n/a": true, "na": true, "no": true, "self": true,
 		"individual": true, "private citizen": true, "citizen": true,
-		"homeowner": true, "home owner": true, "resident": true,
+		"concerned citizen": true, "homeowner": true, "home owner": true, "resident": true,
 		"not applicable": true, "no organization": true,
 	}
 	return junk[low]
