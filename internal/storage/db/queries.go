@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/entitymatch"
 )
 
 // nonEmptyStrings returns trimmed, non-empty entries from in. Used by
@@ -1637,31 +1638,32 @@ SELECT source_system, COUNT(*), MAX(fetched_at), ARRAY_AGG(DISTINCT source_endpo
 
 // UpsertDataWAContractParams is the normalized row shape for datawa_contract.
 type UpsertDataWAContractParams struct {
-	SourceDatasetID       string
-	SourceRowID           string
-	FiscalYear            int
-	AgencyName            string
-	AgencyNumber          string
-	ContractNumber        string
-	AmendmentNumber       string
-	ContractorName        string
-	StatewideVendorNumber string
-	Description           string
-	StartDate             *time.Time
-	EndDate               *time.Time
-	PeriodStart           *time.Time
-	PeriodEnd             *time.Time
-	FederalAmount         string
-	StateAmount           string
-	OtherAmount           string
-	TotalAmount           string
-	ProcurementType       string
-	MinorityWomanOwned    string
-	SmallBusiness         string
-	VeteranOwned          string
-	Warnings              []string
-	RawFields             map[string]any
-	SourceRecordID        int64
+	SourceDatasetID          string
+	SourceRowID              string
+	FiscalYear               int
+	AgencyName               string
+	AgencyNumber             string
+	ContractNumber           string
+	AmendmentNumber          string
+	ContractorName           string
+	NormalizedContractorName string
+	StatewideVendorNumber    string
+	Description              string
+	StartDate                *time.Time
+	EndDate                  *time.Time
+	PeriodStart              *time.Time
+	PeriodEnd                *time.Time
+	FederalAmount            string
+	StateAmount              string
+	OtherAmount              string
+	TotalAmount              string
+	ProcurementType          string
+	MinorityWomanOwned       string
+	SmallBusiness            string
+	VeteranOwned             string
+	Warnings                 []string
+	RawFields                map[string]any
+	SourceRecordID           int64
 }
 
 // UpsertDataWAContract inserts or updates one normalized data.wa.gov contract row.
@@ -1677,15 +1679,15 @@ func (s *Store) UpsertDataWAContract(ctx context.Context, p UpsertDataWAContract
 	const q = `
 INSERT INTO datawa_contract (
   source_dataset_id, source_row_id, fiscal_year, agency_name, agency_number,
-  contract_number, amendment_number, contractor_name, statewide_vendor_number,
-  description, start_date, end_date, period_start, period_end,
+  contract_number, amendment_number, contractor_name, normalized_contractor_name,
+  statewide_vendor_number, description, start_date, end_date, period_start, period_end,
   federal_amount, state_amount, other_amount, total_amount, procurement_type,
   minority_woman_owned, small_business, veteran_owned, normalization_warnings,
   raw_fields, source_record_id
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-  NULLIF($15,'')::numeric, NULLIF($16,'')::numeric, NULLIF($17,'')::numeric, NULLIF($18,'')::numeric,
-  $19,$20,$21,$22,$23::jsonb,$24::jsonb,$25
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+  NULLIF($16,'')::numeric, NULLIF($17,'')::numeric, NULLIF($18,'')::numeric, NULLIF($19,'')::numeric,
+  $20,$21,$22,$23,$24::jsonb,$25::jsonb,$26
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   fiscal_year = EXCLUDED.fiscal_year,
@@ -1694,6 +1696,7 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   contract_number = EXCLUDED.contract_number,
   amendment_number = EXCLUDED.amendment_number,
   contractor_name = EXCLUDED.contractor_name,
+  normalized_contractor_name = EXCLUDED.normalized_contractor_name,
   statewide_vendor_number = EXCLUDED.statewide_vendor_number,
   description = EXCLUDED.description,
   start_date = EXCLUDED.start_date,
@@ -1714,8 +1717,8 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, p.FiscalYear, strOrNull(p.AgencyName), strOrNull(p.AgencyNumber),
-		strOrNull(p.ContractNumber), strOrNull(p.AmendmentNumber), strOrNull(p.ContractorName), strOrNull(p.StatewideVendorNumber),
-		strOrNull(p.Description), datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), datePtrOrNull(p.PeriodStart), datePtrOrNull(p.PeriodEnd),
+		strOrNull(p.ContractNumber), strOrNull(p.AmendmentNumber), strOrNull(p.ContractorName), strOrNull(defaultStr(p.NormalizedContractorName, entitymatch.NormalizedName(p.ContractorName))),
+		strOrNull(p.StatewideVendorNumber), strOrNull(p.Description), datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), datePtrOrNull(p.PeriodStart), datePtrOrNull(p.PeriodEnd),
 		p.FederalAmount, p.StateAmount, p.OtherAmount, p.TotalAmount, strOrNull(p.ProcurementType),
 		strOrNull(p.MinorityWomanOwned), strOrNull(p.SmallBusiness), strOrNull(p.VeteranOwned), string(warnings), string(raw), p.SourceRecordID,
 	)
@@ -1735,26 +1738,28 @@ func datePtrOrNull(t *time.Time) pgtype.Date {
 // UpsertDataWAMasterContractSaleParams is the normalized row shape for
 // datawa_master_contract_sale.
 type UpsertDataWAMasterContractSaleParams struct {
-	SourceDatasetID    string
-	SourceRowID        string
-	CustomerType       string
-	CustomerName       string
-	ContractNumber     string
-	ContractTitle      string
-	VendorName         string
-	ReportYear         int
-	Q1SalesReported    string
-	Q2SalesReported    string
-	Q3SalesReported    string
-	Q4SalesReported    string
-	TotalSalesReported string
-	OMWBE              string
-	VeteranOwned       string
-	SmallBusiness      string
-	DiverseOptions     string
-	Warnings           []string
-	RawFields          map[string]any
-	SourceRecordID     int64
+	SourceDatasetID        string
+	SourceRowID            string
+	CustomerType           string
+	CustomerName           string
+	NormalizedCustomerName string
+	ContractNumber         string
+	ContractTitle          string
+	VendorName             string
+	NormalizedVendorName   string
+	ReportYear             int
+	Q1SalesReported        string
+	Q2SalesReported        string
+	Q3SalesReported        string
+	Q4SalesReported        string
+	TotalSalesReported     string
+	OMWBE                  string
+	VeteranOwned           string
+	SmallBusiness          string
+	DiverseOptions         string
+	Warnings               []string
+	RawFields              map[string]any
+	SourceRecordID         int64
 }
 
 // UpsertDataWAMasterContractSale inserts or updates one normalized DataWA
@@ -1771,21 +1776,24 @@ func (s *Store) UpsertDataWAMasterContractSale(ctx context.Context, p UpsertData
 	const q = `
 INSERT INTO datawa_master_contract_sale (
   source_dataset_id, source_row_id, customer_type, customer_name,
-  contract_number, contract_title, vendor_name, report_year,
+  normalized_customer_name, contract_number, contract_title, vendor_name,
+  normalized_vendor_name, report_year,
   q1_sales_reported, q2_sales_reported, q3_sales_reported, q4_sales_reported,
   total_sales_reported, omwbe, veteran_owned, small_business, diverse_options,
   normalization_warnings, raw_fields, source_record_id
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,NULLIF($8, 0),
-  NULLIF($9,'')::numeric, NULLIF($10,'')::numeric, NULLIF($11,'')::numeric, NULLIF($12,'')::numeric,
-  NULLIF($13,'')::numeric, $14,$15,$16,$17,$18::jsonb,$19::jsonb,$20
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10, 0),
+  NULLIF($11,'')::numeric, NULLIF($12,'')::numeric, NULLIF($13,'')::numeric, NULLIF($14,'')::numeric,
+  NULLIF($15,'')::numeric, $16,$17,$18,$19,$20::jsonb,$21::jsonb,$22
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   customer_type = EXCLUDED.customer_type,
   customer_name = EXCLUDED.customer_name,
+  normalized_customer_name = EXCLUDED.normalized_customer_name,
   contract_number = EXCLUDED.contract_number,
   contract_title = EXCLUDED.contract_title,
   vendor_name = EXCLUDED.vendor_name,
+  normalized_vendor_name = EXCLUDED.normalized_vendor_name,
   report_year = EXCLUDED.report_year,
   q1_sales_reported = EXCLUDED.q1_sales_reported,
   q2_sales_reported = EXCLUDED.q2_sales_reported,
@@ -1802,7 +1810,8 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, strOrNull(p.CustomerType), strOrNull(p.CustomerName),
-		strOrNull(p.ContractNumber), strOrNull(p.ContractTitle), strOrNull(p.VendorName), p.ReportYear,
+		strOrNull(defaultStr(p.NormalizedCustomerName, entitymatch.NormalizedName(p.CustomerName))), strOrNull(p.ContractNumber), strOrNull(p.ContractTitle), strOrNull(p.VendorName),
+		strOrNull(defaultStr(p.NormalizedVendorName, entitymatch.NormalizedName(p.VendorName))), p.ReportYear,
 		p.Q1SalesReported, p.Q2SalesReported, p.Q3SalesReported, p.Q4SalesReported, p.TotalSalesReported,
 		strOrNull(p.OMWBE), strOrNull(p.VeteranOwned), strOrNull(p.SmallBusiness), strOrNull(p.DiverseOptions),
 		string(warnings), string(raw), p.SourceRecordID,
@@ -1824,7 +1833,9 @@ type UpsertDataWAITContractParams struct {
 	AgencyName                string
 	ContractNumber            string
 	ContractorName            string
+	NormalizedContractorName  string
 	ContractorDBA             string
+	NormalizedContractorDBA   string
 	CooperativePurchase       *bool
 	CooperativeName           string
 	StatewideContractPurchase *bool
@@ -1877,7 +1888,8 @@ func (s *Store) UpsertDataWAITContract(ctx context.Context, p UpsertDataWAITCont
 	const q = `
 INSERT INTO datawa_it_contract (
   source_dataset_id, source_row_id, report_fiscal_year, agency_number_agency_name,
-  agency_number, agency_name, contract_number, contractor_name, contractor_dba,
+  agency_number, agency_name, contract_number, contractor_name,
+  normalized_contractor_name, contractor_dba, normalized_contractor_dba,
   cooperative_purchase, cooperative_name, statewide_contract_purchase,
   contract_start_date, contract_end_date, fiscal_year_start, fiscal_year_end,
   it_tower_application, it_tower_compute, it_tower_data_center, it_tower_delivery,
@@ -1889,14 +1901,14 @@ INSERT INTO datawa_it_contract (
   total_contract_amount, contract_amount_explanation, normalization_warnings, raw_fields,
   source_record_id
 ) VALUES (
-  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
-  NULLIF($17,'')::numeric, NULLIF($18,'')::numeric, NULLIF($19,'')::numeric, NULLIF($20,'')::numeric,
-  NULLIF($21,'')::numeric, NULLIF($22,'')::numeric, NULLIF($23,'')::numeric, NULLIF($24,'')::numeric,
-  NULLIF($25,'')::numeric, NULLIF($26,'')::numeric, NULLIF($27,'')::numeric, NULLIF($28,'')::numeric,
-  NULLIF($29,'')::numeric, NULLIF($30,'')::numeric, NULLIF($31,'')::numeric, NULLIF($32,'')::numeric,
-  NULLIF($33,'')::numeric, NULLIF($34,'')::numeric, NULLIF($35,'')::numeric, NULLIF($36,'')::numeric,
-  NULLIF($37,'')::numeric, NULLIF($38,'')::numeric, NULLIF($39,'')::numeric, NULLIF($40,'')::numeric,
-  NULLIF($41,'')::numeric, $42, $43::jsonb, $44::jsonb, $45
+  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+  NULLIF($19,'')::numeric, NULLIF($20,'')::numeric, NULLIF($21,'')::numeric, NULLIF($22,'')::numeric,
+  NULLIF($23,'')::numeric, NULLIF($24,'')::numeric, NULLIF($25,'')::numeric, NULLIF($26,'')::numeric,
+  NULLIF($27,'')::numeric, NULLIF($28,'')::numeric, NULLIF($29,'')::numeric, NULLIF($30,'')::numeric,
+  NULLIF($31,'')::numeric, NULLIF($32,'')::numeric, NULLIF($33,'')::numeric, NULLIF($34,'')::numeric,
+  NULLIF($35,'')::numeric, NULLIF($36,'')::numeric, NULLIF($37,'')::numeric, NULLIF($38,'')::numeric,
+  NULLIF($39,'')::numeric, NULLIF($40,'')::numeric, NULLIF($41,'')::numeric, NULLIF($42,'')::numeric,
+  NULLIF($43,'')::numeric, $44, $45::jsonb, $46::jsonb, $47
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   report_fiscal_year = EXCLUDED.report_fiscal_year,
@@ -1905,7 +1917,9 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   agency_name = EXCLUDED.agency_name,
   contract_number = EXCLUDED.contract_number,
   contractor_name = EXCLUDED.contractor_name,
+  normalized_contractor_name = EXCLUDED.normalized_contractor_name,
   contractor_dba = EXCLUDED.contractor_dba,
+  normalized_contractor_dba = EXCLUDED.normalized_contractor_dba,
   cooperative_purchase = EXCLUDED.cooperative_purchase,
   cooperative_name = EXCLUDED.cooperative_name,
   statewide_contract_purchase = EXCLUDED.statewide_contract_purchase,
@@ -1945,8 +1959,10 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, p.ReportFiscalYear, strOrNull(p.AgencyNumberAgencyName),
-		strOrNull(p.AgencyNumber), strOrNull(p.AgencyName), strOrNull(p.ContractNumber), strOrNull(p.ContractorName), strOrNull(p.ContractorDBA),
-		boolPtrOrNull(p.CooperativePurchase), strOrNull(p.CooperativeName), boolPtrOrNull(p.StatewideContractPurchase),
+		strOrNull(p.AgencyNumber), strOrNull(p.AgencyName), strOrNull(p.ContractNumber), strOrNull(p.ContractorName),
+		strOrNull(defaultStr(p.NormalizedContractorName, entitymatch.NormalizedName(p.ContractorName))), strOrNull(p.ContractorDBA),
+		strOrNull(defaultStr(p.NormalizedContractorDBA, entitymatch.NormalizedName(p.ContractorDBA))), boolPtrOrNull(p.CooperativePurchase),
+		strOrNull(p.CooperativeName), boolPtrOrNull(p.StatewideContractPurchase),
 		datePtrOrNull(p.ContractStartDate), datePtrOrNull(p.ContractEndDate), strOrNull(p.FiscalYearStart), strOrNull(p.FiscalYearEnd),
 		p.ITTowerApplication, p.ITTowerCompute, p.ITTowerDataCenter, p.ITTowerDelivery, p.ITTowerEndUser, p.ITTowerITManagement,
 		p.ITTowerNetwork, p.ITTowerOutput, p.ITTowerPlatform, p.ITTowerSecurity, p.ITTowerStorage, p.OtherNonIT, p.TotalPercentage,
@@ -2039,6 +2055,198 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 	}
 	return nil
 }
+
+// Vendor/entity match candidates and decisions.
+
+type VendorEntityMatchCandidate struct {
+	ID                  int64
+	SourceKind          string
+	SourceTable         string
+	SourcePK            int64
+	SourceDatasetID     string
+	SourceRowID         string
+	SourceName          string
+	NormalizedName      string
+	OrganizationID      int64
+	CanonicalName       string
+	CandidateConfidence string
+	Evidence            []string
+	SourceRecordID      int64
+}
+
+type UpsertVendorEntityMatchCandidateParams struct {
+	SourceKind          string
+	SourceTable         string
+	SourcePK            int64
+	SourceDatasetID     string
+	SourceRowID         string
+	SourceName          string
+	NormalizedName      string
+	OrganizationID      int64
+	CandidateConfidence string
+	Evidence            []string
+	SourceRecordID      int64
+}
+
+func (s *Store) UpsertVendorEntityMatchCandidate(ctx context.Context, p UpsertVendorEntityMatchCandidateParams) (int64, error) {
+	evidence, err := json.Marshal(entitymatch.UniqueStrings(p.Evidence))
+	if err != nil {
+		return 0, fmt.Errorf("marshal evidence: %w", err)
+	}
+	const q = `
+INSERT INTO vendor_entity_match_candidate (
+  source_kind, source_table, source_pk, source_dataset_id, source_row_id,
+  source_name, normalized_name, organization_id, candidate_confidence,
+  evidence, source_record_id
+) VALUES (
+  $1::entity_match_source_kind,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9::org_match_confidence,$10::jsonb,NULLIF($11,0)
+)
+ON CONFLICT (source_kind, source_dataset_id, source_row_id, source_name, organization_id) DO UPDATE SET
+  source_table = EXCLUDED.source_table,
+  source_pk = EXCLUDED.source_pk,
+  normalized_name = EXCLUDED.normalized_name,
+  candidate_confidence = EXCLUDED.candidate_confidence,
+  evidence = EXCLUDED.evidence,
+  source_record_id = EXCLUDED.source_record_id,
+  updated_at = NOW()
+RETURNING id;`
+	var id int64
+	if err := s.Pool.QueryRow(ctx, q,
+		p.SourceKind, p.SourceTable, p.SourcePK, strOrNull(p.SourceDatasetID), strOrNull(p.SourceRowID),
+		p.SourceName, p.NormalizedName, p.OrganizationID, defaultStr(p.CandidateConfidence, "possible"), string(evidence), p.SourceRecordID,
+	).Scan(&id); err != nil {
+		return 0, fmt.Errorf("upsert vendor entity match candidate: %w", err)
+	}
+	return id, nil
+}
+
+type InsertVendorEntityMatchDecisionParams struct {
+	CandidateID    int64
+	OrganizationID int64
+	Decision       string
+	Confidence     string
+	ReviewedBy     string
+	ReviewNotes    string
+}
+
+func (s *Store) UpsertVendorEntityMatchDecision(ctx context.Context, p InsertVendorEntityMatchDecisionParams) (int64, error) {
+	const q = `
+INSERT INTO vendor_entity_match_decision (
+  candidate_id, organization_id, decision, reviewed_confidence, reviewed_by, review_notes
+) VALUES ($1,$2,$3::entity_match_decision,$4::org_match_confidence,$5,$6)
+ON CONFLICT (candidate_id) DO UPDATE SET
+  organization_id = EXCLUDED.organization_id,
+  decision = EXCLUDED.decision,
+  reviewed_confidence = EXCLUDED.reviewed_confidence,
+  reviewed_by = EXCLUDED.reviewed_by,
+  review_notes = EXCLUDED.review_notes,
+  reviewed_at = NOW()
+RETURNING id;`
+	var id int64
+	if err := s.Pool.QueryRow(ctx, q,
+		p.CandidateID, p.OrganizationID, defaultStr(p.Decision, "needs_review"), defaultStr(p.Confidence, "possible"),
+		strOrNull(p.ReviewedBy), strOrNull(p.ReviewNotes),
+	).Scan(&id); err != nil {
+		return 0, fmt.Errorf("upsert vendor entity match decision: %w", err)
+	}
+	return id, nil
+}
+
+func (s *Store) GenerateVendorEntityMatchCandidates(ctx context.Context, limit int) ([]VendorEntityMatchCandidate, error) {
+	rows, err := s.Pool.Query(ctx, vendorCandidateSourceQuery, limit)
+	if err != nil {
+		return nil, fmt.Errorf("vendor entity candidate source query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []VendorEntityMatchCandidate
+	for rows.Next() {
+		var sourceKind, sourceTable, sourceDatasetID, sourceRowID, sourceName, normalizedName string
+		var sourcePK, sourceRecordID int64
+		var orgID int64
+		var canonical string
+		var aliases []string
+		if err := rows.Scan(&sourceKind, &sourceTable, &sourcePK, &sourceDatasetID, &sourceRowID, &sourceName, &normalizedName, &sourceRecordID, &orgID, &canonical, &aliases); err != nil {
+			return nil, fmt.Errorf("scan vendor entity candidate source: %w", err)
+		}
+		if entitymatch.FalsePositiveRisk(normalizedName) {
+			continue
+		}
+		confidence, evidence := entitymatch.ConfidenceFor(sourceName, canonical, aliases)
+		if confidence == "" {
+			continue
+		}
+		id, err := s.UpsertVendorEntityMatchCandidate(ctx, UpsertVendorEntityMatchCandidateParams{
+			SourceKind:          sourceKind,
+			SourceTable:         sourceTable,
+			SourcePK:            sourcePK,
+			SourceDatasetID:     sourceDatasetID,
+			SourceRowID:         sourceRowID,
+			SourceName:          sourceName,
+			NormalizedName:      normalizedName,
+			OrganizationID:      orgID,
+			CandidateConfidence: confidence,
+			Evidence:            evidence,
+			SourceRecordID:      sourceRecordID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, VendorEntityMatchCandidate{
+			ID: id, SourceKind: sourceKind, SourceTable: sourceTable, SourcePK: sourcePK,
+			SourceDatasetID: sourceDatasetID, SourceRowID: sourceRowID, SourceName: sourceName,
+			NormalizedName: normalizedName, OrganizationID: orgID, CanonicalName: canonical,
+			CandidateConfidence: confidence, Evidence: evidence, SourceRecordID: sourceRecordID,
+		})
+	}
+	return out, rows.Err()
+}
+
+const vendorCandidateSourceQuery = `
+WITH source_names AS (
+  SELECT 'datawa_contract_contractor'::text AS source_kind, 'datawa_contract'::text AS source_table,
+         id AS source_pk, source_dataset_id, source_row_id, contractor_name AS source_name,
+         normalized_contractor_name AS normalized_name, source_record_id
+    FROM datawa_contract
+   WHERE contractor_name IS NOT NULL AND normalized_contractor_name IS NOT NULL
+  UNION ALL
+  SELECT 'datawa_master_contract_vendor', 'datawa_master_contract_sale',
+         id, source_dataset_id, source_row_id, vendor_name, normalized_vendor_name, source_record_id
+    FROM datawa_master_contract_sale
+   WHERE vendor_name IS NOT NULL AND normalized_vendor_name IS NOT NULL
+  UNION ALL
+  SELECT 'datawa_master_contract_customer', 'datawa_master_contract_sale',
+         id, source_dataset_id, source_row_id, customer_name, normalized_customer_name, source_record_id
+    FROM datawa_master_contract_sale
+   WHERE customer_name IS NOT NULL AND normalized_customer_name IS NOT NULL
+  UNION ALL
+  SELECT 'datawa_it_contract_contractor', 'datawa_it_contract',
+         id, source_dataset_id, source_row_id, contractor_name, normalized_contractor_name, source_record_id
+    FROM datawa_it_contract
+   WHERE contractor_name IS NOT NULL AND normalized_contractor_name IS NOT NULL
+  UNION ALL
+  SELECT 'datawa_it_contract_dba', 'datawa_it_contract',
+         id, source_dataset_id, source_row_id, contractor_dba, normalized_contractor_dba, source_record_id
+    FROM datawa_it_contract
+   WHERE contractor_dba IS NOT NULL AND normalized_contractor_dba IS NOT NULL
+  UNION ALL
+  SELECT 'datawa_webs_vendor', 'datawa_webs_vendor',
+         id, source_dataset_id, source_row_id, company_name, normalized_company_name, source_record_id
+    FROM datawa_webs_vendor
+   WHERE company_name IS NOT NULL AND normalized_company_name IS NOT NULL
+)
+SELECT s.source_kind, s.source_table, s.source_pk, s.source_dataset_id, s.source_row_id,
+       s.source_name, s.normalized_name, s.source_record_id,
+       o.id, o.canonical_name, o.aliases
+  FROM source_names s
+  JOIN organization o
+    ON s.normalized_name = wa_dd_normalize_entity_name(o.canonical_name)
+    OR s.normalized_name = ANY(
+       SELECT wa_dd_normalize_entity_name(alias)
+         FROM unnest(o.aliases) alias
+    )
+ ORDER BY s.source_kind, s.normalized_name, o.canonical_name
+ LIMIT CASE WHEN $1 > 0 THEN $1 ELSE 100000 END;`
 
 // UpsertFederalAwardParams is the normalized row shape for federal_award.
 type UpsertFederalAwardParams struct {
