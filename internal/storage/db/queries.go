@@ -3260,3 +3260,111 @@ UPDATE speaker_review_task
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// organization source mentions + CSI organization population
+// ---------------------------------------------------------------------------
+
+type PopulateOrganizationsStats struct {
+	MentionsUpserted      int
+	OrganizationsUpserted int
+	TestifiersLinked      int64
+	Skipped               int
+}
+
+// PopulateOrganizationsFromCSI seeds organization rows from distinct
+// testifier.raw_organization values, records source mentions, and links all
+// matching testifier rows to the resulting organization. It is intentionally
+// source-local: no cross-source merge is asserted here.
+func (s *Store) PopulateOrganizationsFromCSI(ctx context.Context) (PopulateOrganizationsStats, error) {
+	const q = `
+SELECT MIN(t.id) AS source_pk,
+       trim(t.raw_organization) AS source_name,
+       wa_dd_normalize_entity_name(trim(t.raw_organization)) AS normalized_name,
+       COUNT(*) AS occurrence_count,
+       MIN(t.source_record_id) AS source_record_id
+  FROM testifier t
+ WHERE NULLIF(trim(t.raw_organization), '') IS NOT NULL
+ GROUP BY trim(t.raw_organization), wa_dd_normalize_entity_name(trim(t.raw_organization))
+ ORDER BY COUNT(*) DESC, trim(t.raw_organization);`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return PopulateOrganizationsStats{}, fmt.Errorf("list CSI organizations: %w", err)
+	}
+	defer rows.Close()
+
+	var stats PopulateOrganizationsStats
+	for rows.Next() {
+		var sourcePK, count, sourceRecordID int64
+		var sourceName, normalized string
+		if err := rows.Scan(&sourcePK, &sourceName, &normalized, &count, &sourceRecordID); err != nil {
+			return stats, fmt.Errorf("scan CSI organization: %w", err)
+		}
+		if junkOrganizationName(sourceName, normalized) {
+			stats.Skipped++
+			continue
+		}
+		orgID, err := s.UpsertOrganization(ctx, UpsertOrganizationParams{
+			CanonicalName:   sourceName,
+			Aliases:         []string{sourceName},
+			MatchConfidence: "possible",
+			MatchNotes:      "Seeded from CSI testimony organization string; source-local identity only.",
+		})
+		if err != nil {
+			return stats, err
+		}
+		stats.OrganizationsUpserted++
+		if err := s.upsertOrganizationSourceMention(ctx, "csi_testifier", "testifier", sourcePK, sourceName, normalized, orgID, int(count), sourceRecordID, "possible"); err != nil {
+			return stats, err
+		}
+		stats.MentionsUpserted++
+		linked, err := s.LinkTestifiersToOrg(ctx, orgID, []string{sourceName})
+		if err != nil {
+			return stats, err
+		}
+		stats.TestifiersLinked += linked
+	}
+	if err := rows.Err(); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
+func (s *Store) upsertOrganizationSourceMention(ctx context.Context, sourceKind, sourceTable string, sourcePK int64, sourceName, normalized string, orgID int64, count int, sourceRecordID int64, confidence string) error {
+	const q = `
+INSERT INTO organization_source_mention (source_kind, source_table, source_pk, source_name,
+                                         normalized_name, organization_id, occurrence_count,
+                                         confidence, source_record_id)
+VALUES ($1,$2,NULLIF($3,0),$4,$5,NULLIF($6,0),$7,$8::org_match_confidence,NULLIF($9,0))
+ON CONFLICT (source_kind, source_table, source_pk, source_name) DO UPDATE SET
+  normalized_name = EXCLUDED.normalized_name,
+  organization_id = EXCLUDED.organization_id,
+  occurrence_count = EXCLUDED.occurrence_count,
+  confidence = EXCLUDED.confidence,
+  source_record_id = EXCLUDED.source_record_id,
+  last_seen_at = NOW();`
+	_, err := s.Pool.Exec(ctx, q, sourceKind, sourceTable, sourcePK, sourceName, normalized, orgID, count, defaultStr(confidence, "possible"), sourceRecordID)
+	if err != nil {
+		return fmt.Errorf("upsert organization_source_mention: %w", err)
+	}
+	return nil
+}
+
+func junkOrganizationName(raw, normalized string) bool {
+	r := strings.TrimSpace(raw)
+	n := strings.TrimSpace(normalized)
+	if r == "" || n == "" {
+		return true
+	}
+	if len([]rune(n)) < 3 {
+		return true
+	}
+	low := strings.ToLower(r)
+	junk := map[string]bool{
+		"none": true, "n/a": true, "na": true, "no": true, "self": true,
+		"individual": true, "private citizen": true, "citizen": true,
+		"homeowner": true, "home owner": true, "resident": true,
+		"not applicable": true, "no organization": true,
+	}
+	return junk[low]
+}

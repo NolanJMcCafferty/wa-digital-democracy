@@ -220,14 +220,15 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
 5. **`MatchSpeakers`** — heuristic speaker attribution. Today this
    pass largely produces `unknown_speaker` labels; it's a known
    stretch-criterion gap (see [[Comprehensive Plan §Phase 3]]).
-6. **`PDCContext`** — for any organization in
-   `config/reviewed_matches.yml`, fetches lobbying registrations and
-   campaign-finance records from PDC Socrata datasets.
+6. **`PopulateOrganizations`** — seeds `organization` rows from CSI
+   `raw_organization` strings, records `organization_source_mention`, and
+   links matching testifier rows. PDC/vendor/federal context is added later
+   through reviewable entity matching rather than a hand-edited YAML file.
 
 **Output:**
 
 - Per agenda item: 1 hearing row updated, ~1–500 testifier rows,
-  ~10–1000 transcript segments, optional org context records.
+  ~10–1000 transcript segments, and source-backed organization links where CSI org strings are present.
 - Bundle snapshot at `data/processed/bundles/wa_<biennium>_<prefix><n>.json`.
 - A summary at `data/processed/_ingest.json` with per-bill durations
   and any failures.
@@ -270,8 +271,8 @@ interact with these tables:
 | `tvw_event` | `IngestTVW` | One row per Invintus event. UPSERT on `tvw_event_id`; includes WordPress slug/link, bill/category taxonomy IDs, stream URIs, runtime, and audio/video download metadata when available. |
 | `tvw_media_asset` | `IngestTVW` | One row per Invintus media/document/link asset for an event. Replaced per event on re-ingest; captures caption VTT, agenda/document links, published MP4 metadata, thumbnails, HLS-adjacent asset URLs, and technical advanced-details JSON. |
 | `transcript_segment` | `IngestTVW` (creates), `SegmentTranscript` (tags), `MatchSpeakers` (labels) | One row per WebVTT cue. `agenda_item_id` is set when the cue falls in the bill window. |
-| `organization` | `IngestCSI` (rough), `PDCContext` (matched) | UPSERT on `canonical_name`. |
-| `org_context_record` | `PDCContext` | One row per PDC dataset row matched to an organization. |
+| `organization` | `PopulateOrganizations` | UPSERT on `canonical_name` from source-backed CSI org strings. |
+| `organization_source_mention` | `PopulateOrganizations` | One row per source-backed organization-name mention. |
 | `source_record` | every HTTP fetch via `httpx.RawSink` | Append-only. UPSERT on `(system, endpoint, url, content_hash, transform_version)` DO UPDATE SET fetched_at — so identical responses get one row that ages forward. |
 | `ingestion_run` | `Pipeline.Run`, `RunMetadataOnly` | One row per pipeline step, with `started_at`, `finished_at`, `status`, `error`. Useful for grep-style debugging across runs. |
 

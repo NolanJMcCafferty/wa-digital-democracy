@@ -44,7 +44,7 @@ internal/
   storage/objectstore/  filesystem object store for raw API responses
   render/firstpage/  Bundle JSON assembler (firstpage.Build) + DB→SelectedDemo
                 lookups
-  config/       YAML loaders (selected_demo.yml, reviewed_matches.yml)
+  config/       YAML loaders (selected_demo.yml)
 db/migrations/  goose-style SQL; project-pinned via tools/goose
 db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
                 Pool.Query methods on *Store, not codegen. Don't add to this
@@ -54,7 +54,7 @@ apps/web/       Next.js 16 + React 19 + TS + Tailwind 4. Server Components
                 because they don't go through next.config.ts rewrites.
                 Client components use the rewrite (/api/v1/* → :8080).
 config/         operator-edited YAML (issue_keywords.yml, selected_demo.yml,
-                reviewed_matches.yml)
+                selected_demo.yml)
 data/raw/       immutable raw API responses (gitignored)
 data/processed/ JSON bundles + run-summary JSONs (gitignored)
 docs/           ingestion.md is the canonical implementation doc.

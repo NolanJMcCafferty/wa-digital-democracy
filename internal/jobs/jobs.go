@@ -10,7 +10,7 @@
 //  4. IngestTVW              Invintus event detail + VTT → tvw_event, transcript_segment
 //  5. SegmentTranscript      bill open/close detection → assign agenda_item_id to segments
 //  6. MatchSpeakers          CSI testifier order around bill segment → speaker labels
-//  7. PDCContext             reviewed_matches.yml → org_context_record + testifier links
+//  7. PopulateOrganizations  CSI organization strings → organization + testifier links
 //  8. BuildBundle            (in render/firstpage)
 package jobs
 
@@ -75,7 +75,7 @@ func (p *Pipeline) Run(ctx context.Context, log func(string), ids *IDs) error {
 		{"ingest-tvw", p.IngestTVW},
 		{"segment-transcript", p.SegmentTranscript},
 		{"match-speakers", p.MatchSpeakers},
-		{"pdc-context", p.PDCContext},
+		{"populate-organizations", p.PopulateOrganizations},
 	}
 	for _, s := range steps {
 		log(fmt.Sprintf("==> %s", s.name))

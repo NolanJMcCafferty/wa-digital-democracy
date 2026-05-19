@@ -126,7 +126,6 @@ db/
 config/
   issue_keywords.yml
   selected_demo.yml       # operator-edited; pins the bill/hearing rendered
-  reviewed_matches.yml    # human-approved org matches
 infra/
   docker-compose.yml
 data/

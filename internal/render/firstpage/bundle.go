@@ -614,7 +614,7 @@ func computeLimitations(b *Bundle) []string {
 		}
 	}
 	if len(b.Organizations) == 0 {
-		out = append(out, "Organization context section is empty — populate config/reviewed_matches.yml to surface PDC/lobbying records.")
+		out = append(out, "Organization context section is empty — run populate-organizations and source-specific entity matching to surface reviewed organization records.")
 	}
 	return out
 }

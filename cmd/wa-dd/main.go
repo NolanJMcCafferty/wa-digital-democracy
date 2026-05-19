@@ -75,6 +75,8 @@ SUBCOMMANDS:
                      Pull DataWA IT contracts report rows into Postgres
   ingest-webs-vendors
                      Pull DataWA WEBS vendor rows into Postgres
+  populate-organizations
+                     Seed organization rows from CSI testimony organization strings
   generate-vendor-entity-matches
                      Generate reviewable vendor/customer organization match candidates
   ingest-usaspending-wa-awards
@@ -129,6 +131,8 @@ func main() {
 		os.Exit(runIngestITContracts(args))
 	case "ingest-webs-vendors":
 		os.Exit(runIngestWEBSVendors(args))
+	case "populate-organizations":
+		os.Exit(runPopulateOrganizations(args))
 	case "generate-vendor-entity-matches":
 		os.Exit(runGenerateVendorEntityMatches(args))
 	case "ingest-usaspending-wa-awards":
@@ -2392,4 +2396,33 @@ func minFloat(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func runPopulateOrganizations(args []string) int {
+	fs := flag.NewFlagSet("populate-organizations", flag.ContinueOnError)
+	var (
+		dsn     = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		jsonOut = fs.Bool("json", false, "write summary as JSON to stdout")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "populate-organizations: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	stats, err := store.PopulateOrganizationsFromCSI(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "populate-organizations: %v\n", err)
+		return 1
+	}
+	if *jsonOut {
+		_ = json.NewEncoder(os.Stdout).Encode(stats)
+	}
+	fmt.Fprintf(os.Stderr, "==> seeded %d organizations from CSI, recorded %d mentions, linked %d testifiers, skipped %d junk names\n", stats.OrganizationsUpserted, stats.MentionsUpserted, stats.TestifiersLinked, stats.Skipped)
+	return 0
 }

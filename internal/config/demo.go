@@ -2,7 +2,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -12,10 +11,10 @@ import (
 // SelectedDemo mirrors config/selected_demo.yml. The operator picks a
 // candidate from `wa-dd find-candidates` and pastes its IDs here.
 type SelectedDemo struct {
-	Biennium    string `yaml:"biennium"`
-	BillPrefix  string `yaml:"bill_prefix"`
-	BillNumber  int    `yaml:"bill_number"`
-	Chamber     string `yaml:"chamber"`
+	Biennium   string `yaml:"biennium"`
+	BillPrefix string `yaml:"bill_prefix"`
+	BillNumber int    `yaml:"bill_number"`
+	Chamber    string `yaml:"chamber"`
 
 	Committee struct {
 		Acronym string `yaml:"acronym"`
@@ -99,32 +98,4 @@ func (d SelectedDemo) Validate() error {
 		return fmt.Errorf("selected_demo.yml missing required fields: %v", missing)
 	}
 	return nil
-}
-
-// ReviewedMatch is one row in config/reviewed_matches.yml.
-type ReviewedMatch struct {
-	CSIOrganization      string `yaml:"csi_organization"`
-	CanonicalName        string `yaml:"canonical_name"`
-	PDCLobbyistEmployerID string `yaml:"pdc_lobbyist_employer_id"`
-	PDCCommitteeOrFilerID string `yaml:"pdc_committee_or_filer_id"`
-	Confidence           string `yaml:"confidence"`
-	Notes                string `yaml:"notes"`
-}
-
-// LoadReviewedMatches reads config/reviewed_matches.yml. An empty file is OK.
-func LoadReviewedMatches(path string) ([]ReviewedMatch, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read reviewed_matches: %w", err)
-	}
-	var d struct {
-		Matches []ReviewedMatch `yaml:"matches"`
-	}
-	if err := yaml.Unmarshal(body, &d); err != nil {
-		return nil, fmt.Errorf("parse reviewed_matches: %w", err)
-	}
-	return d.Matches, nil
 }
