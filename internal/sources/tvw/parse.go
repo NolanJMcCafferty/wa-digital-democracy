@@ -61,9 +61,17 @@ type InvintusEvent struct {
 	PublishedAudio   string          `json:"publishedAudio"`
 	AudioDownloadURI string          `json:"audioDownloadURI"`
 	VideoDownloadURI string          `json:"videoDownloadURI"`
+	DownloadLinks    DownloadLinks   `json:"downloadLinks"`
 	Keywords         []string        `json:"keywords"`
 	MediaAssets      []MediaAsset    `json:"mediaAssets"`
 	EventNotes       string          `json:"eventNotes"`
+}
+
+// DownloadLinks is the newer Invintus shape for downloadable media. Older
+// responses put these fields directly on the event payload.
+type DownloadLinks struct {
+	AudioDownloadURI string `json:"audioDownloadURI"`
+	VideoDownloadURI string `json:"videoDownloadURI"`
 }
 
 // MediaAsset is one Invintus media/document/link asset attached to an event.
@@ -134,6 +142,12 @@ func ParseEventDetail(body []byte) (*InvintusEvent, error) {
 	out := env.Data.InvintusEvent
 	if env.Data.CaptionPath != nil {
 		out.CaptionPath = *env.Data.CaptionPath
+	}
+	if out.AudioDownloadURI == "" {
+		out.AudioDownloadURI = out.DownloadLinks.AudioDownloadURI
+	}
+	if out.VideoDownloadURI == "" {
+		out.VideoDownloadURI = out.DownloadLinks.VideoDownloadURI
 	}
 	out.StreamingURIs = normalizeRawJSON(env.Data.StreamingURIs, "{}")
 	out.MediaAssets = env.Data.AdvancedAssets

@@ -173,24 +173,34 @@ func (c *Client) FetchEventDetail(ctx context.Context, eventID string) (*Invintu
 
 // FetchEventDetailWithSource calls Invintus Event/getDetailed with the richer
 // media flags needed for diarization-ready ingestion and returns provenance.
-func (c *Client) FetchEventDetailWithSource(ctx context.Context, eventID string) (*InvintusEvent, httpx.RawFetch, error) {
+func (c *Client) FetchEventDetailWithSource(ctx context.Context, eventID string, playerReferer ...string) (*InvintusEvent, httpx.RawFetch, error) {
 	if c.EmbedderKey == "" {
 		return nil, httpx.RawFetch{}, errors.New("tvw: EmbedderKey required for Invintus calls")
 	}
 	body, _ := json.Marshal(map[string]any{
-		"eventID":          eventID,
-		"clientID":         c.ClientID,
-		"showStreams":      true,
-		"showRuntime":      true,
-		"showMediaAssets":  true,
-		"showMediaDetails": true,
-		"getLive":          true,
+		"eventID":            eventID,
+		"clientID":           c.ClientID,
+		"simple":             "",
+		"showEncoder":        true,
+		"showStreams":        true,
+		"includePrivate":     false,
+		"VAST":               true,
+		"checkRecentBreak":   true,
+		"showDownloadLinks":  true,
+		"showDocumentAssets": true,
 	})
 	headers := http.Header{}
 	headers.Set("Content-Type", "application/json")
 	headers.Set("authorization", c.EmbedderAuthName)
 	headers.Set("wsc-api-key", c.EmbedderKey)
-	headers.Set("Accept", "application/json")
+	headers.Set("Accept", "*/*")
+	headers.Set("Origin", "https://tvw.org")
+	headers.Set("Referer", "https://tvw.org/")
+	xReferer := "https://tvw.org/?eventID=" + url.QueryEscape(eventID)
+	if len(playerReferer) > 0 && strings.TrimSpace(playerReferer[0]) != "" {
+		xReferer = strings.TrimSpace(playerReferer[0])
+	}
+	headers.Set("X-Referer", xReferer)
 
 	fetch, err := c.HTTP.Do(ctx, httpx.Request{
 		System:   InvintusSystemName,

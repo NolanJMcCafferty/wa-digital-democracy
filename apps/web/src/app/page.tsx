@@ -103,9 +103,6 @@ export default async function HomePage() {
       {/* Legislator mosaic */}
       <LegislatorMosaic legislators={legislators} />
 
-      {/* Leaderboard */}
-      <Leaderboard legislators={legislators} />
-
       {/* Section cards */}
       <section aria-labelledby="explore-heading" className="space-y-4">
         <h2 id="explore-heading" className="text-2xl font-bold text-stone-900">
@@ -131,10 +128,10 @@ export default async function HomePage() {
             description="Reviewed organization matches with their public-record context — lobbying registrations, campaign contributions, testimony positions."
           />
           <SectionCard
-            title="Sources"
-            count={null}
-            href="/sources"
-            description="Every official feed and public dataset behind the public record. Active sources, expansion clients, and what powers each."
+            title="Legislators"
+            count={legislators.length}
+            href="/legislators"
+            description="Every state senator and representative with their bills, sponsorships, committee assignments, and votes."
           />
         </div>
       </section>
@@ -263,92 +260,3 @@ function legislatorInitials(displayName: string): string {
     .join("");
 }
 
-function Leaderboard({
-  legislators,
-}: {
-  legislators: Awaited<ReturnType<typeof listLegislatorBundles>>;
-}) {
-  // listLegislatorBundles returns LegislatorBundleEntry which doesn't carry
-  // bill_count today (that field lives on the API list payload but isn't
-  // surfaced to the frontend type). Re-fetch briefly via the API so we can
-  // render the leaderboard. This keeps the home-page render server-side.
-  return <LeaderboardServer legislators={legislators} />;
-}
-
-async function LeaderboardServer({
-  legislators,
-}: {
-  legislators: Awaited<ReturnType<typeof listLegislatorBundles>>;
-}) {
-  const apiBase = process.env.WADD_API_URL ?? "http://localhost:8080";
-  type ApiItem = {
-    slug: string;
-    name: string;
-    display_name?: string;
-    chamber?: string;
-    district?: string;
-    party?: string;
-    bill_count: number;
-  };
-  let ranked: ApiItem[] = [];
-  try {
-    const res = await fetch(`${apiBase}/api/v1/legislators`, { cache: "no-store" });
-    if (res.ok) {
-      const all = (await res.json()) as ApiItem[];
-      ranked = [...all].sort((a, b) => b.bill_count - a.bill_count).slice(0, 10);
-    }
-  } catch {
-    // Fall back silently to the prebuilt list (no counts).
-  }
-  if (ranked.length === 0) {
-    if (legislators.length === 0) return null;
-    return null;
-  }
-  return (
-    <section aria-labelledby="leaderboard-heading" className="space-y-3">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 id="leaderboard-heading" className="text-2xl font-bold text-stone-900">
-          Top 10 sponsors
-        </h2>
-        <span className="text-xs uppercase tracking-wider text-stone-500">
-          By sponsored-bill count
-        </span>
-      </div>
-      <p className="text-sm text-stone-600">
-        Legislators ranked by the number of bills they appear on as
-        primary or secondary sponsor in the active biennium.
-      </p>
-      <ol className="divide-y divide-stone-200 rounded-lg border border-stone-300 bg-white">
-        {ranked.map((l, i) => (
-          <li key={[l.slug, l.display_name ?? l.name, l.chamber ?? "", l.district ?? ""].join("|")}>
-            <Link
-              href={`/legislators/${l.slug}`}
-              className="flex items-center gap-4 px-4 py-3 hover:bg-stone-50"
-            >
-              <span className="w-6 text-right font-mono text-sm text-stone-500">
-                {i + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="font-medium text-stone-900">
-                  {l.display_name ?? l.name}
-                </div>
-                <div className="text-xs text-stone-500">
-                  {[
-                    l.party && l.district ? `${l.party}-${l.district}` : l.party,
-                    l.chamber,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || "Chamber unknown"}
-                </div>
-              </div>
-              <span className="font-mono text-sm font-medium text-stone-700">
-                {l.bill_count.toLocaleString()}{" "}
-                <span className="text-xs font-normal text-stone-500">bills</span>
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}

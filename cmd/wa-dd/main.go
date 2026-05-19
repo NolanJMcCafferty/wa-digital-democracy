@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -123,6 +124,8 @@ func main() {
 		os.Exit(runDiscoverHearings(args))
 	case "ingest-hearings":
 		os.Exit(runIngestHearings(args))
+	case "ingest-tvw":
+		os.Exit(runIngestTVW(args))
 	case "ingest-contracts":
 		os.Exit(runIngestContracts(args))
 	case "ingest-master-contract-sales":
@@ -147,7 +150,7 @@ func main() {
 		os.Exit(runDiarizeEvent(args))
 	case "extract-speaker-evidence":
 		os.Exit(runExtractSpeakerEvidence(args))
-	case "ingest-bill", "ingest-csi", "ingest-tvw", "match-hearing":
+	case "ingest-bill", "ingest-csi", "match-hearing":
 		// All four are implemented as steps inside `build-bundle`. Direct
 		// per-step invocation isn't shipped in v1.
 		fmt.Fprintf(os.Stderr, "wa-dd %s: run via 'wa-dd build-bundle' (per-step CLI not yet exposed)\n", cmd)
@@ -473,6 +476,49 @@ func buildOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, o
 		}
 	}
 	return outPath, nil
+}
+
+func runIngestTVW(args []string) int {
+	fs := flag.NewFlagSet("ingest-tvw", flag.ContinueOnError)
+	var (
+		eventID   = fs.String("event-id", "", "TVW/Invintus event ID")
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for TVW/Invintus APIs")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*eventID) == "" {
+		fmt.Fprintln(os.Stderr, "ingest-tvw: --event-id is required")
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	deps, cleanup, err := newBuildDeps(ctx, *dsn, *rawDir, *rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-tvw: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	demo := &config.SelectedDemo{}
+	demo.TVW.EventID = strings.TrimSpace(*eventID)
+	pipeline := &jobs.Pipeline{
+		Store: deps.store,
+		TVW:   deps.tvwClient,
+		Demo:  demo,
+	}
+	ids := jobs.NewIDs()
+	fmt.Fprintf(os.Stderr, "==> ingesting TVW/Invintus event %s\n", demo.TVW.EventID)
+	if err := pipeline.IngestTVW(ctx, ids); err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-tvw: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "==> stored TVW event %s\n", ids.TVWEventID)
+	return 0
 }
 
 // runIngestSession implements `wa-dd ingest-session`: bulk-pull every
@@ -1896,8 +1942,11 @@ func runAudioCache(args []string) int {
 		eventID    = fs.String("event-id", "", "TVW/Invintus event ID to cache audio for")
 		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		outDir     = fs.String("out-dir", "data/audio", "audio cache output root")
+		rawDir     = fs.String("raw-dir", "data/raw", "filesystem root for raw TVW/Invintus API responses")
 		rateLimit  = fs.Float64("rate", 4.0, "max requests/sec for media download host")
 		keepSource = fs.Bool("keep-source", true, "keep downloaded original media next to normalized WAV")
+		printTVW   = fs.Bool("print-tvw-response", true, "print the stored TVW/Invintus Event/getDetailed response before selecting media")
+		printLimit = fs.Int("tvw-response-bytes", 65536, "maximum raw TVW/Invintus response bytes to print")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -1915,6 +1964,33 @@ func runAudioCache(args []string) int {
 		return 1
 	}
 	defer store.Close()
+
+	if *printTVW {
+		if err := printStoredTVWResponse(ctx, store, *eventID, *rawDir, *printLimit); err != nil {
+			fmt.Fprintf(os.Stderr, "audio-cache: print tvw response: %v\n", err)
+		}
+	}
+
+	candidates, err := store.ListTVWAudioSourceCandidates(ctx, *eventID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audio-cache: list audio source candidates: %v\n", err)
+		return 1
+	}
+	if len(candidates) == 0 {
+		fmt.Fprintf(os.Stderr, "audio-cache: no usable media source candidates found for event %s\n", *eventID)
+	} else {
+		fmt.Fprintf(os.Stderr, "==> media source candidates for event %s\n", *eventID)
+		for i, c := range candidates {
+			selected := ""
+			if i == 0 {
+				selected = " selected"
+			}
+			fmt.Fprintf(os.Stderr, "  priority=%d kind=%s%s url=%s\n", c.Priority, c.Kind, selected, c.URL)
+		}
+		if strings.Contains(candidates[0].Kind, "video") {
+			fmt.Fprintln(os.Stderr, "  note: selected a video fallback because no higher-priority audio source URL was present")
+		}
+	}
 
 	src, err := store.BestTVWAudioSource(ctx, *eventID)
 	if err != nil {
@@ -1962,6 +2038,59 @@ func runAudioCache(args []string) int {
 	return 0
 }
 
+func printStoredTVWResponse(ctx context.Context, store *db.Store, eventID, rawDir string, limit int) error {
+	const q = `
+SELECT sr.id, sr.source_system, sr.source_endpoint, sr.source_url, sr.raw_path,
+       COALESCE(sr.content_type, ''), sr.fetched_at
+  FROM tvw_event te
+  JOIN source_record sr ON sr.id = te.source_record_id
+ WHERE te.tvw_event_id = $1;`
+	var (
+		sourceRecordID int64
+		system         string
+		endpoint       string
+		sourceURL      string
+		rawPath        string
+		contentType    string
+		fetchedAt      time.Time
+	)
+	if err := store.Pool.QueryRow(ctx, q, eventID).Scan(
+		&sourceRecordID, &system, &endpoint, &sourceURL, &rawPath, &contentType, &fetchedAt,
+	); err != nil {
+		return err
+	}
+
+	fullPath := filepath.Join(rawDir, rawPath)
+	body, err := os.ReadFile(fullPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", fullPath, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "==> stored TVW/Invintus response for event %s\n", eventID)
+	fmt.Fprintf(os.Stderr, "  source_record_id=%d system=%s endpoint=%s fetched_at=%s\n",
+		sourceRecordID, system, endpoint, fetchedAt.Format(time.RFC3339))
+	fmt.Fprintf(os.Stderr, "  source_url=%s\n", sourceURL)
+	fmt.Fprintf(os.Stderr, "  raw_path=%s content_type=%s bytes=%d\n", fullPath, contentType, len(body))
+
+	printBody := body
+	truncated := false
+	if limit > 0 && len(printBody) > limit {
+		printBody = printBody[:limit]
+		truncated = true
+	}
+
+	var pretty bytes.Buffer
+	if json.Valid(printBody) && json.Indent(&pretty, printBody, "", "  ") == nil {
+		fmt.Fprintln(os.Stderr, pretty.String())
+	} else {
+		fmt.Fprintln(os.Stderr, string(printBody))
+	}
+	if truncated {
+		fmt.Fprintf(os.Stderr, "  ... truncated raw response at %d of %d bytes; increase --tvw-response-bytes to print more\n", limit, len(body))
+	}
+	return nil
+}
+
 func runDiarizeEvent(args []string) int {
 	fs := flag.NewFlagSet("diarize-event", flag.ContinueOnError)
 	var (
@@ -1990,11 +2119,13 @@ func runDiarizeEvent(args []string) int {
 	}
 	defer store.Close()
 
-	audio, err := store.LatestTVWAudioAsset(ctx, *eventID)
+	audio, createdAsset, err := store.EnsureTVWAudioAsset(ctx, *eventID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "diarize-event: latest audio asset: %v\n", err)
-		fmt.Fprintln(os.Stderr, "hint: run `wa-dd audio-cache --event-id <id>` first")
+		fmt.Fprintf(os.Stderr, "diarize-event: resolve audio source: %v\n", err)
 		return 1
+	}
+	if createdAsset {
+		fmt.Fprintf(os.Stderr, "==> created audio source asset %d from %s (%s)\n", audio.ID, audio.SourceURL, audio.SourceKind)
 	}
 
 	var p diarization.Provider
@@ -2021,6 +2152,11 @@ func runDiarizeEvent(args []string) int {
 	if *useURL && audio.SourceURL != "" {
 		in.URL = audio.SourceURL
 	} else {
+		if strings.TrimSpace(audio.NormalizedPath) == "" {
+			_ = store.FailDiarizationJob(ctx, jobID, "no normalized audio path; run audio-cache first or omit --use-source-url=false")
+			fmt.Fprintln(os.Stderr, "diarize-event: no normalized audio path; run `wa-dd audio-cache --event-id <id>` first or omit --use-source-url=false")
+			return 1
+		}
 		b, err := os.ReadFile(audio.NormalizedPath)
 		if err != nil {
 			_ = store.FailDiarizationJob(ctx, jobID, err.Error())

@@ -139,6 +139,7 @@ func listBillsHandler(store *db.Store) http.HandlerFunc {
 			Status:      strings.TrimSpace(q.Get("status")),
 			Sponsor:     strings.TrimSpace(q.Get("sponsor")),
 			LeadSponsor: strings.TrimSpace(q.Get("lead_sponsor")),
+			BillIDs:     splitCSV(q.Get("bill_ids")),
 		}
 		// Soft-parse limit/offset; bad values fall back to defaults.
 		params.Limit = billsDefaultLimit
@@ -263,6 +264,28 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// splitCSV parses a "HB1006,SB5001" query-string value into trimmed,
+// non-empty parts. Returns nil for empty input so SearchBills's
+// len-check skips the filter.
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func upper(s string) string {

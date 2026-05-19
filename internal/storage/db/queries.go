@@ -892,13 +892,14 @@ type ListedBill struct {
 // strings are no-ops. The handler is responsible for clamping limit
 // and offset to safe ranges.
 type BillSearchParams struct {
-	Query       string // matches title or bill_number (ILIKE)
-	Prefix      string // exact match on bill.prefix (HB, SB, HJR, …)
-	Chamber     string // "House" | "Senate"
-	Party       string // "D" | "R" — filters on lead sponsor's party
-	Status      string // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
-	Sponsor     string // legislator slug; matches any sponsor row
-	LeadSponsor string // legislator slug; matches the Primary sponsor only
+	Query       string   // matches title or bill_number (ILIKE)
+	Prefix      string   // exact match on bill.prefix (HB, SB, HJR, …)
+	Chamber     string   // "House" | "Senate"
+	Party       string   // "D" | "R" — filters on lead sponsor's party
+	Status      string   // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
+	Sponsor     string   // legislator slug; matches any sponsor row
+	LeadSponsor string   // legislator slug; matches the Primary sponsor only
+	BillIDs     []string // restrict to this set of bill_ids (used by issue pages); empty = no filter
 	Limit       int
 	Offset      int
 }
@@ -975,6 +976,10 @@ EXISTS (
 	if p.LeadSponsor != "" {
 		idx := push(p.LeadSponsor)
 		where = append(where, fmt.Sprintf("trim(both '-' from regexp_replace(replace(lower(primary_sponsor.name), '&', ' and '), '[^a-z0-9]+', '-', 'g')) = $%d", idx))
+	}
+	if len(p.BillIDs) > 0 {
+		idx := push(p.BillIDs)
+		where = append(where, fmt.Sprintf("b.bill_id = ANY($%d)", idx))
 	}
 	if p.Status != "" {
 		// Status accepts either a coarse bucket ("passed", "failed",
@@ -2743,13 +2748,10 @@ type TVWAudioSource struct {
 	TVWEventID string
 	URL        string
 	Kind       string
+	Priority   int
 }
 
-// BestTVWAudioSource returns the preferred downloadable source for an event:
-// direct audio first, then audio media assets, then video fallback for ffmpeg
-// extraction.
-func (s *Store) BestTVWAudioSource(ctx context.Context, eventID string) (TVWAudioSource, error) {
-	const q = `
+const tvwAudioSourceCandidatesSQL = `
 WITH candidates AS (
   SELECT tvw_event_id, audio_download_url AS url, 'audio_download_url' AS kind, 1 AS priority
     FROM tvw_event WHERE tvw_event_id = $1 AND NULLIF(audio_download_url, '') IS NOT NULL
@@ -2766,12 +2768,37 @@ WITH candidates AS (
   SELECT tvw_event_id, file_url AS url, 'media_asset_video' AS kind, 5 AS priority
     FROM tvw_media_asset WHERE tvw_event_id = $1 AND asset_type ILIKE 'video' AND NULLIF(file_url, '') IS NOT NULL
 )
-SELECT tvw_event_id, url, kind FROM candidates ORDER BY priority LIMIT 1;`
+SELECT tvw_event_id, url, kind, priority FROM candidates`
+
+// BestTVWAudioSource returns the preferred downloadable source for an event:
+// direct audio first, then audio media assets, then video fallback for ffmpeg
+// extraction.
+func (s *Store) BestTVWAudioSource(ctx context.Context, eventID string) (TVWAudioSource, error) {
 	var out TVWAudioSource
-	if err := s.Pool.QueryRow(ctx, q, eventID).Scan(&out.TVWEventID, &out.URL, &out.Kind); err != nil {
+	if err := s.Pool.QueryRow(ctx, tvwAudioSourceCandidatesSQL+` ORDER BY priority LIMIT 1;`, eventID).Scan(&out.TVWEventID, &out.URL, &out.Kind, &out.Priority); err != nil {
 		return TVWAudioSource{}, fmt.Errorf("best tvw audio source: %w", err)
 	}
 	return out, nil
+}
+
+// ListTVWAudioSourceCandidates returns every usable TVW/Invintus media URL
+// audio-cache considered, in the same priority order BestTVWAudioSource uses.
+func (s *Store) ListTVWAudioSourceCandidates(ctx context.Context, eventID string) ([]TVWAudioSource, error) {
+	rows, err := s.Pool.Query(ctx, tvwAudioSourceCandidatesSQL+` ORDER BY priority, url;`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("list tvw audio source candidates: %w", err)
+	}
+	defer rows.Close()
+
+	out := []TVWAudioSource{}
+	for rows.Next() {
+		var c TVWAudioSource
+		if err := rows.Scan(&c.TVWEventID, &c.URL, &c.Kind, &c.Priority); err != nil {
+			return nil, fmt.Errorf("scan tvw audio source candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 type UpsertTVWAudioAssetParams struct {
@@ -2792,9 +2819,8 @@ func (s *Store) UpsertTVWAudioAsset(ctx context.Context, p UpsertTVWAudioAssetPa
 INSERT INTO tvw_audio_asset (tvw_event_id, source_url, source_kind, original_path,
                              normalized_path, content_hash, duration_ms,
                              sample_rate, channels, codec)
-VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,0),NULLIF($8,0),NULLIF($9,0),NULLIF($10,''))
-ON CONFLICT (tvw_event_id, content_hash) DO UPDATE SET
-  source_url = EXCLUDED.source_url,
+VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,0),NULLIF($8,0),NULLIF($9,0),NULLIF($10,''))
+ON CONFLICT (tvw_event_id, source_url) DO UPDATE SET
   source_kind = EXCLUDED.source_kind,
   original_path = EXCLUDED.original_path,
   normalized_path = EXCLUDED.normalized_path,
@@ -2813,6 +2839,26 @@ RETURNING id;`
 	return id, nil
 }
 
+type UpsertTVWAudioSourceParams struct {
+	TVWEventID string
+	SourceURL  string
+	SourceKind string
+}
+
+func (s *Store) UpsertTVWAudioSource(ctx context.Context, p UpsertTVWAudioSourceParams) (int64, error) {
+	const q = `
+INSERT INTO tvw_audio_asset (tvw_event_id, source_url, source_kind)
+VALUES ($1,$2,$3)
+ON CONFLICT (tvw_event_id, source_url) DO UPDATE SET
+  source_kind = EXCLUDED.source_kind
+RETURNING id;`
+	var id int64
+	if err := s.Pool.QueryRow(ctx, q, p.TVWEventID, p.SourceURL, p.SourceKind).Scan(&id); err != nil {
+		return 0, fmt.Errorf("upsert tvw_audio_asset source: %w", err)
+	}
+	return id, nil
+}
+
 type LatestTVWAudioAsset struct {
 	ID             int64
 	TVWEventID     string
@@ -2826,8 +2872,9 @@ type LatestTVWAudioAsset struct {
 
 func (s *Store) LatestTVWAudioAsset(ctx context.Context, eventID string) (LatestTVWAudioAsset, error) {
 	const q = `
-SELECT id, tvw_event_id, source_url, source_kind, original_path,
-       normalized_path, content_hash, COALESCE(duration_ms, 0)
+SELECT id, tvw_event_id, source_url, source_kind,
+       COALESCE(original_path, ''), COALESCE(normalized_path, ''),
+       COALESCE(content_hash, ''), COALESCE(duration_ms, 0)
   FROM tvw_audio_asset
  WHERE tvw_event_id = $1
  ORDER BY created_at DESC, id DESC
@@ -2838,6 +2885,35 @@ SELECT id, tvw_event_id, source_url, source_kind, original_path,
 		return LatestTVWAudioAsset{}, fmt.Errorf("latest tvw_audio_asset: %w", err)
 	}
 	return out, nil
+}
+
+func (s *Store) EnsureTVWAudioAsset(ctx context.Context, eventID string) (LatestTVWAudioAsset, bool, error) {
+	audio, err := s.LatestTVWAudioAsset(ctx, eventID)
+	if err == nil {
+		return audio, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return LatestTVWAudioAsset{}, false, err
+	}
+
+	src, err := s.BestTVWAudioSource(ctx, eventID)
+	if err != nil {
+		return LatestTVWAudioAsset{}, false, fmt.Errorf("resolve tvw audio source: %w", err)
+	}
+	id, err := s.UpsertTVWAudioSource(ctx, UpsertTVWAudioSourceParams{
+		TVWEventID: eventID,
+		SourceURL:  src.URL,
+		SourceKind: src.Kind,
+	})
+	if err != nil {
+		return LatestTVWAudioAsset{}, false, err
+	}
+	return LatestTVWAudioAsset{
+		ID:         id,
+		TVWEventID: src.TVWEventID,
+		SourceURL:  src.URL,
+		SourceKind: src.Kind,
+	}, true, nil
 }
 
 type CreateDiarizationJobParams struct {

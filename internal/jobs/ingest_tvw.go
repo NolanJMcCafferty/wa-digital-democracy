@@ -23,7 +23,11 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 	if err != nil {
 		return fmt.Errorf("wp video metadata: %w", err)
 	}
-	ev, evFetch, err := p.TVW.FetchEventDetailWithSource(ctx, eventID)
+	playerReferer := ""
+	if wp != nil {
+		playerReferer = wp.Link
+	}
+	ev, evFetch, err := p.TVW.FetchEventDetailWithSource(ctx, eventID, playerReferer)
 	if err != nil {
 		return fmt.Errorf("Event/getDetailed: %w", err)
 	}

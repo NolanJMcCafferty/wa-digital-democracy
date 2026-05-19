@@ -1,12 +1,22 @@
 import Link from "next/link";
 import {
-  listHearingBundles,
   listLocalBundles,
   loadBundle,
+  searchBills,
+  searchHearings,
   slugify,
 } from "@/lib/loadBundle";
-import { formatDateTime } from "@/lib/format";
 import type { Bundle, Position } from "@/lib/bundle";
+import {
+  BillSearchResults,
+  parseBillFilters,
+  type RawBillSearchParams,
+} from "../../bills/BillSearchResults";
+import {
+  HearingSearchResults,
+  hearingFiltersToSearch,
+  parseHearingFilters,
+} from "../../hearings/HearingSearchResults";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
@@ -18,17 +28,31 @@ export type IssuePageConfig = {
   keywords: string[];
 };
 
-export async function IssuePage({ config }: { config: IssuePageConfig }) {
+export async function IssuePage({
+  config,
+  searchParams,
+}: {
+  config: IssuePageConfig;
+  searchParams?: RawBillSearchParams;
+}) {
+  const filters = parseBillFilters(searchParams ?? {});
+  const hearingFilters = parseHearingFilters(searchParams ?? {});
   const entries = await listLocalBundles();
   const allBundles = (
     await Promise.all(
       entries.map((e) => loadBundle(e.biennium, e.billPrefix, e.billNumber))
     )
   ).filter((b): b is Bundle => Boolean(b));
-  const allHearings = await listHearingBundles();
   const bundles = allBundles.filter((b) => bundleMatchesIssue(b, config));
-  const billIDs = new Set(bundles.map((b) => b.bill.bill_id));
-  const hearings = allHearings.filter((h) => billIDs.has(h.billId));
+  const matchedBillIds = bundles.map((b) => b.bill.bill_id);
+
+  const billResult = matchedBillIds.length === 0
+    ? null
+    : await searchBills({ ...filters, billIds: matchedBillIds });
+
+  const hearingResult = await searchHearings(
+    hearingFiltersToSearch(hearingFilters, config.keywords),
+  );
 
   const totals = bundles.reduce(
     (acc, b) => {
@@ -71,16 +95,11 @@ export async function IssuePage({ config }: { config: IssuePageConfig }) {
 
   return (
     <article className="space-y-10">
-      <section className="space-y-4">
-        <p className="text-sm uppercase tracking-wider text-stone-500">
-          Issue page
-        </p>
-        <div className="space-y-3">
-          <h1 className="text-3xl font-bold tracking-tight text-stone-900">
-            {config.title}
-          </h1>
-          <p className="max-w-3xl text-stone-600">{config.description}</p>
-        </div>
+      <section className="space-y-3">
+        <h1 className="text-3xl font-bold tracking-tight text-stone-900">
+          {config.title}
+        </h1>
+        <p className="max-w-3xl text-stone-600">{config.description}</p>
       </section>
 
       {bundles.length === 0 ? (
@@ -95,7 +114,7 @@ export async function IssuePage({ config }: { config: IssuePageConfig }) {
             </h2>
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
               <Metric label="Bills" value={totals.bills.toLocaleString()} />
-              <Metric label="Hearings" value={hearings.length.toLocaleString()} />
+              <Metric label="Hearings" value={hearingResult.total.toLocaleString()} />
               <Metric label="Signed in" value={totals.testifiers.toLocaleString()} />
               <Metric label="Testified" value={totals.testified.toLocaleString()} />
               <Metric label="Transcript" value={`${totals.transcriptSegments.toLocaleString()} excerpts`} />
@@ -117,67 +136,35 @@ export async function IssuePage({ config }: { config: IssuePageConfig }) {
             </p>
           </section>
 
-          <section aria-labelledby={`${config.slug}-bills`} className="space-y-4">
-            <h2 id={`${config.slug}-bills`} className="text-xl font-semibold text-stone-900">
-              Bills in this issue view
-            </h2>
-            <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
-              {bundles.map((b) => {
-                const billSlug = b.bill.bill_id.replace(/\s+/g, "");
-                return (
-                  <li key={`${b.bill.biennium}-${b.bill.bill_id}`} className="p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-1">
-                        <Link
-                          href={`/bills/${b.bill.biennium}/${billSlug}`}
-                          className="font-medium text-blue-700 underline hover:text-blue-900"
-                        >
-                          {b.bill.bill_id} — {b.bill.title}
-                        </Link>
-                        <p className="text-sm text-stone-600">
-                          {b.status.current ?? "Status unavailable"}
-                        </p>
-                        <p className="text-xs text-stone-500">
-                          {b.testifiers.length.toLocaleString()} sign-ins · {b.transcript?.segments?.length ?? 0} transcript excerpts · {b.sources.length} sources
-                        </p>
-                      </div>
-                      {b.hearing?.csi_agenda_item_id ? (
-                        <Link
-                          href={`/hearings/${b.hearing.csi_agenda_item_id}`}
-                          className="text-sm text-blue-700 underline hover:text-blue-900"
-                        >
-                          Hearing page →
-                        </Link>
-                      ) : null}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
+          {billResult ? (
+            <section aria-labelledby={`${config.slug}-bills`} className="space-y-4">
+              <h2 id={`${config.slug}-bills`} className="text-xl font-semibold text-stone-900">
+                Bills in this issue view
+              </h2>
+              <BillSearchResults
+                basePath={`/issues/${config.slug}`}
+                filters={filters}
+                bills={billResult.bills}
+                total={billResult.total}
+                offset={billResult.offset}
+                facets={billResult.facets}
+              />
+            </section>
+          ) : null}
 
           <section aria-labelledby={`${config.slug}-hearings`} className="space-y-4">
             <h2 id={`${config.slug}-hearings`} className="text-xl font-semibold text-stone-900">
               Hearings
             </h2>
-            <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
-              {hearings.map((h) => (
-                <li key={h.csiAgendaItemId} className="p-4">
-                  <Link
-                    href={`/hearings/${h.csiAgendaItemId}`}
-                    className="font-medium text-blue-700 underline hover:text-blue-900"
-                  >
-                    {h.title}
-                  </Link>
-                  <p className="mt-1 text-sm text-stone-600">
-                    {h.committeeName} · {formatDateTime(h.meetingDatetime)}
-                  </p>
-                  <p className="mt-1 text-xs text-stone-500">
-                    {h.billId} · CSI agenda item {h.csiAgendaItemId}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            <HearingSearchResults
+              basePath={`/issues/${config.slug}`}
+              filters={hearingFilters}
+              hearings={hearingResult.hearings}
+              total={hearingResult.total}
+              offset={hearingResult.offset}
+              facets={hearingResult.facets}
+              hiddenFilters={["topic"]}
+            />
           </section>
 
           <section aria-labelledby={`${config.slug}-orgs`} className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">

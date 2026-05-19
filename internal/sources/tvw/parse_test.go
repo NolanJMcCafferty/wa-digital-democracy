@@ -69,6 +69,39 @@ func TestParseEventDetailNullCaption(t *testing.T) {
 	}
 }
 
+func TestParseEventDetailDownloadLinks(t *testing.T) {
+	body := []byte(`{
+	  "errors": {"hasError": false, "message": null},
+	  "data": {
+	    "eventID": "2026051107",
+	    "clientID": "9375922947",
+	    "startDateTime": "2026-05-18 13:30:00",
+	    "title": "House Environment & Energy",
+	    "captionPath": "https://m-download.invintus.com/9375922947/caption.vtt",
+	    "downloadLinks": {
+	      "audioDownloadURI": "https://m-download.invintus.com/9375922947/event_audio.mp3",
+	      "videoDownloadURI": "https://m-download.invintus.com/9375922947/event.mp4"
+	    },
+	    "mediaAssets": []
+	  },
+	  "meta": null
+	}`)
+	ev, err := ParseEventDetail(body)
+	if err != nil {
+		t.Fatalf("ParseEventDetail: %v", err)
+	}
+	if ev.AudioDownloadURI != "https://m-download.invintus.com/9375922947/event_audio.mp3" {
+		t.Fatalf("AudioDownloadURI = %q", ev.AudioDownloadURI)
+	}
+	if ev.VideoDownloadURI != "https://m-download.invintus.com/9375922947/event.mp4" {
+		t.Fatalf("VideoDownloadURI = %q", ev.VideoDownloadURI)
+	}
+	norm := NormalizeFromInvintus(ev, nil)
+	if norm.AudioDownloadURL != ev.AudioDownloadURI || norm.VideoDownloadURL != ev.VideoDownloadURI {
+		t.Fatalf("normalized download URLs missing: audio=%q video=%q", norm.AudioDownloadURL, norm.VideoDownloadURL)
+	}
+}
+
 func TestParseWPVideoList_AndEventIDExtract(t *testing.T) {
 	posts, err := ParseWPVideoList(read(t, "wp-video-list.json"))
 	if err != nil {

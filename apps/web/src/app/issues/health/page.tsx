@@ -1,9 +1,15 @@
 import { IssuePage } from "../_shared/IssuePage";
 import { issuePageConfig } from "../_shared/config";
+import type { RawBillSearchParams } from "../../bills/BillSearchResults";
 
 const config = issuePageConfig("health");
 
-export default function HealthIssuePage() {
+export default async function HealthIssuePage({
+  searchParams,
+}: {
+  searchParams: Promise<RawBillSearchParams>;
+}) {
   if (!config) throw new Error("Missing health issue page config");
-  return <IssuePage config={config} />;
+  const raw = await searchParams;
+  return <IssuePage config={config} searchParams={raw} />;
 }
