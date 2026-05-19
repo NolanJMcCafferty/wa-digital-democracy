@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -537,7 +538,8 @@ func runIngestSession(args []string) int {
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _session.json is written")
-		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
+		rateLimit = fs.Float64("rate", 25.0, "max requests/sec for the LWS host")
+		workers   = fs.Int("workers", 4, "number of concurrent bill workers. HTTP calls still respect --rate per LWS host.")
 		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
 		onlyTypes = fs.String("only-types", "", "comma-separated list of bill prefixes to keep (e.g. \"HB,SB\"). Empty = all.")
 		skipFresh = fs.Duration("skip-fresh", 24*time.Hour, "skip bills whose DB row was upserted within this window (0 disables). Lets a killed run resume without re-fetching already-ingested bills.")
@@ -629,59 +631,106 @@ func runIngestSession(args []string) int {
 		fmt.Fprintf(os.Stderr, "==> %d unique bills to ingest\n", len(bills))
 	}
 
-	// 2. Loop with per-bill failure isolation.
+	// 2. Process with per-bill failure isolation. Multiple workers improve
+	// wall-clock time while the shared httpx client still enforces the LWS
+	// per-host token bucket from --rate. Results are sorted back into input
+	// order so _session.json stays stable.
 	type result struct {
+		Index      int    `json:"-"`
 		Bill       string `json:"bill"`
 		Status     string `json:"status"`
 		DurationMS int64  `json:"duration_ms"`
 		Error      string `json:"error,omitempty"`
 	}
-	results := make([]result, 0, len(bills))
 	startedAt := time.Now()
-	failures := 0
-
-	for i, b := range bills {
-		demo := &config.SelectedDemo{
-			Biennium:   b.biennium,
-			BillPrefix: b.prefix,
-			BillNumber: b.number,
-		}
-		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(bills), demo.BillID())
-		t0 := time.Now()
-
-		pipeline := &jobs.Pipeline{
-			Store: deps.store,
-			LWS:   deps.lwsClient,
-			Demo:  demo,
-		}
-		ids := jobs.NewIDs()
-		// Quiet per-bill log: ingest-bill makes 4 SOAP calls; logging
-		// every step at this scale would drown the output. Only failures
-		// surface to stderr.
-		stepErr := pipeline.RunMetadataOnly(ctx, func(string) {}, ids)
-		dur := time.Since(t0)
-
-		if stepErr != nil {
-			failures++
-			fmt.Fprintf(os.Stderr, "%s FAIL (%s): %v\n", prefix, dur.Round(time.Millisecond), stepErr)
-			results = append(results, result{
-				Bill: demo.BillID(), Status: "failed",
-				DurationMS: dur.Milliseconds(), Error: stepErr.Error(),
-			})
-			if ctx.Err() != nil {
-				break
-			}
-			continue
-		}
-		// Light progress every 50 bills so an hour-long run doesn't go silent.
-		if (i+1)%50 == 0 || i+1 == len(bills) {
-			fmt.Fprintf(os.Stderr, "%s ok (%s)\n", prefix, dur.Round(time.Millisecond))
-		}
-		results = append(results, result{
-			Bill: demo.BillID(), Status: "ok",
-			DurationMS: dur.Milliseconds(),
-		})
+	workerCount := *workers
+	if workerCount <= 0 {
+		workerCount = 1
 	}
+	if workerCount > len(bills) && len(bills) > 0 {
+		workerCount = len(bills)
+	}
+	if workerCount == 0 {
+		workerCount = 1
+	}
+	fmt.Fprintf(os.Stderr, "==> ingest-session workers=%d rate=%.2f req/sec\n", workerCount, *rateLimit)
+
+	type job struct {
+		index int
+		bill  billRef
+	}
+	jobsCh := make(chan job)
+	resultsCh := make(chan result, len(bills))
+	var wg sync.WaitGroup
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := range jobsCh {
+				b := j.bill
+				demo := &config.SelectedDemo{
+					Biennium:   b.biennium,
+					BillPrefix: b.prefix,
+					BillNumber: b.number,
+				}
+				prefix := fmt.Sprintf("[%d/%d] %s", j.index+1, len(bills), demo.BillID())
+				t0 := time.Now()
+				pipeline := &jobs.Pipeline{
+					Store: deps.store,
+					LWS:   deps.lwsClient,
+					Demo:  demo,
+				}
+				ids := jobs.NewIDs()
+				stepErr := pipeline.RunMetadataOnly(ctx, func(string) {}, ids)
+				dur := time.Since(t0)
+				res := result{Index: j.index, Bill: demo.BillID(), DurationMS: dur.Milliseconds()}
+				if stepErr != nil {
+					res.Status = "failed"
+					res.Error = stepErr.Error()
+					fmt.Fprintf(os.Stderr, "%s FAIL worker=%d (%s): %v\n", prefix, workerID, dur.Round(time.Millisecond), stepErr)
+				} else {
+					res.Status = "ok"
+					// Light progress every 50 bills so long runs don't go silent.
+					if (j.index+1)%50 == 0 || j.index+1 == len(bills) {
+						fmt.Fprintf(os.Stderr, "%s ok worker=%d (%s)\n", prefix, workerID, dur.Round(time.Millisecond))
+					}
+				}
+				select {
+				case resultsCh <- res:
+				case <-ctx.Done():
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
+			}
+		}(w + 1)
+	}
+
+	go func() {
+		defer close(jobsCh)
+		for i, b := range bills {
+			select {
+			case jobsCh <- job{index: i, bill: b}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	results := make([]result, 0, len(bills))
+	failures := 0
+	for res := range resultsCh {
+		if res.Status == "failed" {
+			failures++
+		}
+		results = append(results, res)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Index < results[j].Index })
 
 	summary := struct {
 		StartedAt  time.Time `json:"started_at"`
@@ -2243,12 +2292,12 @@ func diarizeOneEvent(ctx context.Context, store *db.Store, p diarization.Provide
 func runDiarizePending(args []string) int {
 	fs := flag.NewFlagSet("diarize-pending", flag.ContinueOnError)
 	var (
-		dsn      = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		provider = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
-		model    = fs.String("model", "nova-3", "provider model")
-		outDir   = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
-		apiKey   = fs.String("api-key", env("DEEPGRAM_API_KEY", ""), "provider API key (defaults to DEEPGRAM_API_KEY)")
-		useURL   = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
+		dsn         = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		provider    = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
+		model       = fs.String("model", "nova-3", "provider model")
+		outDir      = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
+		apiKey      = fs.String("api-key", env("DEEPGRAM_API_KEY", ""), "provider API key (defaults to DEEPGRAM_API_KEY)")
+		useURL      = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
 		limit       = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
 		dryRun      = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
 		concurrency = fs.Int("concurrency", 10, "max diarization jobs to run in parallel")
