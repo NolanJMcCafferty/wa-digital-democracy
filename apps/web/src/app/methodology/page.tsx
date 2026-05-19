@@ -78,57 +78,6 @@ export default function MethodologyPage() {
 
       <section className="space-y-4">
         <h2 className="text-2xl font-semibold text-stone-900">
-          We show confidence and limits
-        </h2>
-        <ul className="list-disc space-y-2 pl-6 text-stone-700">
-          <li>
-            <strong>Confirmed facts</strong> come directly from official public
-            records or reviewed matches.
-          </li>
-          <li>
-            <strong>Likely matches</strong> are useful leads, but they should be
-            treated with caution until reviewed.
-          </li>
-          <li>
-            <strong>Unknown speakers or organizations</strong> stay unknown
-            rather than being guessed into certainty.
-          </li>
-          <li>
-            <strong>Money, lobbying, and contract records</strong> are shown as
-            context. They do not prove why someone testified or why a policy
-            moved.
-          </li>
-        </ul>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-2xl font-semibold text-stone-900">
-          What each page is trying to answer
-        </h2>
-        <ul className="list-disc space-y-2 pl-6 text-stone-700">
-          <li>
-            <strong>Bill pages</strong> explain what the proposal does, where it
-            is in the process, who sponsored it, and what hearings/testimony are
-            connected to it.
-          </li>
-          <li>
-            <strong>Hearing pages</strong> bring together the agenda, testimony
-            positions, video, and transcript excerpts for a public meeting.
-          </li>
-          <li>
-            <strong>Organization pages</strong> show where an organization
-            appears in testimony and, when confidently matched, related public
-            lobbying, campaign-finance, contract, or spending context.
-          </li>
-          <li>
-            <strong>Issue pages</strong> collect related bills, hearings,
-            testimony, organizations, and source coverage around a topic.
-          </li>
-        </ul>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-2xl font-semibold text-stone-900">
           What this site is not
         </h2>
         <ul className="list-disc space-y-2 pl-6 text-stone-700">

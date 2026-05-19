@@ -401,15 +401,16 @@ const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" 
     system: "committee_schedules",
     label: "Committee Schedules",
     status: "partial",
-    usedFor: "Agenda/video enrichment when a committee schedule mapping is needed.",
-    limitations: "Date-filtered search requires CSRF/session capture; current demo uses configured TVW event ID.",
+    usedFor: "Supplemental legislative agenda/video lookup when Committee Schedules pages are needed directly.",
+    limitations: "Date-filtered search requires CSRF/session capture; routine hearing discovery currently uses LWS, CSI, and TVW instead.",
     officialUrl: "https://app.leg.wa.gov/committeeschedules/",
   },
   {
     system: "datawa_socrata",
     label: "DataWA / DES contracts",
-    status: "planned",
-    usedFor: "State contracts, procurement, master-contract sales, and statewide open-data overlays.",
+    status: "partial",
+    usedFor: "State agency contracts, IT contracts, master-contract sales, and WEBS vendor/procurement rows.",
+    limitations: "Operator-driven ingest commands exist; these rows are not part of the daily legislative pipeline yet.",
     officialUrl: "https://data.wa.gov/",
   },
   {
@@ -429,8 +430,9 @@ const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" 
   {
     system: "seattle_socrata",
     label: "Seattle Open Data",
-    status: "planned",
-    usedFor: "Permits, budget, service requests, land use, and housing outcome overlays.",
+    status: "partial",
+    usedFor: "Seattle operating-budget rows, with room for permits, service requests, land use, and housing overlays.",
+    limitations: "Only the operating-budget surface has a current ingest command.",
     officialUrl: "https://data.seattle.gov/",
   },
   {
@@ -450,9 +452,18 @@ const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" 
   {
     system: "usaspending",
     label: "USAspending",
-    status: "planned",
-    usedFor: "Federal awards, grants, contracts, agencies, and recipients in Washington.",
+    status: "partial",
+    usedFor: "Federal award-search rows for awards performed in Washington.",
+    limitations: "Current ingest is a bounded award-search page; deeper pagination, subawards, and entity joins are follow-up work.",
     officialUrl: "https://api.usaspending.gov/",
+  },
+  {
+    system: "fiscal_wa",
+    label: "Fiscal.wa.gov",
+    status: "partial",
+    usedFor: "Open Checkbook vendor-payment rows for state fiscal spending context.",
+    limitations: "Current ingest covers the vendor-payment workbook, not full operating/capital/transportation budget surfaces.",
+    officialUrl: "https://fiscal.wa.gov/",
   },
   {
     system: "openfema",

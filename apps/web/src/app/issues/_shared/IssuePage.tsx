@@ -1,10 +1,10 @@
-import Link from "next/link";
 import {
   listLocalBundles,
   loadBundle,
   searchBills,
   searchHearings,
   slugify,
+  type OrganizationBundleEntry,
 } from "@/lib/loadBundle";
 import type { Bundle, Position } from "@/lib/bundle";
 import {
@@ -17,8 +17,18 @@ import {
   hearingFiltersToSearch,
   parseHearingFilters,
 } from "../../hearings/HearingSearchResults";
+import {
+  OrganizationSearchResults,
+  parseOrganizationFilters,
+} from "../../organizations/OrganizationSearchResults";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
+const CONFIDENCE_RANK: Record<OrganizationBundleEntry["matchConfidence"], number> = {
+  confirmed: 4,
+  probable: 3,
+  possible: 2,
+  unmatched: 1,
+};
 
 export type IssuePageConfig = {
   slug: string;
@@ -37,6 +47,7 @@ export async function IssuePage({
 }) {
   const filters = parseBillFilters(searchParams ?? {});
   const hearingFilters = parseHearingFilters(searchParams ?? {});
+  const organizationFilters = parseOrganizationFilters(searchParams ?? {}, "org");
   const entries = await listLocalBundles();
   const allBundles = (
     await Promise.all(
@@ -76,22 +87,7 @@ export async function IssuePage({
     }
   );
 
-  const orgs = new Map<
-    string,
-    { count: number; confidence: string; contexts: number }
-  >();
-  for (const b of bundles) {
-    for (const org of b.organizations) {
-      const prev = orgs.get(org.canonical_name) ?? {
-        count: 0,
-        confidence: org.match_confidence,
-        contexts: 0,
-      };
-      prev.count += org.testifier_count ?? 0;
-      prev.contexts += org.context?.length ?? 0;
-      orgs.set(org.canonical_name, prev);
-    }
-  }
+  const organizations = issueOrganizations(bundles);
 
   return (
     <article className="space-y-10">
@@ -139,7 +135,7 @@ export async function IssuePage({
           {billResult ? (
             <section aria-labelledby={`${config.slug}-bills`} className="space-y-4">
               <h2 id={`${config.slug}-bills`} className="text-xl font-semibold text-stone-900">
-                Bills in this issue view
+                Bills
               </h2>
               <BillSearchResults
                 basePath={`/issues/${config.slug}`}
@@ -167,31 +163,16 @@ export async function IssuePage({
             />
           </section>
 
-          <section aria-labelledby={`${config.slug}-orgs`} className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
+          <section aria-labelledby={`${config.slug}-orgs`} className="space-y-4">
             <h2 id={`${config.slug}-orgs`} className="text-xl font-semibold text-stone-900">
-              Organizations with reviewed context
+              Organizations
             </h2>
-            {orgs.size === 0 ? (
-              <p className="text-sm text-stone-600">
-                No organizations have reviewed matches yet.
-              </p>
-            ) : (
-              <ul className="space-y-3 text-sm">
-                {Array.from(orgs.entries()).map(([name, o]) => (
-                  <li key={name} className="rounded border border-stone-200 bg-stone-50 p-3">
-                    <Link
-                      href={`/organizations/${slugify(name)}`}
-                      className="font-medium text-blue-700 underline hover:text-blue-900"
-                    >
-                      {name}
-                    </Link>
-                    <div className="mt-1 text-stone-600">
-                      {o.count.toLocaleString()} linked testifier{o.count === 1 ? "" : "s"} · {o.contexts.toLocaleString()} PDC context record{o.contexts === 1 ? "" : "s"} · {o.confidence}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <OrganizationSearchResults
+              basePath={`/issues/${config.slug}`}
+              filters={organizationFilters}
+              organizations={organizations}
+              paramPrefix="org"
+            />
             <p className="text-xs text-stone-500">
               Showing context, not causation. Organization matches come from
               reviewed aliases and official PDC/data.wa.gov records.
@@ -201,6 +182,51 @@ export async function IssuePage({
       )}
     </article>
   );
+}
+
+function issueOrganizations(bundles: Bundle[]): OrganizationBundleEntry[] {
+  const orgs = new Map<string, OrganizationBundleEntry>();
+  for (const b of bundles) {
+    for (const org of b.organizations) {
+      const existing = orgs.get(org.canonical_name);
+      const aliases = new Set([...(existing?.aliases ?? []), ...(org.aliases ?? [])]);
+      const positions = {
+        Pro: existing?.positions.Pro ?? 0,
+        Con: existing?.positions.Con ?? 0,
+        Other: existing?.positions.Other ?? 0,
+        Unknown: existing?.positions.Unknown ?? 0,
+      };
+      const position = normalizePosition(org.testifier_position);
+      positions[position] += org.testifier_count ?? 0;
+      const matchConfidence =
+        existing && CONFIDENCE_RANK[existing.matchConfidence] >= CONFIDENCE_RANK[org.match_confidence]
+          ? existing.matchConfidence
+          : org.match_confidence;
+
+      orgs.set(org.canonical_name, {
+        slug: existing?.slug ?? slugify(org.canonical_name),
+        canonicalName: org.canonical_name,
+        aliases: Array.from(aliases).filter((a) => a !== org.canonical_name).sort(),
+        matchConfidence,
+        matchNotes: existing?.matchNotes ?? org.match_notes,
+        testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
+        positions,
+        contextCount: (existing?.contextCount ?? 0) + (org.context?.length ?? 0),
+        contexts: [],
+        appearances: [],
+      });
+    }
+  }
+  return Array.from(orgs.values()).sort((a, b) => {
+    const byTestifiers = b.testifierCount - a.testifierCount;
+    if (byTestifiers !== 0) return byTestifiers;
+    return a.canonicalName.localeCompare(b.canonicalName);
+  });
+}
+
+function normalizePosition(position?: string): Position {
+  if (position === "Pro" || position === "Con" || position === "Other") return position;
+  return "Unknown";
 }
 
 function bundleMatchesIssue(bundle: Bundle, config: IssuePageConfig): boolean {

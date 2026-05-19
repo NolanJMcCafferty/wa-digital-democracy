@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -3383,10 +3384,19 @@ UPDATE speaker_review_task
 // ---------------------------------------------------------------------------
 
 type PopulateOrganizationsStats struct {
+	CandidatesProcessed   int
 	MentionsUpserted      int
 	OrganizationsUpserted int
 	TestifiersLinked      int64
 	Skipped               int
+	Verified              int // matched against IRS BMF or PDC employer
+}
+
+type PopulateOrganizationsProgress struct {
+	Phase       string
+	Stats       PopulateOrganizationsStats
+	SourceName  string
+	ElapsedTime time.Duration
 }
 
 // PopulateOrganizationsFromCSI seeds organization rows from distinct
@@ -3394,6 +3404,10 @@ type PopulateOrganizationsStats struct {
 // matching testifier rows to the resulting organization. It is intentionally
 // source-local: no cross-source merge is asserted here.
 func (s *Store) PopulateOrganizationsFromCSI(ctx context.Context) (PopulateOrganizationsStats, error) {
+	return s.PopulateOrganizationsFromCSIWithProgress(ctx, nil)
+}
+
+func (s *Store) PopulateOrganizationsFromCSIWithProgress(ctx context.Context, progress func(PopulateOrganizationsProgress)) (PopulateOrganizationsStats, error) {
 	const q = `
 WITH orgs AS (
     SELECT MIN(t.id) AS source_pk,
@@ -3409,6 +3423,20 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
   FROM orgs
  WHERE normalized_name IS NOT NULL
  ORDER BY occurrence_count DESC, source_name;`
+	started := time.Now()
+	emitProgress := func(phase string, stats PopulateOrganizationsStats, sourceName string) {
+		if progress == nil {
+			return
+		}
+		progress(PopulateOrganizationsProgress{
+			Phase:       phase,
+			Stats:       stats,
+			SourceName:  sourceName,
+			ElapsedTime: time.Since(started).Round(time.Second),
+		})
+	}
+
+	emitProgress("listing", PopulateOrganizationsStats{}, "")
 	rows, err := s.Pool.Query(ctx, q)
 	if err != nil {
 		return PopulateOrganizationsStats{}, fmt.Errorf("list CSI organizations: %w", err)
@@ -3416,6 +3444,8 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 	defer rows.Close()
 
 	var stats PopulateOrganizationsStats
+	emitProgress("processing", stats, "")
+	lastProgress := time.Now()
 	for rows.Next() {
 		var sourcePK, count, sourceRecordID int64
 		var sourceName string
@@ -3423,8 +3453,13 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 		if err := rows.Scan(&sourcePK, &sourceName, &normalized, &count, &sourceRecordID); err != nil {
 			return stats, fmt.Errorf("scan CSI organization: %w", err)
 		}
+		stats.CandidatesProcessed++
 		if normalized == nil || junkOrganizationName(sourceName, *normalized) {
 			stats.Skipped++
+			if stats.CandidatesProcessed == 1 || stats.CandidatesProcessed%100 == 0 || time.Since(lastProgress) >= 5*time.Second {
+				emitProgress("processing", stats, sourceName)
+				lastProgress = time.Now()
+			}
 			continue
 		}
 		orgID, err := s.organizationIDForAliasOrCanonical(ctx, sourceName)
@@ -3446,6 +3481,14 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 			return stats, err
 		}
 		stats.OrganizationsUpserted++
+		if match, ok, err := s.LookupOrgCrossSource(ctx, *normalized); err != nil {
+			return stats, err
+		} else if ok {
+			if err := s.MarkOrganizationVerified(ctx, orgID, match); err != nil {
+				return stats, err
+			}
+			stats.Verified++
+		}
 		if err := s.upsertOrganizationSourceMention(ctx, "csi_testifier", "testifier", sourcePK, sourceName, *normalized, orgID, int(count), sourceRecordID, "possible"); err != nil {
 			return stats, err
 		}
@@ -3455,11 +3498,100 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 			return stats, err
 		}
 		stats.TestifiersLinked += linked
+		if stats.CandidatesProcessed == 1 || stats.CandidatesProcessed%100 == 0 || time.Since(lastProgress) >= 5*time.Second {
+			emitProgress("processing", stats, sourceName)
+			lastProgress = time.Now()
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return stats, err
 	}
+	emitProgress("complete", stats, "")
 	return stats, nil
+}
+
+type PruneJunkOrganizationsStats struct {
+	Scanned       int
+	JunkDetected  int
+	Deleted       int
+	SkippedKeptID int // confidence != possible, left in place
+}
+
+// PruneJunkOrganizations re-applies the junkOrganizationName heuristic to
+// existing organization rows seeded with match_confidence = 'possible' and
+// deletes those whose canonical name is junk and whose aliases are all junk.
+// Rows with reviewer-edited confidence (anything other than 'possible') are
+// preserved regardless. Returns counts for logging.
+func (s *Store) PruneJunkOrganizations(ctx context.Context, dryRun bool) (PruneJunkOrganizationsStats, error) {
+	const q = `
+SELECT id, canonical_name, aliases, match_confidence::text
+  FROM organization;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return PruneJunkOrganizationsStats{}, fmt.Errorf("list organizations for prune: %w", err)
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		id            int64
+		canonicalName string
+	}
+	var stats PruneJunkOrganizationsStats
+	var toDelete []candidate
+	for rows.Next() {
+		var id int64
+		var canonical, confidence string
+		var aliases []string
+		if err := rows.Scan(&id, &canonical, &aliases, &confidence); err != nil {
+			return stats, fmt.Errorf("scan organization: %w", err)
+		}
+		stats.Scanned++
+		if confidence != "possible" {
+			stats.SkippedKeptID++
+			continue
+		}
+		// All names (canonical + aliases) must look like junk for the row to be
+		// pruned. Normalization isn't critical here — junkOrganizationName
+		// re-applies the rune-length and exact-match checks regardless.
+		names := append([]string{canonical}, aliases...)
+		allJunk := true
+		for _, name := range names {
+			if !junkOrganizationName(name, strings.TrimSpace(name)) {
+				allJunk = false
+				break
+			}
+		}
+		if !allJunk {
+			continue
+		}
+		stats.JunkDetected++
+		toDelete = append(toDelete, candidate{id: id, canonicalName: canonical})
+	}
+	if err := rows.Err(); err != nil {
+		return stats, err
+	}
+	if dryRun {
+		stats.Deleted = len(toDelete)
+		return stats, nil
+	}
+	if len(toDelete) == 0 {
+		return stats, nil
+	}
+	// Batch the deletes; FK relationships are mostly ON DELETE CASCADE or
+	// SET NULL (see migrations 0001/0010/0015/0018), so individual DELETEs suffice.
+	for _, c := range toDelete {
+		if _, err := s.Pool.Exec(ctx, `DELETE FROM organization WHERE id = $1`, c.id); err != nil {
+			return stats, fmt.Errorf("delete organization %d (%q): %w", c.id, c.canonicalName, err)
+		}
+		stats.Deleted++
+	}
+	return stats, nil
+}
+
+// JunkOrganizationName exposes the heuristic so CLI commands can preview which
+// names will be pruned without touching the DB.
+func JunkOrganizationName(raw, normalized string) bool {
+	return junkOrganizationName(raw, normalized)
 }
 
 func (s *Store) upsertOrganizationSourceMention(ctx context.Context, sourceKind, sourceTable string, sourcePK int64, sourceName, normalized string, orgID int64, count int, sourceRecordID int64, confidence string) error {
@@ -3501,6 +3633,11 @@ SELECT id
 	return id, nil
 }
 
+// junkOrganizationName returns true when a CSI raw_organization string is
+// almost certainly not a real organization — UI placeholder leakage,
+// self-descriptors entered into the org column, single-character noise,
+// hashtags, and similar. Source-local: returning true means we will skip
+// seeding an organization row, but the underlying testifier row is preserved.
 func junkOrganizationName(raw, normalized string) bool {
 	r := strings.TrimSpace(raw)
 	n := strings.TrimSpace(normalized)
@@ -3511,11 +3648,376 @@ func junkOrganizationName(raw, normalized string) bool {
 		return true
 	}
 	low := strings.ToLower(r)
-	junk := map[string]bool{
-		"none": true, "n/a": true, "na": true, "no": true, "self": true,
-		"individual": true, "private citizen": true, "citizen": true,
-		"concerned citizen": true, "homeowner": true, "home owner": true, "resident": true,
-		"not applicable": true, "no organization": true,
+
+	// Exact matches: short self-descriptors and form sentinels.
+	if junkExactOrgNames[low] {
+		return true
 	}
-	return junk[low]
+
+	// Wrapped in parens or brackets ((Retired), [Self], "Home", etc.) — almost
+	// always self-descriptors entered into the org column rather than a name.
+	if junkWrappedOrgRE.MatchString(r) {
+		return true
+	}
+
+	// Starts with '#': hashtag/handle noise (e.g. "#NotABot", "#169").
+	if strings.HasPrefix(r, "#") {
+		return true
+	}
+
+	// CSI form placeholder text leaking through verbatim.
+	if junkPlaceholderRE.MatchString(low) {
+		return true
+	}
+
+	// At least 50% of the runes must be letters; protects against pure-symbol
+	// or pure-digit strings that slip past the length check.
+	if !hasMinLetterRatio(r, 0.5) {
+		return true
+	}
+
+	return false
+}
+
+var (
+	// junkWrappedOrgRE matches strings entirely wrapped in (), [], or quotes.
+	junkWrappedOrgRE = regexp.MustCompile(`^\s*[\(\[\"'][^\)\]\"']*[\)\]\"']\s*$`)
+	// junkPlaceholderRE matches CSI form placeholder phrases.
+	junkPlaceholderRE = regexp.MustCompile(`(please\s+select|make\s+a\s+selection|select\s+a\s+title|click\s+here|enter\s+(your|name|organization)|n\/?a$)`)
+)
+
+var junkExactOrgNames = map[string]bool{
+	// Negations / explicit "no org".
+	"none": true, "n/a": true, "na": true, "no": true,
+	"not applicable": true, "no organization": true, "no affiliation": true,
+	"none.": true, "n.a.": true, "n.a": true, "nada": true,
+	// Self-as-org.
+	"self": true, "myself": true, "me": true, "individual": true,
+	"private citizen": true, "citizen": true, "concerned citizen": true,
+	"private individual": true, "constituent": true, "voter": true,
+	"resident": true, "homeowner": true, "home owner": true, "renter": true,
+	"taxpayer": true, "retired": true, "student": true, "parent": true,
+	"home": true, "work": true,
+}
+
+// ---------------------------------------------------------------------------
+// IRS BMF + PDC employer ingestion (cross-source organization validation)
+// ---------------------------------------------------------------------------
+
+type UpsertIRSBMFParams struct {
+	EIN              string
+	Name             string
+	NormalizedName   string
+	SortName         string
+	Street           string
+	City             string
+	State            string
+	Zip              string
+	SubsectionCode   string
+	Classification   string
+	DeductibilityCode string
+	ActivityCodes    string
+	FoundationCode   string
+	OrganizationCode string
+	StatusCode       string
+	RulingDate       string
+	NTEECode         string
+	IncomeAmount     int64
+	RevenueAmount    int64
+	AssetAmount      int64
+	Raw              map[string]string
+	SourceRecordID   int64
+}
+
+func (s *Store) UpsertIRSBMFOrganization(ctx context.Context, p UpsertIRSBMFParams) error {
+	rawJSON, err := json.Marshal(p.Raw)
+	if err != nil {
+		return fmt.Errorf("marshal irs bmf raw: %w", err)
+	}
+	const q = `
+INSERT INTO irs_bmf_organization (ein, name, normalized_name, sort_name,
+    street, city, state, zip, subsection_code, classification, deductibility_code,
+    activity_codes, foundation_code, organization_code, status_code, ruling_date,
+    ntee_code, income_amount, revenue_amount, asset_amount, raw, source_record_id)
+VALUES ($1,$2,COALESCE(wa_dd_normalize_entity_name($2),''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,NULLIF($21,0))
+ON CONFLICT (ein) DO UPDATE SET
+  name              = EXCLUDED.name,
+  normalized_name   = EXCLUDED.normalized_name,
+  sort_name         = EXCLUDED.sort_name,
+  street            = EXCLUDED.street,
+  city              = EXCLUDED.city,
+  state             = EXCLUDED.state,
+  zip               = EXCLUDED.zip,
+  subsection_code   = EXCLUDED.subsection_code,
+  classification    = EXCLUDED.classification,
+  deductibility_code= EXCLUDED.deductibility_code,
+  activity_codes    = EXCLUDED.activity_codes,
+  foundation_code   = EXCLUDED.foundation_code,
+  organization_code = EXCLUDED.organization_code,
+  status_code       = EXCLUDED.status_code,
+  ruling_date       = EXCLUDED.ruling_date,
+  ntee_code         = EXCLUDED.ntee_code,
+  income_amount     = EXCLUDED.income_amount,
+  revenue_amount    = EXCLUDED.revenue_amount,
+  asset_amount      = EXCLUDED.asset_amount,
+  raw               = EXCLUDED.raw,
+  source_record_id  = COALESCE(EXCLUDED.source_record_id, irs_bmf_organization.source_record_id),
+  fetched_at        = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.EIN, p.Name, strOrNull(p.SortName),
+		strOrNull(p.Street), strOrNull(p.City), strOrNull(p.State), strOrNull(p.Zip),
+		strOrNull(p.SubsectionCode), strOrNull(p.Classification), strOrNull(p.DeductibilityCode),
+		strOrNull(p.ActivityCodes), strOrNull(p.FoundationCode), strOrNull(p.OrganizationCode),
+		strOrNull(p.StatusCode), strOrNull(p.RulingDate), strOrNull(p.NTEECode),
+		p.IncomeAmount, p.RevenueAmount, p.AssetAmount,
+		string(rawJSON), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert irs_bmf_organization: %w", err)
+	}
+	return nil
+}
+
+type UpsertPDCEmployerParams struct {
+	EmployerID         string
+	Name               string
+	NormalizedName     string
+	LastEmploymentYear string
+	LastReportNumber   string
+	LastEmploymentURL  string
+	Raw                map[string]any
+	SourceRecordID     int64
+}
+
+func (s *Store) UpsertPDCEmployer(ctx context.Context, p UpsertPDCEmployerParams) error {
+	rawJSON, err := json.Marshal(p.Raw)
+	if err != nil {
+		return fmt.Errorf("marshal pdc employer raw: %w", err)
+	}
+	const q = `
+INSERT INTO pdc_employer (employer_id, name, normalized_name,
+    last_employment_year, last_report_number, last_employment_url,
+    raw, source_record_id, last_seen_at)
+VALUES ($1,$2,COALESCE(wa_dd_normalize_entity_name($2),''),$3,$4,$5,$6::jsonb,NULLIF($7,0),NOW())
+ON CONFLICT (employer_id) DO UPDATE SET
+  name                = EXCLUDED.name,
+  normalized_name     = EXCLUDED.normalized_name,
+  last_employment_year = COALESCE(EXCLUDED.last_employment_year, pdc_employer.last_employment_year),
+  last_report_number   = COALESCE(EXCLUDED.last_report_number, pdc_employer.last_report_number),
+  last_employment_url  = COALESCE(EXCLUDED.last_employment_url, pdc_employer.last_employment_url),
+  raw                  = EXCLUDED.raw,
+  source_record_id     = COALESCE(EXCLUDED.source_record_id, pdc_employer.source_record_id),
+  last_seen_at         = NOW();`
+	_, err = s.Pool.Exec(ctx, q,
+		p.EmployerID, p.Name,
+		strOrNull(p.LastEmploymentYear), strOrNull(p.LastReportNumber), strOrNull(p.LastEmploymentURL),
+		string(rawJSON), p.SourceRecordID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert pdc_employer: %w", err)
+	}
+	return nil
+}
+
+// CrossSourceMatch represents a match for a CSI organization name against
+// an external authoritative registry (IRS BMF or PDC employer roster).
+type CrossSourceMatch struct {
+	Source     string // "irs_bmf" or "pdc_employer"
+	EIN        string // populated when Source == "irs_bmf"
+	EmployerID string // populated when Source == "pdc_employer"
+	Name       string
+}
+
+// LookupOrgCrossSource returns the first cross-source match for normalizedName,
+// preferring IRS BMF (501(c) status) over PDC employer registration. Returns
+// (match, true, nil) on hit, (_, false, nil) on miss.
+func (s *Store) LookupOrgCrossSource(ctx context.Context, normalizedName string) (CrossSourceMatch, bool, error) {
+	if strings.TrimSpace(normalizedName) == "" {
+		return CrossSourceMatch{}, false, nil
+	}
+	{
+		const q = `SELECT ein, name FROM irs_bmf_organization WHERE normalized_name = $1 LIMIT 1`
+		var ein, name string
+		err := s.Pool.QueryRow(ctx, q, normalizedName).Scan(&ein, &name)
+		if err == nil {
+			return CrossSourceMatch{Source: "irs_bmf", EIN: ein, Name: name}, true, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CrossSourceMatch{}, false, fmt.Errorf("lookup irs bmf: %w", err)
+		}
+	}
+	{
+		const q = `SELECT employer_id, name FROM pdc_employer WHERE normalized_name = $1 LIMIT 1`
+		var id, name string
+		err := s.Pool.QueryRow(ctx, q, normalizedName).Scan(&id, &name)
+		if err == nil {
+			return CrossSourceMatch{Source: "pdc_employer", EmployerID: id, Name: name}, true, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CrossSourceMatch{}, false, fmt.Errorf("lookup pdc employer: %w", err)
+		}
+	}
+	return CrossSourceMatch{}, false, nil
+}
+
+// MarkOrganizationVerified records that orgID has been confirmed against an
+// authoritative source. Sets verified_at, verification_source, and the
+// matching FK column. Match confidence is bumped to 'confirmed'.
+func (s *Store) MarkOrganizationVerified(ctx context.Context, orgID int64, m CrossSourceMatch) error {
+	switch m.Source {
+	case "irs_bmf":
+		const q = `
+UPDATE organization
+   SET irs_bmf_ein         = $1,
+       verified_at         = NOW(),
+       verification_source = 'irs_bmf',
+       match_confidence    = 'confirmed',
+       match_notes         = COALESCE(match_notes, '') || CASE WHEN match_notes IS NULL OR match_notes = '' THEN '' ELSE E'\n' END || 'Cross-source match: IRS BMF EIN ' || $1,
+       updated_at          = NOW()
+ WHERE id = $2;`
+		if _, err := s.Pool.Exec(ctx, q, m.EIN, orgID); err != nil {
+			return fmt.Errorf("mark org verified (irs_bmf): %w", err)
+		}
+	case "pdc_employer":
+		const q = `
+UPDATE organization
+   SET pdc_lobbyist_employer_id = $1,
+       verified_at              = NOW(),
+       verification_source      = 'pdc_employer',
+       match_confidence         = 'confirmed',
+       match_notes              = COALESCE(match_notes, '') || CASE WHEN match_notes IS NULL OR match_notes = '' THEN '' ELSE E'\n' END || 'Cross-source match: PDC employer_id ' || $1,
+       updated_at               = NOW()
+ WHERE id = $2;`
+		if _, err := s.Pool.Exec(ctx, q, m.EmployerID, orgID); err != nil {
+			return fmt.Errorf("mark org verified (pdc_employer): %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown cross-source source: %q", m.Source)
+	}
+	return nil
+}
+
+type VerifyOrganizationsStats struct {
+	Scanned    int
+	Matched    int
+	IRSMatches int
+	PDCMatches int
+	Deleted    int // unmatched rows removed when DeleteUnmatched is set
+}
+
+// VerifyOrganizationsOptions controls VerifyOrganizationsAgainstSources.
+type VerifyOrganizationsOptions struct {
+	DryRun          bool
+	DeleteUnmatched bool // delete unverified, possible-confidence rows that don't match any source
+}
+
+// VerifyOrganizationsAgainstSources iterates organization rows that are not
+// yet verified, looks each one up against irs_bmf_organization and pdc_employer
+// by normalized name, and on hit calls MarkOrganizationVerified. When
+// opts.DeleteUnmatched is set, rows with match_confidence='possible' that
+// remain unmatched are deleted (testifier.normalized_org_id is ON DELETE SET
+// NULL since 0018, so deletes are safe).
+func (s *Store) VerifyOrganizationsAgainstSources(ctx context.Context, opts VerifyOrganizationsOptions, progress func(scanned, matched int, name string)) (VerifyOrganizationsStats, error) {
+	const q = `
+SELECT id, canonical_name, aliases, match_confidence::text
+  FROM organization
+ WHERE verified_at IS NULL
+ ORDER BY id;`
+	rows, err := s.Pool.Query(ctx, q)
+	if err != nil {
+		return VerifyOrganizationsStats{}, fmt.Errorf("list unverified organizations: %w", err)
+	}
+	type cand struct {
+		id         int64
+		name       string
+		aliases    []string
+		confidence string
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		if err := rows.Scan(&c.id, &c.name, &c.aliases, &c.confidence); err != nil {
+			rows.Close()
+			return VerifyOrganizationsStats{}, fmt.Errorf("scan org: %w", err)
+		}
+		cands = append(cands, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return VerifyOrganizationsStats{}, err
+	}
+
+	var stats VerifyOrganizationsStats
+	for _, c := range cands {
+		stats.Scanned++
+		var match CrossSourceMatch
+		var ok bool
+		names := append([]string{c.name}, c.aliases...)
+		for _, n := range names {
+			normRow := s.Pool.QueryRow(ctx, `SELECT wa_dd_normalize_entity_name($1)`, n)
+			var norm *string
+			if err := normRow.Scan(&norm); err != nil {
+				return stats, fmt.Errorf("normalize %q: %w", n, err)
+			}
+			if norm == nil || *norm == "" {
+				continue
+			}
+			m, found, err := s.LookupOrgCrossSource(ctx, *norm)
+			if err != nil {
+				return stats, err
+			}
+			if found {
+				match = m
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			if opts.DeleteUnmatched && c.confidence == "possible" {
+				stats.Deleted++
+				if !opts.DryRun {
+					if _, err := s.Pool.Exec(ctx, `DELETE FROM organization WHERE id = $1`, c.id); err != nil {
+						return stats, fmt.Errorf("delete unmatched organization %d (%q): %w", c.id, c.name, err)
+					}
+				}
+			}
+			if progress != nil {
+				progress(stats.Scanned, stats.Matched, c.name)
+			}
+			continue
+		}
+		stats.Matched++
+		switch match.Source {
+		case "irs_bmf":
+			stats.IRSMatches++
+		case "pdc_employer":
+			stats.PDCMatches++
+		}
+		if !opts.DryRun {
+			if err := s.MarkOrganizationVerified(ctx, c.id, match); err != nil {
+				return stats, err
+			}
+		}
+		if progress != nil {
+			progress(stats.Scanned, stats.Matched, c.name)
+		}
+	}
+	return stats, nil
+}
+
+func hasMinLetterRatio(s string, ratio float64) bool {
+	var letters, total int
+	for _, r := range s {
+		if r == ' ' {
+			continue
+		}
+		total++
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			letters++
+		}
+	}
+	if total == 0 {
+		return false
+	}
+	return float64(letters)/float64(total) >= ratio
 }

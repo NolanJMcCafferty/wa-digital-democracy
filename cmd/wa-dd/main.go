@@ -45,6 +45,7 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/datawa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/fiscalwa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/irsbmf"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/seattle"
@@ -81,6 +82,13 @@ SUBCOMMANDS:
                      Pull DataWA WEBS vendor rows into Postgres
   populate-organizations
                      Seed organization rows from CSI testimony organization strings
+  prune-junk-organizations
+                     Delete previously-seeded organizations whose names are placeholders or self-descriptors
+  ingest-irs-bmf-wa  Pull the IRS BMF Washington 501(c) extract into Postgres
+  ingest-pdc-employers
+                     Pull PDC lobbyist-employer registrations (xhn7-64im) into Postgres
+  verify-organizations
+                     Cross-match seeded organizations against IRS BMF + PDC employers
   generate-vendor-entity-matches
                      Generate reviewable vendor/customer organization match candidates
   ingest-usaspending-wa-awards
@@ -140,6 +148,14 @@ func main() {
 		os.Exit(runIngestWEBSVendors(args))
 	case "populate-organizations":
 		os.Exit(runPopulateOrganizations(args))
+	case "prune-junk-organizations":
+		os.Exit(runPruneJunkOrganizations(args))
+	case "ingest-irs-bmf-wa":
+		os.Exit(runIngestIRSBMFWA(args))
+	case "ingest-pdc-employers":
+		os.Exit(runIngestPDCEmployers(args))
+	case "verify-organizations":
+		os.Exit(runVerifyOrganizations(args))
 	case "generate-vendor-entity-matches":
 		os.Exit(runGenerateVendorEntityMatches(args))
 	case "ingest-usaspending-wa-awards":
@@ -2741,6 +2757,7 @@ func runPopulateOrganizations(args []string) int {
 	var (
 		dsn     = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		jsonOut = fs.Bool("json", false, "write summary as JSON to stdout")
+		quiet   = fs.Bool("quiet", false, "suppress progress logs")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -2753,7 +2770,32 @@ func runPopulateOrganizations(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	stats, err := store.PopulateOrganizationsFromCSI(ctx)
+	logProgress := func(p db.PopulateOrganizationsProgress) {
+		if *quiet {
+			return
+		}
+		switch p.Phase {
+		case "listing":
+			fmt.Fprintln(os.Stderr, "==> scanning distinct CSI organization names")
+		case "processing":
+			if p.Stats.CandidatesProcessed == 0 {
+				fmt.Fprintln(os.Stderr, "==> processing CSI organization candidates")
+				return
+			}
+			fmt.Fprintf(os.Stderr, "  processed=%d organizations=%d mentions=%d linked=%d skipped=%d elapsed=%s current=%q\n",
+				p.Stats.CandidatesProcessed,
+				p.Stats.OrganizationsUpserted,
+				p.Stats.MentionsUpserted,
+				p.Stats.TestifiersLinked,
+				p.Stats.Skipped,
+				p.ElapsedTime,
+				p.SourceName,
+			)
+		case "complete":
+			fmt.Fprintf(os.Stderr, "==> completed CSI organization population in %s\n", p.ElapsedTime)
+		}
+	}
+	stats, err := store.PopulateOrganizationsFromCSIWithProgress(ctx, logProgress)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "populate-organizations: %v\n", err)
 		return 1
@@ -2761,6 +2803,290 @@ func runPopulateOrganizations(args []string) int {
 	if *jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(stats)
 	}
-	fmt.Fprintf(os.Stderr, "==> seeded %d organizations from CSI, recorded %d mentions, linked %d testifiers, skipped %d junk names\n", stats.OrganizationsUpserted, stats.MentionsUpserted, stats.TestifiersLinked, stats.Skipped)
+	fmt.Fprintf(os.Stderr, "==> seeded %d organizations from CSI, verified %d via cross-source, recorded %d mentions, linked %d testifiers, skipped %d junk names (%d candidates processed)\n", stats.OrganizationsUpserted, stats.Verified, stats.MentionsUpserted, stats.TestifiersLinked, stats.Skipped, stats.CandidatesProcessed)
+	return 0
+}
+
+func runPruneJunkOrganizations(args []string) int {
+	fs := flag.NewFlagSet("prune-junk-organizations", flag.ContinueOnError)
+	var (
+		dsn    = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		dryRun = fs.Bool("dry-run", false, "list rows that would be deleted without modifying the DB")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "prune-junk-organizations: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	stats, err := store.PruneJunkOrganizations(ctx, *dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "prune-junk-organizations: %v\n", err)
+		return 1
+	}
+	mode := "deleted"
+	if *dryRun {
+		mode = "would delete"
+	}
+	fmt.Fprintf(os.Stderr, "prune-junk-organizations: scanned=%d junk-detected=%d %s=%d kept-non-possible=%d\n",
+		stats.Scanned, stats.JunkDetected, mode, stats.Deleted, stats.SkippedKeptID)
+	return 0
+}
+
+func runIngestIRSBMFWA(args []string) int {
+	fs := flag.NewFlagSet("ingest-irs-bmf-wa", flag.ContinueOnError)
+	var (
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		url       = fs.String("url", irsbmf.DefaultStateURL, "IRS BMF state-extract CSV URL")
+		rateLimit = fs.Float64("rate", 4.0, "max requests/sec for irs.gov")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      120 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"www.irs.gov": *rateLimit,
+		},
+	})
+	client := irsbmf.New(httpClient)
+	client.BaseURL = *url
+
+	body, fetch, err := client.Fetch(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: fetch: %v\n", err)
+		return 1
+	}
+	if fetch.SourceRecordID == 0 {
+		fmt.Fprintln(os.Stderr, "ingest-irs-bmf-wa: source record was not captured")
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "==> fetched %d bytes from %s\n", len(body), *url)
+
+	var upserted int
+	start := time.Now()
+	err = irsbmf.ParseAll(body, func(row irsbmf.Row) bool {
+		if err := ctx.Err(); err != nil {
+			return false
+		}
+		normalized := pdc.NormalizeOrgName(row.Name)
+		if normalized == "" {
+			return true
+		}
+		err := store.UpsertIRSBMFOrganization(ctx, db.UpsertIRSBMFParams{
+			EIN:               row.EIN,
+			Name:              row.Name,
+			NormalizedName:    normalized,
+			SortName:          row.SortName,
+			Street:            row.Street,
+			City:              row.City,
+			State:             row.State,
+			Zip:               row.Zip,
+			SubsectionCode:    row.Subsection,
+			Classification:    row.Classification,
+			DeductibilityCode: row.Deductibility,
+			ActivityCodes:     row.Activity,
+			FoundationCode:    row.Foundation,
+			OrganizationCode:  row.Organization,
+			StatusCode:        row.Status,
+			RulingDate:        row.Ruling,
+			NTEECode:          row.NTEECode,
+			IncomeAmount:      row.IncomeAmount,
+			RevenueAmount:     row.RevenueAmount,
+			AssetAmount:       row.AssetAmount,
+			Raw:               row.Raw,
+			SourceRecordID:    fetch.SourceRecordID,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: upsert %s: %v\n", row.EIN, err)
+			return false
+		}
+		upserted++
+		if upserted%2000 == 0 {
+			fmt.Fprintf(os.Stderr, "  upserted=%d elapsed=%s\n", upserted, time.Since(start).Round(time.Second))
+		}
+		return true
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: parse: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "==> ingest-irs-bmf-wa: upserted %d organizations in %s\n", upserted, time.Since(start).Round(time.Second))
+	return 0
+}
+
+func runIngestPDCEmployers(args []string) int {
+	fs := flag.NewFlagSet("ingest-pdc-employers", flag.ContinueOnError)
+	var (
+		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
+		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
+		pageSize  = fs.Int("page-size", 50000, "Socrata page size")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-pdc-employers: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	objs, err := objectstore.NewFS(*rawDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-pdc-employers: objectstore: %v\n", err)
+		return 1
+	}
+	httpClient := httpx.New(httpx.Config{
+		UserAgent:    userAgent,
+		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
+		Timeout:      120 * time.Second,
+		MaxRetries:   2,
+		RetryBackoff: 750 * time.Millisecond,
+		HostRateLimit: map[string]float64{
+			"data.wa.gov": *rateLimit,
+		},
+	})
+	client := pdc.New(httpClient, os.Getenv("SOCRATA_APP_TOKEN"))
+
+	// Iterate xhn7-64im (Lobbyist Employment Registrations). Each row binds a
+	// lobbyist registration to an employer; we collapse to distinct employers
+	// (employer_id) keeping the most recent employment_year.
+	type emp struct {
+		id     string
+		row    pdc.LobbyistEmployment
+		raw    pdc.Row
+		seenAt int
+	}
+	seen := map[string]*emp{}
+	q := pdc.Query{Order: ":id", Limit: *pageSize}
+	offset := 0
+	page := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		q.Offset = offset
+		rows, fetch, err := client.FetchPageWithSource(ctx, pdc.DatasetLobbyistEmployment, q)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-pdc-employers: fetch page %d: %v\n", page, err)
+			return 1
+		}
+		if fetch.SourceRecordID == 0 {
+			fmt.Fprintln(os.Stderr, "ingest-pdc-employers: source record was not captured")
+			return 1
+		}
+		for _, r := range rows {
+			emRow := pdc.NormalizeLobbyistEmployment(r)
+			if emRow.EmployerID == "" || emRow.EmployerName == "" {
+				continue
+			}
+			normalized := pdc.NormalizeOrgName(emRow.EmployerName)
+			if normalized == "" {
+				continue
+			}
+			if err := store.UpsertPDCEmployer(ctx, db.UpsertPDCEmployerParams{
+				EmployerID:         emRow.EmployerID,
+				Name:               emRow.EmployerName,
+				NormalizedName:     normalized,
+				LastEmploymentYear: emRow.EmploymentYear,
+				LastReportNumber:   emRow.ReportNumber,
+				LastEmploymentURL:  emRow.EmploymentURL,
+				Raw:                map[string]any(r),
+				SourceRecordID:     fetch.SourceRecordID,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: upsert %s: %v\n", emRow.EmployerID, err)
+				return 1
+			}
+			seen[emRow.EmployerID] = &emp{id: emRow.EmployerID, row: emRow, raw: r}
+		}
+		page++
+		fmt.Fprintf(os.Stderr, "  page=%d fetched=%d distinct-employers=%d\n", page, len(rows), len(seen))
+		if len(rows) < q.Limit {
+			break
+		}
+		offset += q.Limit
+	}
+	fmt.Fprintf(os.Stderr, "==> ingest-pdc-employers: %d distinct employers ingested\n", len(seen))
+	return 0
+}
+
+func runVerifyOrganizations(args []string) int {
+	fs := flag.NewFlagSet("verify-organizations", flag.ContinueOnError)
+	var (
+		dsn             = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		dryRun          = fs.Bool("dry-run", false, "report matches without updating organization rows")
+		deleteUnmatched = fs.Bool("delete-unmatched", false, "delete possible-confidence organizations that don't match any cross-source")
+		quiet           = fs.Bool("quiet", false, "suppress per-row progress")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "verify-organizations: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	progress := func(scanned, matched int, name string) {
+		if *quiet {
+			return
+		}
+		if scanned%200 == 0 {
+			fmt.Fprintf(os.Stderr, "  scanned=%d matched=%d last=%q\n", scanned, matched, name)
+		}
+	}
+	stats, err := store.VerifyOrganizationsAgainstSources(ctx, db.VerifyOrganizationsOptions{
+		DryRun:          *dryRun,
+		DeleteUnmatched: *deleteUnmatched,
+	}, progress)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "verify-organizations: %v\n", err)
+		return 1
+	}
+	verifyMode := "verified"
+	deleteMode := "deleted"
+	if *dryRun {
+		verifyMode = "would verify"
+		deleteMode = "would delete"
+	}
+	if *deleteUnmatched {
+		fmt.Fprintf(os.Stderr, "verify-organizations: scanned=%d %s=%d (irs_bmf=%d, pdc_employer=%d) %s=%d unmatched\n",
+			stats.Scanned, verifyMode, stats.Matched, stats.IRSMatches, stats.PDCMatches, deleteMode, stats.Deleted)
+	} else {
+		fmt.Fprintf(os.Stderr, "verify-organizations: scanned=%d %s=%d (irs_bmf=%d, pdc_employer=%d)\n",
+			stats.Scanned, verifyMode, stats.Matched, stats.IRSMatches, stats.PDCMatches)
+	}
 	return 0
 }
