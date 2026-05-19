@@ -210,9 +210,12 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
 2. **`IngestCSI`** — fetches the CSI testifier list for the agenda
    item via `csi.Client.GetTestifiers`. Inserts `testifier` rows,
    updates `agenda_item` and `hearing` if needed.
-3. **`IngestTVW`** — fetches the Invintus event detail (requires
-   `INVINTUS_EMBEDDER_KEY` env var) and the WebVTT caption file.
-   Inserts `tvw_event` and `transcript_segment` rows.
+3. **`IngestTVW`** — fetches TVW WordPress video metadata, rich Invintus
+   event detail (requires `INVINTUS_EMBEDDER_KEY` env var), media assets,
+   stream URIs, and the WebVTT caption file. Inserts `tvw_event`,
+   `tvw_media_asset`, and `transcript_segment` rows. The media-asset rows
+   preserve caption, document/link, HLS, audio, and published-video metadata
+   needed for transcript QA and future diarization.
 4. **`SegmentTranscript`** — finds the bill-discussion window in the
    transcript via bill-mention regex; tags the matching
    `transcript_segment` rows with the agenda_item_id.
@@ -266,7 +269,8 @@ interact with these tables:
 | `hearing` | `IngestBill` (creates), `Discoverer.Commit` (enriches), `IngestCSI` (touches), `IngestTVW` (sets tvw fields) | Soft-key on `(chamber, committee_name, meeting_datetime)`. UPDATE uses COALESCE so partial enrichment is safe. |
 | `agenda_item` | `Discoverer.Commit` (creates), `IngestCSI` (touches) | UPSERT on `csi_agenda_item_id`. |
 | `testifier` | `IngestCSI` | One row per CSI sign-in. `testified` boolean distinguishes "did testify" from "registered position only". |
-| `tvw_event` | `IngestTVW` | One row per Invintus event. UPSERT on `tvw_event_id`. |
+| `tvw_event` | `IngestTVW` | One row per Invintus event. UPSERT on `tvw_event_id`; includes WordPress slug/link, bill/category taxonomy IDs, stream URIs, runtime, and audio/video download metadata when available. |
+| `tvw_media_asset` | `IngestTVW` | One row per Invintus media/document/link asset for an event. Replaced per event on re-ingest; captures caption VTT, agenda/document links, published MP4 metadata, thumbnails, HLS-adjacent asset URLs, and technical advanced-details JSON. |
 | `transcript_segment` | `IngestTVW` (creates), `SegmentTranscript` (tags), `MatchSpeakers` (labels) | One row per WebVTT cue. `agenda_item_id` is set when the cue falls in the bill window. |
 | `organization` | `IngestCSI` (rough), `PDCContext` (matched) | UPSERT on `canonical_name`. |
 | `org_context_record` | `PDCContext` | One row per PDC dataset row matched to an organization. |

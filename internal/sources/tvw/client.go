@@ -136,14 +136,55 @@ func (c *Client) FetchWPVideoArchive(ctx context.Context, after, before time.Tim
 	return out, nil
 }
 
+// FetchWPVideoByEventID searches TVW's WordPress archive for the post that
+// embeds an Invintus event ID. The public video page is Cloudflare-protected in
+// some environments, but WP REST exposes the same post metadata.
+func (c *Client) FetchWPVideoByEventID(ctx context.Context, eventID string) (*WPVideoPost, httpx.RawFetch, error) {
+	q := url.Values{}
+	q.Set("search", eventID)
+	q.Set("per_page", "5")
+	u := c.WPBaseURL + "/wp/v2/invintus_video?" + q.Encode()
+	fetch, err := c.HTTP.Do(ctx, httpx.Request{
+		System:   SystemName,
+		Endpoint: "wp.v2.invintus_video.search_event",
+		URL:      u,
+		Headers:  jsonAccept(),
+	})
+	if err != nil {
+		return nil, fetch, err
+	}
+	posts, err := ParseWPVideoList(fetch.Body)
+	if err != nil {
+		return nil, fetch, err
+	}
+	for i := range posts {
+		if EventIDFromWPPost(posts[i]) == eventID || strings.Contains(posts[i].Slug, eventID) {
+			return &posts[i], fetch, nil
+		}
+	}
+	return nil, fetch, nil
+}
+
 // FetchEventDetail calls Invintus Event/getDetailed for one event ID.
 func (c *Client) FetchEventDetail(ctx context.Context, eventID string) (*InvintusEvent, error) {
+	ev, _, err := c.FetchEventDetailWithSource(ctx, eventID)
+	return ev, err
+}
+
+// FetchEventDetailWithSource calls Invintus Event/getDetailed with the richer
+// media flags needed for diarization-ready ingestion and returns provenance.
+func (c *Client) FetchEventDetailWithSource(ctx context.Context, eventID string) (*InvintusEvent, httpx.RawFetch, error) {
 	if c.EmbedderKey == "" {
-		return nil, errors.New("tvw: EmbedderKey required for Invintus calls")
+		return nil, httpx.RawFetch{}, errors.New("tvw: EmbedderKey required for Invintus calls")
 	}
-	body, _ := json.Marshal(map[string]string{
-		"eventID":  eventID,
-		"clientID": c.ClientID,
+	body, _ := json.Marshal(map[string]any{
+		"eventID":          eventID,
+		"clientID":         c.ClientID,
+		"showStreams":      true,
+		"showRuntime":      true,
+		"showMediaAssets":  true,
+		"showMediaDetails": true,
+		"getLive":          true,
 	})
 	headers := http.Header{}
 	headers.Set("Content-Type", "application/json")
@@ -160,9 +201,13 @@ func (c *Client) FetchEventDetail(ctx context.Context, eventID string) (*Invintu
 		Body:     body,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fetch, err
 	}
-	return ParseEventDetail(fetch.Body)
+	ev, err := ParseEventDetail(fetch.Body)
+	if err != nil {
+		return nil, fetch, err
+	}
+	return ev, fetch, nil
 }
 
 // FetchCaptions GETs the WebVTT caption file at captionURL and parses it

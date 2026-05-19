@@ -3,9 +3,7 @@ package jobs
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
@@ -20,43 +18,63 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 
 	httpClient := p.TVW.HTTP
 
-	// 1. Invintus Event/getDetailed.
-	body, _ := json.Marshal(map[string]string{
-		"eventID":  eventID,
-		"clientID": p.TVW.ClientID,
-	})
-	headers := http.Header{}
-	headers.Set("Content-Type", "application/json")
-	headers.Set("authorization", p.TVW.EmbedderAuthName)
-	headers.Set("wsc-api-key", p.TVW.EmbedderKey)
-	headers.Set("Accept", "application/json")
-
-	evFetch, err := httpClient.Do(ctx, httpx.Request{
-		System:   tvw.InvintusSystemName,
-		Endpoint: "Event.getDetailed",
-		Method:   http.MethodPost,
-		URL:      p.TVW.InvintusBaseURL + "/Event/getDetailed",
-		Headers:  headers,
-		Body:     body,
-	})
+	// 1. TVW WordPress metadata + rich Invintus Event/getDetailed.
+	wp, _, err := p.TVW.FetchWPVideoByEventID(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("wp video metadata: %w", err)
+	}
+	ev, evFetch, err := p.TVW.FetchEventDetailWithSource(ctx, eventID)
 	if err != nil {
 		return fmt.Errorf("Event/getDetailed: %w", err)
 	}
-	ev, err := tvw.ParseEventDetail(evFetch.Body)
-	if err != nil {
+	norm := tvw.NormalizeFromInvintusAndWP(ev, wp)
+	if _, err := p.Store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
+		TVWEventID:          norm.TVWEventID,
+		WPPostID:            norm.WPPostID,
+		WPSlug:              norm.WPSlug,
+		WPLink:              norm.WPLink,
+		Title:               norm.Title,
+		Description:         norm.Description,
+		StartDateTime:       norm.StartDatetime,
+		CaptionURL:          norm.CaptionURL,
+		ThumbnailURL:        norm.ThumbnailURL,
+		CustomID:            norm.CustomID,
+		LocationName:        norm.LocationName,
+		TotalRuntime:        norm.TotalRuntime,
+		TotalRuntimeSeconds: norm.TotalRuntimeSeconds,
+		PublishedAudioURL:   norm.PublishedAudioURL,
+		AudioDownloadURL:    norm.AudioDownloadURL,
+		VideoDownloadURL:    norm.VideoDownloadURL,
+		StreamingURIs:       norm.StreamingURIs,
+		RawCategories:       norm.RawCategories,
+		RawKeywords:         norm.RawKeywords,
+		RawWPTags:           norm.RawWPTags,
+		RawWPCategories:     norm.RawWPCategories,
+		SourceRecordID:      evFetch.SourceRecordID,
+	}); err != nil {
 		return err
 	}
-	norm := tvw.NormalizeFromInvintus(ev, nil)
-	if _, err := p.Store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
-		TVWEventID:     norm.TVWEventID,
-		Title:          norm.Title,
-		Description:    norm.Description,
-		StartDateTime:  norm.StartDatetime,
-		CaptionURL:     norm.CaptionURL,
-		ThumbnailURL:   norm.ThumbnailURL,
-		RawCategories:  norm.RawCategories,
-		SourceRecordID: evFetch.SourceRecordID,
-	}); err != nil {
+	assetRows := make([]db.UpsertTVWMediaAssetParams, 0, len(ev.MediaAssets))
+	for _, a := range tvw.NormalizeMediaAssets(ev) {
+		assetRows = append(assetRows, db.UpsertTVWMediaAssetParams{
+			TVWEventID:          norm.TVWEventID,
+			AssetID:             a.AssetID,
+			AssetType:           a.AssetType,
+			Name:                a.Name,
+			FileURL:             a.FileURL,
+			ThumbnailURL:        a.ThumbnailURL,
+			SpriteURL:           a.SpriteURL,
+			PreviewURL:          a.PreviewURL,
+			FileSizeBytes:       a.FileSizeBytes,
+			TotalRuntime:        a.TotalRuntime,
+			TotalRuntimeSeconds: a.TotalRuntimeSeconds,
+			CurrentStatus:       a.CurrentStatus,
+			DateCreated:         a.DateCreated,
+			AdvancedDetails:     a.AdvancedDetails,
+			SourceRecordID:      evFetch.SourceRecordID,
+		})
+	}
+	if err := p.Store.ReplaceTVWMediaAssets(ctx, norm.TVWEventID, assetRows); err != nil {
 		return err
 	}
 

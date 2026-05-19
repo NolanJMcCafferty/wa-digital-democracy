@@ -7,14 +7,79 @@
     "title": "House Housing",
     "description": "Public hearing on HB 1234.",
     "eventStatus": "published",
-    "categories": ["Legislative", "House Housing"],
-    "categoriesDetail": [{"categoryID": "abc", "categoryName": "Legislative"}],
-    "locationName": "Olympia, WA",
+    "categories": [
+      "Legislative",
+      "House Housing"
+    ],
+    "categoriesDetail": [
+      {
+        "categoryID": "abc",
+        "categoryName": "Legislative"
+      }
+    ],
+    "locationName": "Senate Hearing Rm 4 and Virtual",
     "captionPath": "https://m-download.invintus.com/9375922947/abc.vtt",
-    "streamingURIs": [],
+    "streamingURIs": {
+      "main": "https://api.v3.invintus.com/StreamURI/hls/9375922947/2026021085/media.m3u8",
+      "backup": null
+    },
     "estRuntime": 90,
     "videoThumbnail": "https://example.com/thumb.jpg",
-    "eventNotes": ""
+    "eventNotes": "",
+    "customID": "33828",
+    "totalRunTime": "01:30:01",
+    "publishedAudio": "https://m-download.invintus.com/audio.mp3",
+    "audioDownloadURI": "https://m-download.invintus.com/audio.mp3",
+    "videoDownloadURI": "https://m-download.invintus.com/video.mp4",
+    "keywords": [
+      "1501",
+      "2026 Legislative Session"
+    ],
+    "mediaAssets": [
+      {
+        "assetID": "caption-asset",
+        "clientID": "9375922947",
+        "eventID": "2025031249",
+        "name": "caption.vtt",
+        "type": "caption",
+        "dateCreated": "2025-03-14 12:30:00",
+        "fileSize": "125083",
+        "totalRunTime": null,
+        "totalRunTimeS": null,
+        "currentStatus": "archive",
+        "fileUrl": "https://example.com/caption.vtt",
+        "thumbnail": "",
+        "sprite": null,
+        "previewURI": null,
+        "advancedDetails": false
+      },
+      {
+        "assetID": "video-asset",
+        "clientID": "9375922947",
+        "eventID": "2025031249",
+        "name": "Edit",
+        "type": "video",
+        "dateCreated": "2025-03-14 12:27:48",
+        "fileSize": "2213283547",
+        "totalRunTime": "01:30:01",
+        "totalRunTimeS": 5401,
+        "currentStatus": "archive",
+        "fileUrl": "https://example.com/video.mp4",
+        "thumbnail": "https://example.com/thumb.jpg",
+        "sprite": null,
+        "previewURI": null,
+        "advancedDetails": {
+          "general": {
+            "durationS": 5401
+          },
+          "audio": [
+            {
+              "channels": "2.0ch"
+            }
+          ]
+        }
+      }
+    ]
   },
   "meta": null
 }

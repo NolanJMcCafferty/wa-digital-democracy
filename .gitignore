@@ -16,10 +16,11 @@
 .env
 .env.local
 
-# Editor
+# Editor / local agent notes
 .vscode/
 .idea/
 *.swp
+.learnings/
 
 # Frontend
 /apps/web/node_modules/
