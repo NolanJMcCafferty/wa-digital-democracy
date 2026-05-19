@@ -334,43 +334,160 @@ VALUES ($1, $2, $3, $4::testifier_position, $5, $6, $7);`
 // ---------------------------------------------------------------------------
 
 type UpsertTVWEventParams struct {
-	TVWEventID     string
-	WPPostID       *int64
-	Title          string
-	Description    string
-	StartDateTime  time.Time
-	CaptionURL     string
-	ThumbnailURL   string
-	RawCategories  []string
-	SourceRecordID int64
+	TVWEventID          string
+	WPPostID            *int64
+	WPSlug              string
+	WPLink              string
+	Title               string
+	Description         string
+	StartDateTime       time.Time
+	CaptionURL          string
+	ThumbnailURL        string
+	CustomID            string
+	LocationName        string
+	TotalRuntime        string
+	TotalRuntimeSeconds int
+	PublishedAudioURL   string
+	AudioDownloadURL    string
+	VideoDownloadURL    string
+	StreamingURIs       any
+	RawCategories       []string
+	RawKeywords         []string
+	RawWPTags           []int
+	RawWPCategories     []int
+	SourceRecordID      int64
 }
 
 func (s *Store) UpsertTVWEvent(ctx context.Context, p UpsertTVWEventParams) (int64, error) {
+	streaming, err := marshalJSONDefault(p.StreamingURIs, map[string]any{})
+	if err != nil {
+		return 0, fmt.Errorf("marshal streaming uris: %w", err)
+	}
+	wpTags, err := json.Marshal(p.RawWPTags)
+	if err != nil {
+		return 0, fmt.Errorf("marshal wp tags: %w", err)
+	}
+	wpCategories, err := json.Marshal(p.RawWPCategories)
+	if err != nil {
+		return 0, fmt.Errorf("marshal wp categories: %w", err)
+	}
 	const q = `
-INSERT INTO tvw_event (tvw_event_id, wp_post_id, title, description, start_datetime,
-                       caption_url, thumbnail_url, raw_categories, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO tvw_event (tvw_event_id, wp_post_id, wp_slug, wp_link, title,
+                       description, start_datetime, caption_url, thumbnail_url,
+                       custom_id, location_name, total_runtime,
+                       total_runtime_seconds, published_audio_url,
+                       audio_download_url, video_download_url, streaming_uris,
+                       raw_categories, raw_keywords, raw_wp_tags,
+                       raw_wp_categories, source_record_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,0),$14,$15,$16,$17::jsonb,$18,$19,$20::jsonb,$21::jsonb,$22)
 ON CONFLICT (tvw_event_id) DO UPDATE SET
   wp_post_id     = COALESCE(EXCLUDED.wp_post_id, tvw_event.wp_post_id),
+  wp_slug        = COALESCE(EXCLUDED.wp_slug, tvw_event.wp_slug),
+  wp_link        = COALESCE(EXCLUDED.wp_link, tvw_event.wp_link),
   title          = EXCLUDED.title,
   description    = EXCLUDED.description,
   start_datetime = EXCLUDED.start_datetime,
   caption_url    = EXCLUDED.caption_url,
   thumbnail_url  = EXCLUDED.thumbnail_url,
+  custom_id      = COALESCE(EXCLUDED.custom_id, tvw_event.custom_id),
+  location_name  = COALESCE(EXCLUDED.location_name, tvw_event.location_name),
+  total_runtime  = COALESCE(EXCLUDED.total_runtime, tvw_event.total_runtime),
+  total_runtime_seconds = COALESCE(EXCLUDED.total_runtime_seconds, tvw_event.total_runtime_seconds),
+  published_audio_url = COALESCE(EXCLUDED.published_audio_url, tvw_event.published_audio_url),
+  audio_download_url = COALESCE(EXCLUDED.audio_download_url, tvw_event.audio_download_url),
+  video_download_url = COALESCE(EXCLUDED.video_download_url, tvw_event.video_download_url),
+  streaming_uris = COALESCE(EXCLUDED.streaming_uris, tvw_event.streaming_uris),
   raw_categories = EXCLUDED.raw_categories,
+  raw_keywords = EXCLUDED.raw_keywords,
+  raw_wp_tags = EXCLUDED.raw_wp_tags,
+  raw_wp_categories = EXCLUDED.raw_wp_categories,
   source_record_id = EXCLUDED.source_record_id,
   updated_at     = NOW()
 RETURNING id;`
 	var id int64
-	err := s.Pool.QueryRow(ctx, q,
-		p.TVWEventID, p.WPPostID, strOrNull(p.Title), strOrNull(p.Description),
-		timeOrNull(p.StartDateTime), strOrNull(p.CaptionURL), strOrNull(p.ThumbnailURL),
-		p.RawCategories, p.SourceRecordID,
+	err = s.Pool.QueryRow(ctx, q,
+		p.TVWEventID, p.WPPostID, strOrNull(p.WPSlug), strOrNull(p.WPLink), strOrNull(p.Title),
+		strOrNull(p.Description), timeOrNull(p.StartDateTime), strOrNull(p.CaptionURL), strOrNull(p.ThumbnailURL),
+		strOrNull(p.CustomID), strOrNull(p.LocationName), strOrNull(p.TotalRuntime), p.TotalRuntimeSeconds,
+		strOrNull(p.PublishedAudioURL), strOrNull(p.AudioDownloadURL), strOrNull(p.VideoDownloadURL), string(streaming),
+		nonNilStrings(p.RawCategories), nonNilStrings(p.RawKeywords), string(wpTags), string(wpCategories), p.SourceRecordID,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("upsert tvw_event: %w", err)
 	}
 	return id, nil
+}
+
+func nonNilStrings(xs []string) []string {
+	if xs == nil {
+		return []string{}
+	}
+	return xs
+}
+
+func fileSizeOrNull(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
+func marshalJSONDefault(v any, def any) ([]byte, error) {
+	if v == nil {
+		v = def
+	}
+	return json.Marshal(v)
+}
+
+type UpsertTVWMediaAssetParams struct {
+	TVWEventID          string
+	AssetID             string
+	AssetType           string
+	Name                string
+	FileURL             string
+	ThumbnailURL        string
+	SpriteURL           string
+	PreviewURL          string
+	FileSizeBytes       int64
+	TotalRuntime        string
+	TotalRuntimeSeconds int
+	CurrentStatus       string
+	DateCreated         time.Time
+	AdvancedDetails     any
+	SourceRecordID      int64
+}
+
+func (s *Store) ReplaceTVWMediaAssets(ctx context.Context, tvwEventID string, rows []UpsertTVWMediaAssetParams) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM tvw_media_asset WHERE tvw_event_id = $1`, tvwEventID); err != nil {
+		return fmt.Errorf("delete tvw media assets: %w", err)
+	}
+	const q = `
+INSERT INTO tvw_media_asset (tvw_event_id, asset_id, asset_type, name, file_url,
+                             thumbnail_url, sprite_url, preview_url,
+                             file_size_bytes, total_runtime,
+                             total_runtime_seconds, current_status,
+                             date_created, advanced_details, source_record_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9::bigint,0),$10,NULLIF($11,0),$12,$13,$14::jsonb,$15);`
+	for _, r := range rows {
+		advanced, err := marshalJSONDefault(r.AdvancedDetails, map[string]any{})
+		if err != nil {
+			return fmt.Errorf("marshal advanced details: %w", err)
+		}
+		if _, err := tx.Exec(ctx, q,
+			r.TVWEventID, r.AssetID, r.AssetType, strOrNull(r.Name), strOrNull(r.FileURL),
+			strOrNull(r.ThumbnailURL), strOrNull(r.SpriteURL), strOrNull(r.PreviewURL),
+			fileSizeOrNull(r.FileSizeBytes), strOrNull(r.TotalRuntime), r.TotalRuntimeSeconds,
+			strOrNull(r.CurrentStatus), timeOrNull(r.DateCreated), string(advanced), r.SourceRecordID,
+		); err != nil {
+			return fmt.Errorf("insert tvw media asset %s: %w", r.AssetID, err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 type InsertTranscriptSegmentParams struct {

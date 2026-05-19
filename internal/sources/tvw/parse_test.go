@@ -48,6 +48,15 @@ func TestParseEventDetailWithCaption(t *testing.T) {
 	if got := ParseInvintusStartDateTime(ev.StartDateTime); got.IsZero() {
 		t.Errorf("StartDateTime parse failed for %q", ev.StartDateTime)
 	}
+	if len(ev.MediaAssets) != 2 {
+		t.Fatalf("MediaAssets len = %d, want 2", len(ev.MediaAssets))
+	}
+	if ev.MediaAssets[1].Type != "video" || ev.MediaAssets[1].FileURL == "" {
+		t.Errorf("video asset = %+v", ev.MediaAssets[1])
+	}
+	if string(ev.StreamingURIs) == "{}" {
+		t.Errorf("StreamingURIs unexpectedly empty")
+	}
 }
 
 func TestParseEventDetailNullCaption(t *testing.T) {
@@ -133,7 +142,21 @@ func TestNormalizeFromInvintus(t *testing.T) {
 	if got.CaptionURL == "" {
 		t.Errorf("CaptionURL empty")
 	}
+	if got.TotalRuntimeSeconds != 5401 {
+		t.Errorf("TotalRuntimeSeconds = %d, want 5401", got.TotalRuntimeSeconds)
+	}
+	if got.PublishedAudioURL == "" || got.VideoDownloadURL == "" {
+		t.Errorf("download URLs missing: audio=%q video=%q", got.PublishedAudioURL, got.VideoDownloadURL)
+	}
 	if got.StartDatetime.IsZero() {
 		t.Errorf("StartDatetime zero")
+	}
+
+	assets := NormalizeMediaAssets(ev)
+	if len(assets) != 2 {
+		t.Fatalf("assets len = %d, want 2", len(assets))
+	}
+	if assets[1].AssetType != "video" || assets[1].FileSizeBytes != 2213283547 || assets[1].TotalRuntimeSeconds != 5401 {
+		t.Errorf("normalized video asset = %+v", assets[1])
 	}
 }
