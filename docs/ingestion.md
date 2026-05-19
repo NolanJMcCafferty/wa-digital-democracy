@@ -483,3 +483,30 @@ without a confidence/evidence layer or human-reviewed decision.
 This remains intentionally bounded. Broader budget/spending work should add
 or use separate issues for monthly IT spend datasets, fiscal.wa.gov, Seattle
 Open Budget, USAspending joins, and reviewed agency/vendor/entity resolution.
+
+## Optional Phase 4 fiscal.wa.gov spending ingestion
+
+`wa-dd ingest-fiscal-vendor-payments` ingests the current fiscal.wa.gov Open
+Checkbook vendor-payment workbook into `fiscalwa_vendor_payment`:
+
+```sh
+wa-dd ingest-fiscal-vendor-payments --limit 1000
+```
+
+The current MVP source is:
+
+- `https://fiscal.wa.gov/Spending/VendorPayments2527.xlsx` — Open Checkbook vendor payments for the 2025-27 biennium
+
+Rows preserve biennium, fiscal year/month, agency number/name, object and
+subobject budget categories, vendor name, amount, raw fields, and
+`source_record_id` provenance linking back to the fetched workbook.
+
+Scope caveat: this is a spending/checkbook slice, not the full state budget.
+It supports agency/vendor/category spending context. Proposal-level operating,
+capital, transportation, LEAP document, revenue, allotment, and OFM budget book
+ingestion should remain separate follow-up work because those surfaces have
+different grains and source formats.
+
+Source/terms caveat: fiscal.wa.gov describes itself as a transparency site for
+state fiscal data, reports, charts, and maps. Preserve official source links and
+fetch timestamps; show the project as unofficial and source-linked.
