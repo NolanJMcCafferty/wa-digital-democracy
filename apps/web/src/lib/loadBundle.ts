@@ -60,6 +60,8 @@ export type BillSearchFilters = {
   chamber?: string;
   party?: string;
   status?: string;
+  sponsor?: string;
+  leadSponsor?: string;
   page?: number; // 1-indexed; converted to offset when fetching
   limit?: number;
 };
@@ -124,6 +126,13 @@ export type LegislatorBundleEntry = {
     billNumber: number;
     billTitle?: string;
     sponsorType?: string;
+    chamberOrigin?: string;
+    currentStatus?: string;
+    statusBucket?: "in_progress" | "passed" | "failed" | "";
+    leadSponsor?: string;
+    leadDisplay?: string;
+    leadParty?: string;
+    leadSlug?: string;
     hearingTitle?: string;
     csiAgendaItemId?: string;
     meetingDatetime?: string;
@@ -194,6 +203,8 @@ export async function searchBills(filters: BillSearchFilters): Promise<BillSearc
   if (filters.chamber) params.set("chamber", filters.chamber);
   if (filters.party) params.set("party", filters.party);
   if (filters.status) params.set("status", filters.status);
+  if (filters.sponsor) params.set("sponsor", filters.sponsor);
+  if (filters.leadSponsor) params.set("lead_sponsor", filters.leadSponsor);
   const limit = filters.limit ?? 50;
   params.set("limit", String(limit));
   const page = Math.max(1, filters.page ?? 1);
@@ -537,6 +548,13 @@ type legislatorDetailResponse = {
     bill_number: number;
     bill_title?: string;
     sponsor_type?: string;
+    chamber_origin?: string;
+    current_status?: string;
+    status_bucket?: "in_progress" | "passed" | "failed" | "";
+    lead_sponsor?: string;
+    lead_display?: string;
+    lead_party?: string;
+    lead_slug?: string;
   }>;
 };
 
@@ -597,6 +615,13 @@ export async function loadLegislatorBundle(slug: string): Promise<LegislatorBund
       billNumber: a.bill_number,
       billTitle: a.bill_title,
       sponsorType: a.sponsor_type,
+      chamberOrigin: a.chamber_origin,
+      currentStatus: a.current_status,
+      statusBucket: a.status_bucket,
+      leadSponsor: a.lead_sponsor,
+      leadDisplay: a.lead_display,
+      leadParty: a.lead_party,
+      leadSlug: a.lead_slug,
     })),
   };
 }

@@ -892,14 +892,15 @@ type ListedBill struct {
 // strings are no-ops. The handler is responsible for clamping limit
 // and offset to safe ranges.
 type BillSearchParams struct {
-	Query   string // matches title or bill_number (ILIKE)
-	Prefix  string // exact match on bill.prefix (HB, SB, HJR, …)
-	Chamber string // "House" | "Senate"
-	Party   string // "D" | "R" — filters on lead sponsor's party
-	Status  string // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
-	Sponsor string // legislator slug; matches the Primary sponsor only
-	Limit   int
-	Offset  int
+	Query       string // matches title or bill_number (ILIKE)
+	Prefix      string // exact match on bill.prefix (HB, SB, HJR, …)
+	Chamber     string // "House" | "Senate"
+	Party       string // "D" | "R" — filters on lead sponsor's party
+	Status      string // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
+	Sponsor     string // legislator slug; matches any sponsor row
+	LeadSponsor string // legislator slug; matches the Primary sponsor only
+	Limit       int
+	Offset      int
 }
 
 // BillSearchFacets carries the distinct values we render in the
@@ -961,25 +962,36 @@ func (s *Store) SearchBills(ctx context.Context, p BillSearchParams) ([]ListedBi
 		where = append(where, fmt.Sprintf("primary_sponsor.party = $%d", idx))
 	}
 	if p.Sponsor != "" {
-		// Sponsor filter not yet wired: bill_sponsor doesn't carry a
-		// stable slug column. The handler ignores this branch for now.
-		_ = push
+		idx := push(p.Sponsor)
+		where = append(where, fmt.Sprintf(`
+EXISTS (
+  SELECT 1
+    FROM bill_sponsor sponsor_filter_bs
+    JOIN legislator sponsor_filter_l ON sponsor_filter_l.id = sponsor_filter_bs.legislator_id
+   WHERE sponsor_filter_bs.bill_id = b.id
+     AND trim(both '-' from regexp_replace(replace(lower(sponsor_filter_l.name), '&', ' and '), '[^a-z0-9]+', '-', 'g')) = $%d
+)`, idx))
+	}
+	if p.LeadSponsor != "" {
+		idx := push(p.LeadSponsor)
+		where = append(where, fmt.Sprintf("trim(both '-' from regexp_replace(replace(lower(primary_sponsor.name), '&', ' and '), '[^a-z0-9]+', '-', 'g')) = $%d", idx))
 	}
 	if p.Status != "" {
-		// Bucket the free-text current_status into the three CalMatters-style
-		// status families. The bucketing is intentionally lossy: the source
-		// field is a one-line legislative history sentence ("Effective date
-		// 6/11/2026.", "By resolution, returned to House Rules Committee for
-		// third reading.", etc.) so we look for keywords.
-		switch p.Status {
+		// Status accepts either a coarse bucket ("passed", "failed",
+		// "in_progress") or one of the fine-grained stage labels mirrored
+		// in apps/web/src/lib/billStatus.ts. Stages map to the same SQL
+		// CASE expression used elsewhere; keep the two in sync.
+		switch strings.ToLower(p.Status) {
 		case "passed":
 			where = append(where, "(b.current_status ILIKE '%effective date%' OR b.current_status ILIKE '%governor signed%' OR b.current_status ILIKE '%chapter %2026 laws%')")
 		case "failed":
 			where = append(where, "(b.current_status ILIKE '%died%' OR b.current_status ILIKE '%vetoed%' OR b.current_status ILIKE '%not passed%')")
 		case "in_progress":
-			// Default bucket — anything that doesn't look passed/failed.
 			where = append(where,
 				"NOT (b.current_status ILIKE '%effective date%' OR b.current_status ILIKE '%governor signed%' OR b.current_status ILIKE '%chapter %2026 laws%' OR b.current_status ILIKE '%died%' OR b.current_status ILIKE '%vetoed%' OR b.current_status ILIKE '%not passed%')")
+		default:
+			idx := push(p.Status)
+			where = append(where, fmt.Sprintf("(%s) = $%d", billStageCaseSQL("b.current_status"), idx))
 		}
 	}
 
@@ -1046,6 +1058,28 @@ SELECT b.biennium, b.prefix, b.number, b.bill_number,
 	return out, total, rows.Err()
 }
 
+// billStageCaseSQL returns a SQL expression that classifies a
+// current_status string into one of the lifecycle-stage labels mirrored
+// in apps/web/src/lib/billStatus.ts. Rules are evaluated end-of-life
+// first, matching the JS classifyBillStage rule order.
+func billStageCaseSQL(col string) string {
+	return `CASE
+  WHEN ` + col + ` ILIKE '%effective date%' OR ` + col + ` ~* 'chapter [0-9]+,' OR ` + col + ` ILIKE '%filed with secretary of state%' THEN 'Session law'
+  WHEN ` + col + ` ILIKE '%governor%vetoed%' THEN 'Vetoed'
+  WHEN ` + col + ` ILIKE '%governor signed%' THEN 'Signed by Governor'
+  WHEN ` + col + ` ILIKE '%delivered to governor%' THEN 'On Governor''s desk'
+  WHEN ` + col + ` ILIKE '%speaker signed%' OR ` + col + ` ILIKE '%president signed%' THEN 'Passed Legislature'
+  WHEN ` + col + ` ILIKE '%"x" file%' THEN 'Shelved'
+  WHEN ` + col + ` ILIKE '%by resolution, reintroduced%' THEN 'Reintroduced'
+  WHEN ` + col + ` ~* '\bdied\b' THEN 'Died'
+  WHEN ` + col + ` ILIKE '%third reading, passed%' THEN 'Passed chamber'
+  WHEN ` + col + ` ILIKE '%placed on second reading%' OR ` + col + ` ILIKE '%placed on third reading%' OR ` + col + ` ILIKE '%second reading%' THEN 'On floor calendar'
+  WHEN ` + col + ` ILIKE '%referred to%' OR ` + col + ` ILIKE '%public hearing%' OR ` + col + ` ILIKE '%executive action%' OR ` + col + ` ILIKE '%executive session%' OR ` + col + ` ILIKE '%majority report%' OR ` + col + ` ILIKE '%minority report%' OR ` + col + ` ILIKE '%passed to rules%' THEN 'In committee'
+  WHEN ` + col + ` ILIKE '%first reading%' OR ` + col + ` ILIKE '%prefiled%' OR ` + col + ` ILIKE '%introduced%' THEN 'Introduced'
+  ELSE 'In progress'
+END`
+}
+
 // ListBillSearchFacets returns the distinct prefix/chamber/party/status
 // values present in the bill table, for the sidebar facet list.
 func (s *Store) ListBillSearchFacets(ctx context.Context) (BillSearchFacets, error) {
@@ -1095,9 +1129,26 @@ func (s *Store) ListBillSearchFacets(ctx context.Context) (BillSearchFacets, err
 	}
 	rows.Close()
 
-	// Statuses are bucketed in SearchBills, not stored. Return the
-	// three buckets as fixed labels.
-	f.Statuses = []string{"in_progress", "passed", "failed"}
+	// Statuses come from the lifecycle-stage classifier. Return only
+	// stages that actually have rows backing them, so the sidebar
+	// doesn't show stages that match nothing in the current dataset.
+	stageQ := `SELECT DISTINCT stage FROM (
+  SELECT ` + billStageCaseSQL("current_status") + ` AS stage
+    FROM bill WHERE number > 0 AND current_status IS NOT NULL AND current_status <> ''
+) s WHERE stage <> '' ORDER BY stage`
+	rows, err = s.Pool.Query(ctx, stageQ)
+	if err != nil {
+		return f, fmt.Errorf("facets status: %w", err)
+	}
+	for rows.Next() {
+		var st string
+		if err := rows.Scan(&st); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Statuses = append(f.Statuses, st)
+	}
+	rows.Close()
 	return f, nil
 }
 
@@ -1250,12 +1301,18 @@ SELECT l.id, COALESCE(l.lws_sponsor_id, ''), l.name,
 
 // LegislatorAppearance is one sponsored-bill row joined onto bill metadata.
 type LegislatorAppearance struct {
-	Biennium    string
-	BillID      string
-	BillPrefix  string
-	BillNumber  int
-	BillTitle   string
-	SponsorType string
+	Biennium      string
+	BillID        string
+	BillPrefix    string
+	BillNumber    int
+	BillTitle     string
+	SponsorType   string
+	ChamberOrigin string
+	CurrentStatus string
+	LeadSponsor   string
+	LeadFirstName string
+	LeadLastName  string
+	LeadParty     string
 }
 
 // GetLegislatorBills returns every bill the legislator has sponsored,
@@ -1263,9 +1320,25 @@ type LegislatorAppearance struct {
 func (s *Store) GetLegislatorBills(ctx context.Context, legislatorID int64) ([]LegislatorAppearance, error) {
 	const q = `
 SELECT b.biennium, b.bill_number, b.prefix, b.number,
-       COALESCE(b.title, ''), bs.sponsor_type
+       COALESCE(b.title, ''), bs.sponsor_type,
+       COALESCE(b.chamber_origin, ''),
+       COALESCE(b.current_status, ''),
+       COALESCE(primary_sponsor.name, ''),
+       COALESCE(primary_sponsor.first_name, ''),
+       COALESCE(primary_sponsor.last_name, ''),
+       COALESCE(primary_sponsor.party, '')
   FROM bill_sponsor bs
   JOIN bill b ON b.id = bs.bill_id
+  LEFT JOIN LATERAL (
+    SELECT l.name, COALESCE(l.first_name, '') AS first_name,
+           COALESCE(l.last_name, '') AS last_name,
+           COALESCE(l.party, '') AS party
+      FROM bill_sponsor primary_bs
+      JOIN legislator l ON l.id = primary_bs.legislator_id
+     WHERE primary_bs.bill_id = b.id AND primary_bs.sponsor_type = 'Primary'
+     ORDER BY l.id
+     LIMIT 1
+  ) primary_sponsor ON TRUE
  WHERE bs.legislator_id = $1
  ORDER BY b.biennium DESC, b.prefix, b.number;`
 	rows, err := s.Pool.Query(ctx, q, legislatorID)
@@ -1277,7 +1350,8 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
 	for rows.Next() {
 		var a LegislatorAppearance
 		if err := rows.Scan(&a.Biennium, &a.BillID, &a.BillPrefix, &a.BillNumber,
-			&a.BillTitle, &a.SponsorType); err != nil {
+			&a.BillTitle, &a.SponsorType, &a.ChamberOrigin, &a.CurrentStatus,
+			&a.LeadSponsor, &a.LeadFirstName, &a.LeadLastName, &a.LeadParty); err != nil {
 			return nil, fmt.Errorf("scan appearance: %w", err)
 		}
 		out = append(out, a)

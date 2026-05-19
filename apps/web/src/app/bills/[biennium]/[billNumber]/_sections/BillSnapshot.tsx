@@ -33,28 +33,30 @@ export function BillSnapshot({ bill }: { bill: Bill }) {
       {sponsors.length > 0 ? (
         <div className="space-y-3">
           <span className="block text-sm font-medium text-stone-700">Sponsors</span>
-          {primarySponsors.length > 0 ? (
-            <div className="flex flex-wrap gap-3">
-              {primarySponsors.map((s) => (
-                <SponsorCard
-                  key={`${s.name}-${s.sponsor_type}-${s.chamber}`}
-                  sponsor={s}
-                  variant="primary"
-                />
-              ))}
-            </div>
-          ) : null}
-          {otherSponsors.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {otherSponsors.map((s) => (
-                <SponsorCard
-                  key={`${s.name}-${s.sponsor_type}-${s.chamber}`}
-                  sponsor={s}
-                  variant="secondary"
-                />
-              ))}
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+            {primarySponsors.length > 0 ? (
+              <div className="flex flex-wrap gap-3">
+                {primarySponsors.map((s) => (
+                  <SponsorCard
+                    key={`${s.name}-${s.sponsor_type}-${s.chamber}`}
+                    sponsor={s}
+                    variant="primary"
+                  />
+                ))}
+              </div>
+            ) : null}
+            {otherSponsors.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {otherSponsors.map((s) => (
+                  <SponsorCard
+                    key={`${s.name}-${s.sponsor_type}-${s.chamber}`}
+                    sponsor={s}
+                    variant="secondary"
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

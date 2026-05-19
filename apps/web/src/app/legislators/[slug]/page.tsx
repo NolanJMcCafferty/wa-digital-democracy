@@ -1,7 +1,14 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { listLegislatorBundles, loadLegislatorBundle } from "@/lib/loadBundle";
-import { formatDateTime } from "@/lib/format";
+import {
+  listLegislatorBundles,
+  loadLegislatorBundle,
+  searchBills,
+} from "@/lib/loadBundle";
+import {
+  BillSearchResults,
+  parseBillFilters,
+  type RawBillSearchParams,
+} from "../../bills/BillSearchResults";
 
 export async function generateStaticParams() {
   const legislators = await listLegislatorBundles();
@@ -10,12 +17,17 @@ export async function generateStaticParams() {
 
 export default async function LegislatorPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<RawBillSearchParams>;
 }) {
   const { slug } = await params;
+  const raw = await searchParams;
+  const filters = parseBillFilters(raw);
   const legislator = await loadLegislatorBundle(slug);
   if (!legislator) notFound();
+  const sponsoredBillResult = await searchBills({ ...filters, sponsor: slug });
 
   const primary = legislator.appearances.filter(
     (a) => a.sponsorType === "Primary"
@@ -68,47 +80,16 @@ export default async function LegislatorPage({
         <h2 id="sponsored-bills" className="text-xl font-semibold text-stone-900">
           Sponsored bills
         </h2>
-        <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
-          {legislator.appearances.map((a) => {
-            const billSlug = `${a.billPrefix}${a.billNumber}`;
-            return (
-              <li key={`${a.biennium}-${a.billId}`} className="p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1">
-                    <Link
-                      href={`/bills/${a.biennium}/${billSlug}`}
-                      className="font-medium text-blue-700 underline hover:text-blue-900"
-                    >
-                      {a.billId} — {a.billTitle}
-                    </Link>
-                    <p className="text-sm text-stone-600">
-                      {a.sponsorType ?? "Sponsor"}
-                      {a.meetingDatetime ? ` · hearing ${formatDateTime(a.meetingDatetime)}` : ""}
-                    </p>
-                    {a.hearingTitle ? (
-                      <p className="text-xs text-stone-500">{a.hearingTitle}</p>
-                    ) : null}
-                  </div>
-                  {a.csiAgendaItemId ? (
-                    <Link
-                      href={`/hearings/${a.csiAgendaItemId}`}
-                      className="text-sm text-blue-700 underline hover:text-blue-900"
-                    >
-                      Hearing page →
-                    </Link>
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-
-      <section className="rounded-lg border border-stone-300 bg-stone-50 p-5 text-sm text-stone-600">
-        <h2 className="mb-2 font-semibold text-stone-900">Data caveat</h2>
-        <p>
-          This page is intentionally narrow for now: it starts with official sponsorship records. District, party, committee assignments, vote history, campaign-finance profiles, and full legislator identity matching are not populated yet.
-        </p>
+        <BillSearchResults
+          basePath={`/legislators/${slug}`}
+          filters={filters}
+          bills={sponsoredBillResult.bills}
+          total={sponsoredBillResult.total}
+          offset={sponsoredBillResult.offset}
+          facets={sponsoredBillResult.facets}
+          hiddenFilters={["chamber", "party"]}
+          leadSponsorOptions={[{ value: slug, label: displayName }]}
+        />
       </section>
     </article>
   );

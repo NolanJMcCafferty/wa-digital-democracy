@@ -174,7 +174,7 @@ export default async function LegislatorsPage({
 
       <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
         {/* Sidebar */}
-        <aside className="lg:sticky lg:top-6 lg:self-start">
+        <aside className="lg:sticky lg:top-6 lg:mt-10 lg:self-start">
           <form
             method="GET"
             action="/legislators"

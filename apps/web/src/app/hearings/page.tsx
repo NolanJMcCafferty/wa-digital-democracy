@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { searchHearings, type HearingSearchFilters, type HearingSearchResult } from "@/lib/loadBundle";
-import { formatDateTime } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import { ISSUE_PAGE_CONFIGS } from "../issues/_shared/config";
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -145,14 +145,14 @@ export default async function HearingsPage({
         <h1 className="text-3xl font-bold tracking-tight text-stone-900">Hearings</h1>
         <p className="text-stone-600">
           Search the {(result.total).toLocaleString()} committee hearings
-          currently tracked. Each row links to a source-linked page with
+          currently tracked. Each row links to a detail page with
           testimony, transcript excerpts, video, and source records.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
         {/* Sidebar */}
-        <aside className="lg:sticky lg:top-6 lg:self-start">
+        <aside className="lg:sticky lg:top-6 lg:mt-10 lg:self-start">
           <form
             method="GET"
             action="/hearings"
@@ -280,7 +280,7 @@ export default async function HearingsPage({
                     <th className="px-4 py-2.5 font-semibold">Name</th>
                     <th className="px-4 py-2.5 font-semibold">Committee</th>
                     <th className="px-4 py-2.5 font-semibold">Chamber</th>
-                    <th className="px-4 py-2.5 font-semibold">Date</th>
+                    <th className="w-40 px-4 py-2.5 font-semibold">Date</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200">
@@ -302,8 +302,8 @@ export default async function HearingsPage({
                         <td className="px-4 py-2.5 align-top text-stone-700">
                           {h.chamber || <span className="text-stone-400">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 align-top text-stone-700 tabular-nums">
-                          {formatDateTime(h.meetingDatetime)}
+                        <td className="w-40 whitespace-nowrap px-4 py-2.5 align-top text-stone-700 tabular-nums">
+                          {formatDate(h.meetingDatetime)}
                         </td>
                       </tr>
                     );

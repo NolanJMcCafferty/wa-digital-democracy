@@ -132,12 +132,13 @@ func listBillsHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
 		params := db.BillSearchParams{
-			Query:   strings.TrimSpace(q.Get("q")),
-			Prefix:  strings.ToUpper(strings.TrimSpace(q.Get("prefix"))),
-			Chamber: strings.TrimSpace(q.Get("chamber")),
-			Party:   strings.ToUpper(strings.TrimSpace(q.Get("party"))),
-			Status:  strings.ToLower(strings.TrimSpace(q.Get("status"))),
-			Sponsor: strings.TrimSpace(q.Get("sponsor")),
+			Query:       strings.TrimSpace(q.Get("q")),
+			Prefix:      strings.ToUpper(strings.TrimSpace(q.Get("prefix"))),
+			Chamber:     strings.TrimSpace(q.Get("chamber")),
+			Party:       strings.ToUpper(strings.TrimSpace(q.Get("party"))),
+			Status:      strings.TrimSpace(q.Get("status")),
+			Sponsor:     strings.TrimSpace(q.Get("sponsor")),
+			LeadSponsor: strings.TrimSpace(q.Get("lead_sponsor")),
 		}
 		// Soft-parse limit/offset; bad values fall back to defaults.
 		params.Limit = billsDefaultLimit
@@ -445,12 +446,19 @@ func lookupLegislatorsByAddressHandler(store *db.Store) http.HandlerFunc {
 
 func getLegislatorHandler(store *db.Store) http.HandlerFunc {
 	type appearance struct {
-		Biennium    string `json:"biennium"`
-		BillID      string `json:"bill_id"`
-		BillPrefix  string `json:"bill_prefix"`
-		BillNumber  int    `json:"bill_number"`
-		BillTitle   string `json:"bill_title,omitempty"`
-		SponsorType string `json:"sponsor_type,omitempty"`
+		Biennium      string `json:"biennium"`
+		BillID        string `json:"bill_id"`
+		BillPrefix    string `json:"bill_prefix"`
+		BillNumber    int    `json:"bill_number"`
+		BillTitle     string `json:"bill_title,omitempty"`
+		SponsorType   string `json:"sponsor_type,omitempty"`
+		ChamberOrigin string `json:"chamber_origin,omitempty"`
+		CurrentStatus string `json:"current_status,omitempty"`
+		StatusBucket  string `json:"status_bucket,omitempty"`
+		LeadSponsor   string `json:"lead_sponsor,omitempty"`
+		LeadDisplay   string `json:"lead_display,omitempty"`
+		LeadParty     string `json:"lead_party,omitempty"`
+		LeadSlug      string `json:"lead_slug,omitempty"`
 	}
 	type body struct {
 		Slug         string       `json:"slug"`
@@ -490,13 +498,21 @@ func getLegislatorHandler(store *db.Store) http.HandlerFunc {
 		}
 		apps := make([]appearance, 0, len(bills))
 		for _, b := range bills {
+			display := strings.TrimSpace(b.LeadFirstName + " " + b.LeadLastName)
 			apps = append(apps, appearance{
-				Biennium:    b.Biennium,
-				BillID:      b.BillID,
-				BillPrefix:  b.BillPrefix,
-				BillNumber:  b.BillNumber,
-				BillTitle:   b.BillTitle,
-				SponsorType: b.SponsorType,
+				Biennium:      b.Biennium,
+				BillID:        b.BillID,
+				BillPrefix:    b.BillPrefix,
+				BillNumber:    b.BillNumber,
+				BillTitle:     b.BillTitle,
+				SponsorType:   b.SponsorType,
+				ChamberOrigin: b.ChamberOrigin,
+				CurrentStatus: b.CurrentStatus,
+				StatusBucket:  bucketStatus(b.CurrentStatus),
+				LeadSponsor:   b.LeadSponsor,
+				LeadDisplay:   display,
+				LeadParty:     b.LeadParty,
+				LeadSlug:      slugify(b.LeadSponsor),
 			})
 		}
 		display := strings.TrimSpace(match.FirstName + " " + match.LastName)
