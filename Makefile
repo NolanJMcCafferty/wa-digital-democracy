@@ -106,10 +106,11 @@ ingest-session: ## Pull LWS metadata for every bill in BIENNIUM (default 2025-26
 discover-hearings: ## Auto-fill CSI/TVW IDs on every LWS hearing in BIENNIUM
 	$(GO) run ./cmd/wa-dd discover-hearings --biennium $${BIENNIUM:-2025-26}
 
-ingest-hearings: ## Run the full pipeline for every discovered agenda item in BIENNIUM
+ingest-hearings: ## Discover hearing IDs, then run the full pipeline for every discovered agenda item
 	@if [ -z "$$INVINTUS_EMBEDDER_KEY" ]; then \
 		echo "INVINTUS_EMBEDDER_KEY is required (export it or put it in your env)"; exit 1; \
 	fi
+	$(GO) run ./cmd/wa-dd discover-hearings --biennium $${BIENNIUM:-2025-26}
 	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26}
 
-daily: ingest-legislators ingest-session discover-hearings ingest-hearings ## One-call nightly: roster + metadata + hearing discovery + auto-ingest
+daily: ingest-legislators ingest-session ingest-hearings ## One-call nightly: roster + metadata + hearing discovery + auto-ingest
