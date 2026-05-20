@@ -856,16 +856,17 @@ type ListedBill struct {
 // strings are no-ops. The handler is responsible for clamping limit
 // and offset to safe ranges.
 type BillSearchParams struct {
-	Query       string   // matches title or bill_number (ILIKE)
-	Prefix      string   // exact match on bill.prefix (HB, SB, HJR, …)
-	Chamber     string   // "House" | "Senate"
-	Party       string   // "D" | "R" — filters on lead sponsor's party
-	Status      string   // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
-	Sponsor     string   // legislator slug; matches any sponsor row
-	LeadSponsor string   // legislator slug; matches the Primary sponsor only
-	BillIDs     []string // restrict to this set of bill_ids (used by issue pages); empty = no filter
-	Limit       int
-	Offset      int
+	Query         string   // matches title or bill_number (ILIKE)
+	Prefix        string   // exact match on bill.prefix (HB, SB, HJR, …)
+	Chamber       string   // "House" | "Senate"
+	Party         string   // "D" | "R" — filters on lead sponsor's party
+	Status        string   // "in_progress" | "passed" | "failed" | "" — bucketed from current_status
+	Sponsor       string   // legislator slug; matches any sponsor row
+	LeadSponsor   string   // legislator slug; matches the Primary sponsor only
+	BillIDs       []string // restrict to this set of bill_ids (used by issue pages); empty = no filter
+	TopicKeywords []string // OR-set of ILIKE keywords matched against bill title/desc, agenda label, committee name
+	Limit         int
+	Offset        int
 }
 
 // BillSearchFacets carries the distinct values we render in the
@@ -944,6 +945,25 @@ EXISTS (
 	if len(p.BillIDs) > 0 {
 		idx := push(p.BillIDs)
 		where = append(where, fmt.Sprintf("b.bill_number = ANY($%d)", idx))
+	}
+	if keywords := nonEmptyStrings(p.TopicKeywords); len(keywords) > 0 {
+		ors := make([]string, 0, len(keywords))
+		for _, kw := range keywords {
+			idx := push(kw)
+			ors = append(ors, fmt.Sprintf(`(
+	b.bill_number ILIKE '%%' || $%d || '%%'
+	OR b.title ILIKE '%%' || $%d || '%%'
+	OR COALESCE(b.description, '') ILIKE '%%' || $%d || '%%'
+	OR EXISTS (
+	  SELECT 1
+	    FROM agenda_item a
+	    JOIN hearing h ON h.id = a.hearing_id
+	   WHERE a.bill_id = b.id
+	     AND (a.label ILIKE '%%' || $%d || '%%' OR h.committee_name ILIKE '%%' || $%d || '%%')
+	)
+)`, idx, idx, idx, idx, idx))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
 	}
 	if p.Status != "" {
 		// Status accepts either a coarse bucket ("passed", "failed",

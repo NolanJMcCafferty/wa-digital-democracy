@@ -1,5 +1,4 @@
 import {
-  listBills,
   loadBillPage,
   searchBills,
   searchHearings,
@@ -23,7 +22,6 @@ import {
   parseOrganizationFilters,
 } from "../../organizations/OrganizationSearchResults";
 
-const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 const CONFIDENCE_RANK: Record<OrganizationListEntry["matchConfidence"], number> = {
   confirmed: 4,
   probable: 3,
@@ -49,46 +47,23 @@ export async function IssuePage({
   const filters = parseBillFilters(searchParams ?? {});
   const hearingFilters = parseHearingFilters(searchParams ?? {});
   const organizationFilters = parseOrganizationFilters(searchParams ?? {}, "org");
-  const entries = await listBills();
-  const allBillPages = (
+  const billSearchFilters = { ...filters, topicKeywords: config.keywords };
+
+  const billResult = await searchBills(billSearchFilters);
+  const coverageBillResult =
+    billResult.offset === 0 && billResult.limit >= 100
+      ? billResult
+      : await searchBills({ ...billSearchFilters, page: 1, limit: 100 });
+  const billPages = (
     await Promise.all(
-      entries.map((e) => loadBillPage(e.biennium, e.billPrefix, e.billNumber))
+      coverageBillResult.bills.map((b) =>
+        loadBillPage(b.biennium, b.billPrefix, b.billNumber),
+      ),
     )
   ).filter((b): b is BillPage => Boolean(b));
-  const billPages = allBillPages.filter((b) => billPageMatchesIssue(b, config));
-  const matchedBillIds = billPages.map((b) => b.bill.bill_id);
-
-  const billResult = matchedBillIds.length === 0
-    ? null
-    : await searchBills({ ...filters, billIds: matchedBillIds });
 
   const hearingResult = await searchHearings(
     hearingFiltersToSearch(hearingFilters, config.keywords),
-  );
-
-  const totals = billPages.reduce(
-    (acc, b) => {
-      acc.bills += 1;
-      for (const section of b.hearings ?? []) {
-        const testifiers = section.testifiers ?? [];
-        acc.testifiers += testifiers.length;
-        acc.testified += testifiers.filter((t) => t.testified).length;
-        acc.transcriptSegments += section.transcript?.segments?.length ?? 0;
-        acc.organizations += (section.organizations ?? []).length;
-        for (const t of testifiers) acc.positions[t.position] += 1;
-      }
-      acc.sources += (b.sources ?? []).length;
-      return acc;
-    },
-    {
-      bills: 0,
-      testifiers: 0,
-      testified: 0,
-      transcriptSegments: 0,
-      organizations: 0,
-      sources: 0,
-      positions: { Pro: 0, Con: 0, Other: 0, Unknown: 0 } as Record<Position, number>,
-    }
   );
 
   const organizations = issueOrganizations(billPages);
@@ -99,58 +74,28 @@ export async function IssuePage({
         <h1 className="text-3xl font-bold tracking-tight text-stone-900">
           {config.title}
         </h1>
-        <p className="max-w-3xl text-stone-600">{config.description}</p>
+        <p className="max-w-6xl text-stone-600">{config.description}</p>
       </section>
 
-      {billPages.length === 0 ? (
+      {billResult.total === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
           No {config.emptyLabel} legislation is available yet.
         </p>
       ) : (
         <>
-          <section aria-labelledby={`${config.slug}-summary`} className="space-y-4">
-            <h2 id={`${config.slug}-summary`} className="text-xl font-semibold text-stone-900">
-              Current coverage
+          <section aria-labelledby={`${config.slug}-bills`} className="space-y-4">
+            <h2 id={`${config.slug}-bills`} className="text-xl font-semibold text-stone-900">
+              Bills
             </h2>
-            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
-              <Metric label="Bills" value={totals.bills.toLocaleString()} />
-              <Metric label="Hearings" value={hearingResult.total.toLocaleString()} />
-              <Metric label="Signed in" value={totals.testifiers.toLocaleString()} />
-              <Metric label="Testified" value={totals.testified.toLocaleString()} />
-              <Metric label="Transcript" value={`${totals.transcriptSegments.toLocaleString()} excerpts`} />
-              <Metric label="Sources" value={totals.sources.toLocaleString()} />
-            </div>
+            <BillSearchResults
+              basePath={`/issues/${config.slug}`}
+              filters={filters}
+              bills={billResult.bills}
+              total={billResult.total}
+              offset={billResult.offset}
+              facets={billResult.facets}
+            />
           </section>
-
-          <section aria-labelledby={`${config.slug}-positions`} className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
-            <h2 id={`${config.slug}-positions`} className="text-xl font-semibold text-stone-900">
-              Testimony positions
-            </h2>
-            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              {POSITION_ORDER.map((p) => (
-                <Metric key={p} label={p} value={totals.positions[p].toLocaleString()} />
-              ))}
-            </div>
-            <p className="text-xs text-stone-500">
-              Counts are from Committee Sign In records, including people who registered a position but did not testify.
-            </p>
-          </section>
-
-          {billResult ? (
-            <section aria-labelledby={`${config.slug}-bills`} className="space-y-4">
-              <h2 id={`${config.slug}-bills`} className="text-xl font-semibold text-stone-900">
-                Bills
-              </h2>
-              <BillSearchResults
-                basePath={`/issues/${config.slug}`}
-                filters={filters}
-                bills={billResult.bills}
-                total={billResult.total}
-                offset={billResult.offset}
-                facets={billResult.facets}
-              />
-            </section>
-          ) : null}
 
           <section aria-labelledby={`${config.slug}-hearings`} className="space-y-4">
             <h2 id={`${config.slug}-hearings`} className="text-xl font-semibold text-stone-900">
@@ -230,24 +175,6 @@ function issueOrganizations(billPages: BillPage[]): OrganizationListEntry[] {
 function normalizePosition(position?: string): Position {
   if (position === "Pro" || position === "Con" || position === "Other") return position;
   return "Unknown";
-}
-
-function billPageMatchesIssue(page: BillPage, config: IssuePageConfig): boolean {
-  const haystack = [
-    page.bill.bill_id,
-    page.bill.title,
-    page.bill.description,
-    ...(page.hearings ?? []).flatMap((section) => [
-      section.hearing.agenda_item_label,
-      section.hearing.committee_name,
-      ...(section.organizations ?? []).map((o) => o.canonical_name),
-    ]),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return config.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

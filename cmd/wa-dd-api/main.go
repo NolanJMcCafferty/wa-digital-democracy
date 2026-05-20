@@ -135,14 +135,15 @@ func listBillsHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
 		params := db.BillSearchParams{
-			Query:       strings.TrimSpace(q.Get("q")),
-			Prefix:      strings.ToUpper(strings.TrimSpace(q.Get("prefix"))),
-			Chamber:     strings.TrimSpace(q.Get("chamber")),
-			Party:       strings.ToUpper(strings.TrimSpace(q.Get("party"))),
-			Status:      strings.TrimSpace(q.Get("status")),
-			Sponsor:     strings.TrimSpace(q.Get("sponsor")),
-			LeadSponsor: strings.TrimSpace(q.Get("lead_sponsor")),
-			BillIDs:     splitCSV(q.Get("bill_ids")),
+			Query:         strings.TrimSpace(q.Get("q")),
+			Prefix:        strings.ToUpper(strings.TrimSpace(q.Get("prefix"))),
+			Chamber:       strings.TrimSpace(q.Get("chamber")),
+			Party:         strings.ToUpper(strings.TrimSpace(q.Get("party"))),
+			Status:        strings.TrimSpace(q.Get("status")),
+			Sponsor:       strings.TrimSpace(q.Get("sponsor")),
+			LeadSponsor:   strings.TrimSpace(q.Get("lead_sponsor")),
+			BillIDs:       splitCSV(q.Get("bill_ids")),
+			TopicKeywords: q["topic_keyword"],
 		}
 		// Soft-parse limit/offset; bad values fall back to defaults.
 		params.Limit = billsDefaultLimit

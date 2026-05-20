@@ -56,24 +56,22 @@ export default async function LegislatorPage({
             </span>
           )}
         </div>
-        <div className="space-y-4">
-          <p className="text-sm uppercase tracking-wider text-stone-500">
-            Legislator
-          </p>
+        <div className="flex flex-1 flex-col gap-4">
           <div className="space-y-3">
+            <p className="text-sm uppercase tracking-wider text-stone-500">
+              Legislator
+            </p>
             <h1 className="text-3xl font-bold tracking-tight text-stone-900">
               {displayName}
             </h1>
             {subtitle ? <p className="text-stone-600">{subtitle}</p> : null}
           </div>
+          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+            <Metric label="Sponsored bills" value={legislator.appearances.length.toLocaleString()} />
+            <Metric label="Primary" value={primary.toLocaleString()} />
+            <Metric label="Secondary" value={secondary.toLocaleString()} />
+          </div>
         </div>
-      </section>
-
-      <section className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <Metric label="Sponsored bills" value={legislator.appearances.length.toLocaleString()} />
-        <Metric label="Primary" value={primary.toLocaleString()} />
-        <Metric label="Secondary" value={secondary.toLocaleString()} />
-        <Metric label="Chamber" value={legislator.chamber ?? "Unknown"} />
       </section>
 
       <section aria-labelledby="sponsored-bills" className="space-y-4">

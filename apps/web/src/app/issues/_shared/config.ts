@@ -6,7 +6,7 @@ export const ISSUE_PAGE_CONFIGS = [
     slug: "health",
     title: "Health",
     description:
-      "A first issue-level view over Washington health legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for public health, health care access, insurance, behavioral health, hospitals, long-term care, workforce, Medicaid, and health accountability data.",
+      "Track Washington health policy: bills, hearings, testimony, and the organizations behind them — covering health care access, insurance, behavioral health, hospitals, long-term care, and Medicaid.",
     emptyLabel: "health",
     keywords: [
       "health",
@@ -38,7 +38,7 @@ export const ISSUE_PAGE_CONFIGS = [
     slug: "housing",
     title: "Housing",
     description:
-      "A first issue-level view over Washington housing legislation, testimony, transcript excerpts, organizations, and source records. As coverage expands, this page becomes the entry point for housing bills, hearings, permitting, affordability, and accountability data.",
+      "Track Washington housing policy: bills, hearings, testimony, and the organizations behind them — covering zoning, permitting, affordability, and homelessness.",
     emptyLabel: "housing",
     keywords: [
       "housing",
@@ -60,7 +60,7 @@ export const ISSUE_PAGE_CONFIGS = [
     slug: "climate",
     title: "Climate",
     description:
-      "A first issue-level view over Washington climate legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for emissions, clean energy, environmental justice, climate resilience, carbon markets, and agency accountability data.",
+      "Track Washington climate policy: bills, hearings, testimony, and the organizations behind them — covering emissions, clean energy, environmental justice, climate resilience, and carbon markets.",
     emptyLabel: "climate",
     keywords: [
       "climate",
@@ -84,7 +84,7 @@ export const ISSUE_PAGE_CONFIGS = [
     slug: "education",
     title: "Education",
     description:
-      "A first issue-level view over Washington education legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for K-12, higher education, school funding, student outcomes, workforce pathways, and education accountability data.",
+      "Track Washington education policy: bills, hearings, testimony, and the organizations behind them — covering K-12, higher education, school funding, special education, and early learning.",
     emptyLabel: "education",
     keywords: [
       "education",
@@ -112,7 +112,7 @@ export const ISSUE_PAGE_CONFIGS = [
     slug: "public-safety",
     title: "Public Safety",
     description:
-      "A first issue-level view over Washington public-safety legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for policing, courts, corrections, emergency response, fire/EMS, violence prevention, and accountability data, with especially careful responsible-use defaults.",
+      "Track Washington public safety policy: bills, hearings, testimony, and the organizations behind them — covering policing, courts, corrections, emergency response, and violence prevention.",
     emptyLabel: "public-safety",
     keywords: [
       "public safety",
@@ -140,7 +140,7 @@ export const ISSUE_PAGE_CONFIGS = [
     slug: "transportation",
     title: "Transportation",
     description:
-      "A first issue-level view over Washington transportation legislation, hearings, testimony, organizations, and source records. Over time this becomes the entry point for transit, roads, ferries, safety, infrastructure projects, emissions, and transportation accountability data.",
+      "Track Washington transportation policy: bills, hearings, testimony, and the organizations behind them — covering transit, roads, ferries, traffic safety, and infrastructure projects.",
     emptyLabel: "transportation",
     keywords: [
       "transportation",

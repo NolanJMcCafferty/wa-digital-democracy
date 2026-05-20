@@ -63,6 +63,7 @@ export type BillSearchFilters = {
   sponsor?: string;
   leadSponsor?: string;
   billIds?: string[]; // restrict to this set of bill_ids (issue pages)
+  topicKeywords?: string[];
   page?: number; // 1-indexed; converted to offset when fetching
   limit?: number;
 };
@@ -256,6 +257,9 @@ export async function searchBills(filters: BillSearchFilters): Promise<BillSearc
   if (filters.leadSponsor) params.set("lead_sponsor", filters.leadSponsor);
   if (filters.billIds && filters.billIds.length > 0) {
     params.set("bill_ids", filters.billIds.join(","));
+  }
+  for (const k of filters.topicKeywords ?? []) {
+    if (k) params.append("topic_keyword", k);
   }
   const limit = filters.limit ?? 50;
   params.set("limit", String(limit));
