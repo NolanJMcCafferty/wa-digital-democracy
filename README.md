@@ -130,7 +130,7 @@ infra/
   docker-compose.yml
 data/
   raw/                    # immutable raw API responses (gitignored)
-  processed/              # JSON bundles for rendering (gitignored)
+  processed/              # Legacy demo snapshots + run summaries (gitignored)
 docs/
   phase0-spike-report.md          # preserved feasibility findings
   written-testimony-source-note.md # pending written-testimony access note

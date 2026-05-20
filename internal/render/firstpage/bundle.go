@@ -1,6 +1,6 @@
-// Package firstpage assembles the first-page JSON bundle from Postgres
-// state. Sections mirror the Blueprint §"Page sections" (lines 76–376) so
-// the Next.js frontend can map them 1:1.
+// Package firstpage assembles bill page payloads and legacy first-page
+// snapshot JSON from Postgres state. New live API routes should expose
+// explicit page objects; Bundle remains for the curated snapshot path.
 package firstpage
 
 import (
@@ -28,9 +28,9 @@ type Bundle struct {
 	Bill        Bill      `json:"bill"`
 	Status      Status    `json:"status"`
 	// Hearing/Testifiers/Transcript/Organizations mirror the most recent
-	// hearing for back-compat with the hearings/{id} bundle response and
-	// older clients. The full list of hearings on the bill lives in
-	// Hearings; the bill-detail page renders one section per entry.
+	// hearing for back-compat with older clients. The full list of hearings
+	// on the bill lives in Hearings; the bill-detail page renders one section
+	// per entry.
 	Hearing          *Hearing         `json:"hearing,omitempty"`
 	Testifiers       []Testifier      `json:"testifiers"`
 	Transcript       *Transcript      `json:"transcript,omitempty"`
@@ -40,7 +40,7 @@ type Bundle struct {
 	KnownLimitations []string         `json:"known_limitations,omitempty"`
 }
 
-// HearingSection bundles everything tied to a single agenda_item: the
+// HearingSection groups everything tied to a single agenda_item: the
 // hearing metadata plus the testifiers, transcript, and organizations
 // scoped to it. The bill-detail page uses one of these per hearing on
 // the bill.
@@ -152,13 +152,13 @@ type BillPage struct {
 	KnownLimitations []string         `json:"known_limitations,omitempty"`
 }
 
-// Build assembles a Bundle for the configured demo from Postgres state.
+// Build assembles a legacy snapshot payload for the configured demo from Postgres state.
 // Requires a CSI agenda item id on the demo — this path is for the curated
 // hearing-bound view. For metadata-only bills (no agenda item), call
 // BuildByBill instead.
 func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bundle, error) {
-	// Initialize collection fields to non-nil empty slices so the bundle's
-	// JSON serializes to [] rather than null when a section has no data —
+	// Initialize collection fields to non-nil empty slices so JSON serializes
+	// to [] rather than null when a section has no data —
 	// the frontend treats these as arrays unconditionally.
 	b := &Bundle{
 		GeneratedAt:   time.Now().UTC(),
@@ -190,7 +190,7 @@ func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bu
 	return b, nil
 }
 
-// BuildByBill assembles the legacy Bundle shape for callers that still need
+// BuildByBill assembles the legacy snapshot shape for callers that still need
 // it. New bill-detail HTTP callers should use BuildBillPage.
 func BuildByBill(
 	ctx context.Context,
@@ -289,7 +289,7 @@ func BuildBillPage(
 }
 
 // BuildHearingSection runs the per-hearing loaders against a scratch
-// Bundle and pulls the resulting fields into a HearingSection. Exported
+// scratch payload and pulls the resulting fields into a HearingSection. Exported
 // so the hearing-detail handler can reuse it for the per-agenda-item
 // blocks rendered on /hearings/{id}.
 func BuildHearingSection(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*HearingSection, error) {

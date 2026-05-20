@@ -1,9 +1,9 @@
 import "server-only";
 
 import {
-  listHearingBundles,
+  listHearings,
   listLegislators,
-  listLocalBundles,
+  listBills,
   listOrganizations,
   loadBillPage,
   type BillPage,
@@ -20,20 +20,20 @@ export type SearchResult = {
 };
 
 export async function buildSearchIndex(): Promise<SearchResult[]> {
-  const [bundles, hearings, organizations, legislators] = await Promise.all([
-    listLocalBundles(),
-    listHearingBundles(),
+  const [bills, hearings, organizations, legislators] = await Promise.all([
+    listBills(),
+    listHearings(),
     listOrganizations(),
     listLegislators(),
   ]);
-  const loadedBundles = (
+  const billPages = (
     await Promise.all(
-      bundles.map((b) => loadBillPage(b.biennium, b.billPrefix, b.billNumber))
+      bills.map((b) => loadBillPage(b.biennium, b.billPrefix, b.billNumber))
     )
   ).filter((b): b is BillPage => Boolean(b));
 
   return [
-    ...loadedBundles.map((b) =>
+    ...billPages.map((b) =>
       withSearchText({
         type: "Bill" as const,
         title: `${b.bill.bill_id} — ${b.bill.title ?? "Untitled bill"}`,

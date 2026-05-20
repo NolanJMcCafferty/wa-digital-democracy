@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { listOrganizations, loadOrganizationPage } from "@/lib/loadBundle";
 import { formatDateTime } from "@/lib/format";
-import type { Position } from "@/lib/bundle";
+import type { Position } from "@/lib/pageTypes";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 

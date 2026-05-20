@@ -46,7 +46,7 @@ Detailed per-package: `internal/sources/{lws,csi,committeeschedules,tvw,pdc,http
 | automatically identify bill discussion start/end | ✓ via bill-mention regex over transcript |
 | automatically match testifiers to transcript snippets | partial — heuristic ran, matched 0/25 segments on this demo (last-name match against transcript text). Improvement deferred to Phase 7 |
 | concise hearing summary with citations | deferred — out of MVP scope (was tagged for Phase 4 LLM sidecar) |
-| export page data as JSON | ✓ — bundle is JSON at `data/processed/bundles/wa_2025-26_HB1501.json` |
+| export page data as JSON | ✓ — legacy snapshot JSON at `data/processed/bundles/wa_2025-26_HB1501.json` |
 
 ## End-to-end flow check
 
@@ -59,14 +59,14 @@ go run ./cmd/wa-dd find-candidates --issue housing
   └─ scanned 30 housing-committee agenda items in 22s; HB 1501 selected
 [edit config/selected_demo.yml]
 INVINTUS_EMBEDDER_KEY=… go run ./cmd/wa-dd build-bundle
-  └─ 6 ingestion-run rows in Postgres, 7 source_record provenance rows, 47KB JSON bundle
+  └─ 6 ingestion-run rows in Postgres, 7 source_record provenance rows, 47KB JSON snapshot
 cd apps/web && pnpm dev
-  └─ /bills/2025-26/HB1501 renders all 7 sections from the bundle
+  └─ /bills/2025-26/HB1501 renders all 7 sections from the page API
 ```
 
 ## Provenance spot-check
 
-Three random source URLs from the bundle, fetched fresh:
+Three random source URLs from the exported snapshot, fetched fresh:
 
 | System | Endpoint | URL resolves | Content-Type |
 |---|---|---|---|
@@ -82,7 +82,7 @@ sources right now.
 | Phase | Bug | Fix |
 |---|---|---|
 | 4 | `pickHearingForDemo` fell back to "first hearing" — for House-origin bills with hearings in both chambers it shadowed the demo's Senate hearing | chamber-aware priority, no first-hearing fallback (`internal/jobs/helpers.go`) |
-| 4 | `ingest-tvw` didn't bind `tvw_event_id` onto the hearing row, so the bundle's transcript join returned 0 segments | explicit hearing-update at the end of `IngestTVW` (`internal/jobs/ingest_tvw.go`) |
+| 4 | `ingest-tvw` didn't bind `tvw_event_id` onto the hearing row, so transcript joins returned 0 segments | explicit hearing-update at the end of `IngestTVW` (`internal/jobs/ingest_tvw.go`) |
 | 5 | CSI/LWS were storing Pacific wall-clock times as if they were UTC, rendering the meeting as "2:30 AM PST" instead of 10:30 AM | parse with `time.ParseInLocation("America/Los_Angeles", …)` (`internal/sources/csi/parse.go`, `internal/sources/lws/normalize.go`, `internal/jobs/helpers.go`) |
 
 ## Wiki deltas worth folding back

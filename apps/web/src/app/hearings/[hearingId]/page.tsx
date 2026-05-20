@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadHearingBundle, listHearingBundles, type HearingAgendaItemEntry } from "@/lib/loadBundle";
-import type { Position, Testifier } from "@/lib/bundle";
+import { loadHearingPage, listHearings, type HearingAgendaItemEntry } from "@/lib/loadBundle";
+import type { Position, Testifier } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 import { DiarizedTranscriptSection } from "./_sections/DiarizedTranscriptSection";
 
@@ -17,7 +17,7 @@ const POSITION_STYLE: Record<Position, string> = {
 type Params = { hearingId: string };
 
 export async function generateStaticParams() {
-  const hearings = await listHearingBundles();
+  const hearings = await listHearings();
   return hearings.map((h) => ({ hearingId: String(h.hearingId) }));
 }
 
@@ -27,7 +27,7 @@ export default async function HearingPage({
   params: Promise<Params>;
 }) {
   const { hearingId } = await params;
-  const hearing = await loadHearingBundle(hearingId);
+  const hearing = await loadHearingPage(hearingId);
   if (!hearing) notFound();
 
   const totalSignIns = hearing.agendaItems.reduce((n, a) => n + a.testifierCount, 0);

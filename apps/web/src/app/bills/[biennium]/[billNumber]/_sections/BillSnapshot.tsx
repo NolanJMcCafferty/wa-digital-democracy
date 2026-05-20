@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Bill, Sponsor } from "@/lib/bundle";
+import type { Bill, Sponsor } from "@/lib/pageTypes";
 import { legislatorSlug } from "@/lib/loadBundle";
 
 export function BillSnapshot({ bill }: { bill: Bill }) {

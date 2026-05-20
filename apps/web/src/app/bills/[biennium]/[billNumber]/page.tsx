@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loadBillPage } from "@/lib/loadBundle";
-import type { HearingSection } from "@/lib/bundle";
+import type { HearingSection } from "@/lib/pageTypes";
 import { BillSnapshot } from "./_sections/BillSnapshot";
 import { StatusTimeline } from "./_sections/StatusTimeline";
 import { formatDateTime } from "@/lib/format";

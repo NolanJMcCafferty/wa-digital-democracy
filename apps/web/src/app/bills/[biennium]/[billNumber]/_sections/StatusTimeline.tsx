@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Status, StatusEntry } from "@/lib/bundle";
+import type { Status, StatusEntry } from "@/lib/pageTypes";
 import { formatDate } from "@/lib/format";
 import { isMilestoneStatus } from "@/lib/billStatus";
 

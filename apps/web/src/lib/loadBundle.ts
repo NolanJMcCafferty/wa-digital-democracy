@@ -1,5 +1,5 @@
 import "server-only";
-import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Status } from "./bundle";
+import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Status } from "./pageTypes";
 
 // The Next.js bill-detail page is a Server Component, so its fetch runs
 // in the Node runtime and does NOT pass through next.config.ts rewrites.
@@ -11,7 +11,7 @@ const API_BASE = process.env.WADD_API_URL ?? "http://localhost:8080";
 // different `next` option if a section ever needs sub-minute freshness.
 const DEFAULT_REVALIDATE = 60;
 
-export type BundleListEntry = {
+export type BillListEntry = {
   biennium: string;
   billPrefix: string;
   billNumber: number;
@@ -68,7 +68,7 @@ export type BillSearchFilters = {
 };
 
 export type BillSearchResult = {
-  bills: BundleListEntry[];
+  bills: BillListEntry[];
   total: number;
   limit: number;
   offset: number;
@@ -80,7 +80,7 @@ export type BillSearchResult = {
   };
 };
 
-function mapBillItem(b: listResponseItem): BundleListEntry {
+function mapBillItem(b: listResponseItem): BillListEntry {
   return {
     biennium: b.biennium,
     billPrefix: b.bill_prefix,
@@ -109,7 +109,7 @@ export type HearingAgendaItemEntry = {
   section?: HearingSection;
 };
 
-export type HearingBundleEntry = {
+export type HearingPage = {
   hearingId: number;
   title: string;
   committeeName: string;
@@ -120,8 +120,8 @@ export type HearingBundleEntry = {
   tvwEventId?: string;
   agendaItems: HearingAgendaItemEntry[];
   diarizedTranscript?: DiarizedTranscript;
-  // Back-compat convenience fields for search/list snippets. For true
-  // hearing pages these refer to the first agenda item, when present.
+  // Convenience fields for search/list snippets; these refer to the first
+  // agenda item, when present.
   csiAgendaItemId?: string;
   billId?: string;
 };
@@ -212,11 +212,10 @@ export type OrganizationPage = OrganizationListEntry & {
   }>;
 };
 
-// listLocalBundles returns the full set of bills (up to the API's
-// hard cap of billsMaxLimit=100 per request, so we ask for the max).
-// The home page uses this for an aggregate count; pages that need
-// pagination + filters should use searchBills below.
-export async function listLocalBundles(): Promise<BundleListEntry[]> {
+// listBills returns the first page of bill list entries. Pages that need
+// pagination + filters should use searchBills below; callers needing the
+// true aggregate count should use countBills.
+export async function listBills(): Promise<BillListEntry[]> {
   // Ask for a single page large enough to cover the count metric on
   // the home page; pages that actually render rows should call
   // searchBills with proper pagination.
@@ -224,15 +223,14 @@ export async function listLocalBundles(): Promise<BundleListEntry[]> {
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`listLocalBundles: ${API_BASE}/api/v1/bills returned ${res.status}`);
+    throw new Error(`listBills: ${API_BASE}/api/v1/bills returned ${res.status}`);
   }
   const body = (await res.json()) as billsResponse;
   return body.bills.map(mapBillItem);
 }
 
 // countBills hits the bills list endpoint with limit=1 to read the
-// `total` field — the home page needs the true total, which the
-// limit=100 listLocalBundles call silently truncates.
+// `total` field.
 export async function countBills(): Promise<number> {
   const res = await fetch(`${API_BASE}/api/v1/bills?limit=1`, {
     cache: "no-store",
@@ -333,7 +331,7 @@ export type HearingSearchFilters = {
 };
 
 export type HearingSearchResult = {
-  hearings: HearingBundleEntry[];
+  hearings: HearingPage[];
   total: number;
   limit: number;
   offset: number;
@@ -344,7 +342,7 @@ export type HearingSearchResult = {
   };
 };
 
-function mapHearingItem(h: hearingResponseItem): HearingBundleEntry {
+function mapHearingItem(h: hearingResponseItem): HearingPage {
   const agendaItems = (h.agenda_items ?? []).map((a) => ({
     csiAgendaItemId: a.csi_agenda_item_id,
     agendaItemLabel: a.agenda_item_label,
@@ -378,7 +376,7 @@ function mapHearingItem(h: hearingResponseItem): HearingBundleEntry {
   };
 }
 
-export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
+export async function listHearings(): Promise<HearingPage[]> {
   // Ask for the API's hard cap so callers that need an overview (home
   // page, issue pages, generateStaticParams) get the full set in one
   // request. Pages that paginate should call searchHearings instead.
@@ -386,7 +384,7 @@ export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`listHearingBundles: ${API_BASE}/api/v1/hearings returned ${res.status}`);
+    throw new Error(`listHearings: ${API_BASE}/api/v1/hearings returned ${res.status}`);
   }
   const body = (await res.json()) as hearingsResponse;
   return (body.hearings ?? []).map(mapHearingItem);
@@ -442,12 +440,12 @@ export async function searchHearings(filters: HearingSearchFilters): Promise<Hea
   };
 }
 
-export async function loadHearingBundle(hearingId: string | number): Promise<HearingBundleEntry | null> {
+export async function loadHearingPage(hearingId: string | number): Promise<HearingPage | null> {
   const url = `${API_BASE}/api/v1/hearings/${encodeURIComponent(String(hearingId))}`;
   const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`loadHearingBundle ${url} returned ${res.status}`);
+    throw new Error(`loadHearingPage ${url} returned ${res.status}`);
   }
   return mapHearingItem((await res.json()) as hearingResponseItem);
 }

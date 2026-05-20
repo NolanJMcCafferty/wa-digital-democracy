@@ -1,4 +1,4 @@
-import type { Source } from "@/lib/bundle";
+import type { Source } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 
 const SYSTEM_LABEL: Record<string, string> = {

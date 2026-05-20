@@ -42,8 +42,8 @@ internal/
   storage/db/   pgx wrapper, hand-written Pool.Query methods on *Store,
                 source_record helpers, RawSink
   storage/objectstore/  filesystem object store for raw API responses
-  render/firstpage/  Bundle JSON assembler (firstpage.Build) + DB→SelectedDemo
-                lookups
+  render/firstpage/  Page-object assemblers plus legacy first-page snapshot
+                builder (firstpage.Build) + DB→SelectedDemo lookups
   config/       YAML loaders (selected_demo.yml)
 db/migrations/  goose-style SQL; project-pinned via tools/goose
 db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
@@ -56,7 +56,7 @@ apps/web/       Next.js 16 + React 19 + TS + Tailwind 4. Server Components
 config/         operator-edited YAML (issue_keywords.yml, selected_demo.yml,
                 selected_demo.yml)
 data/raw/       immutable raw API responses (gitignored)
-data/processed/ JSON bundles + run-summary JSONs (gitignored)
+data/processed/ Legacy demo JSON snapshots + run-summary JSONs (gitignored)
 docs/           ingestion.md is the canonical implementation doc.
                 phase0-spike-report.md is the frozen Phase 0 findings.
 ```
@@ -83,7 +83,7 @@ go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
 go run ./cmd/wa-dd discover-hearings --biennium 2025-26 --limit 47
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
-# One-off curated bundle (Phase 2 demo path; not in daily chain)
+# One-off curated legacy snapshot (Phase 2 demo path; not in daily chain)
 INVINTUS_EMBEDDER_KEY=… make build-demo
 ```
 
@@ -96,8 +96,9 @@ INVINTUS_EMBEDDER_KEY=… make build-demo
 - **`IngestBill` two-mode behavior.** When `Demo.Chamber` is set (curated path), it stores one chamber-matched hearing. When empty (`ingest-session` path), it stores every hearing LWS reports so `discover-hearings` has rows to enrich.
 - **Rate limit default 10 req/sec** per upstream host. The User-Agent identifies the project so state-agency operators can contact us. Retries on 429/5xx with exponential backoff.
 - **Pipeline orchestration** lives in `internal/jobs/jobs.go`. `Pipeline.Run` runs all 6 steps; `Pipeline.RunMetadataOnly` runs only `IngestBill`. The CLI commands wire steps into `buildOne` (curated/single-bill) or the discovery/ingest-hearings drivers.
-- **Bundle JSON shape.** `internal/render/firstpage/bundle.go:Build` is the single source of truth for the JSON the API serves and the frontend consumes. Initialize collection fields to `[]` not `nil` — Go's nil slices marshal to `null` and the frontend treats them as arrays unconditionally.
-- **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `firstPageHandler` and `searchTranscriptsHandler` for examples.
+- **Page response shapes.** Public API routes should return explicit page/list objects (`BillPage`, `HearingPage`, `OrganizationPage`, etc.), not generic bundles. Keep collection fields initialized to `[]` rather than `nil` so frontend code can treat them as arrays.
+- **Legacy snapshots.** `firstpage.Build` / `wa-dd build-bundle` remain for one-off curated demo JSON snapshots only; do not make new live frontend routes depend on that legacy shape.
+- **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `billPageHandler` and `searchTranscriptsHandler` for examples.
 - **Frontend fetch path.** Server Components fetch by absolute URL (`process.env.WADD_API_URL ?? "http://localhost:8080"`) because they don't traverse `next.config.ts` rewrites. Client components use the rewrite path `/api/v1/...` so requests stay same-origin.
 
 ## What lives where in the wiki

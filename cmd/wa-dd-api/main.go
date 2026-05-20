@@ -1,7 +1,7 @@
 // Command wa-dd-api is the read-only HTTP API that the Next.js frontend
-// reads to render bill-hearing pages. The bundle JSON shape is the same
-// one wa-dd build-bundle writes to disk; this server regenerates it per
-// request from Postgres so the frontend doesn't have to read files.
+// reads to render page-specific JSON objects from Postgres. The legacy
+// wa-dd build-bundle command still writes curated demo snapshots to disk,
+// but live frontend routes should use explicit page/list response shapes.
 package main
 
 import (
@@ -58,7 +58,7 @@ func main() {
 	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
 	// Back-compat alias for older frontend/code paths. Returns the same
 	// page-level shape as /page; despite the historical name, this is no
-	// longer a generic Bundle endpoint.
+	// longer a generic legacy snapshot endpoint.
 	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", billPageHandler(store))
 	r.Get("/api/v1/legislators", listLegislatorsHandler(store))
 	r.Get("/api/v1/legislators/lookup", lookupLegislatorsByAddressHandler(store))

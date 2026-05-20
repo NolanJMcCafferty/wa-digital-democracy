@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Transcript } from "@/lib/bundle";
+import type { Transcript } from "@/lib/pageTypes";
 import { confidenceLabel, formatMS, tvwDeepLink } from "@/lib/format";
 
 export function TranscriptSection({

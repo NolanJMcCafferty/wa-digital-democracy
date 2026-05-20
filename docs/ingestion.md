@@ -228,7 +228,7 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
 
 - Per agenda item: 1 hearing row updated, ~1–500 testifier rows,
   ~10–1000 transcript segments, and source-backed organization links where CSI org strings are present.
-- Bundle snapshot at `data/processed/bundles/wa_<biennium>_<prefix><n>.json`.
+- Legacy demo snapshot at `data/processed/bundles/wa_<biennium>_<prefix><n>.json`.
 - A summary at `data/processed/_ingest.json` with per-bill durations
   and any failures.
 

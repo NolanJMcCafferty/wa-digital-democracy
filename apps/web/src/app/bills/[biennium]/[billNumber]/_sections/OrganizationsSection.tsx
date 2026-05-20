@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Organization } from "@/lib/bundle";
+import type { Organization } from "@/lib/pageTypes";
 import { confidenceLabel } from "@/lib/format";
 import { slugify } from "@/lib/loadBundle";
 

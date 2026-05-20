@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { classifyBillStage, type BillStage } from "@/lib/billStatus";
-import type { BillSearchFilters, BundleListEntry } from "@/lib/loadBundle";
+import type { BillSearchFilters, BillListEntry } from "@/lib/loadBundle";
 
 export const STATUS_LABEL: Record<string, string> = {
   in_progress: "In progress",
@@ -111,7 +111,7 @@ export function BillSearchResults({
 }: {
   basePath: string;
   filters: BillSearchFilters;
-  bills: BundleListEntry[];
+  bills: BillListEntry[];
   total: number;
   offset: number;
   facets: BillSearchFacets;

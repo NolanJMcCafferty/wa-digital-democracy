@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Position, Testifier } from "@/lib/bundle";
+import type { Position, Testifier } from "@/lib/pageTypes";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other"];
 

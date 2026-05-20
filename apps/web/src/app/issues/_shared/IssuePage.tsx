@@ -1,5 +1,5 @@
 import {
-  listLocalBundles,
+  listBills,
   loadBillPage,
   searchBills,
   searchHearings,
@@ -7,7 +7,7 @@ import {
   type BillPage,
   type OrganizationListEntry,
 } from "@/lib/loadBundle";
-import type { Position } from "@/lib/bundle";
+import type { Position } from "@/lib/pageTypes";
 import {
   BillSearchResults,
   parseBillFilters,
@@ -49,14 +49,14 @@ export async function IssuePage({
   const filters = parseBillFilters(searchParams ?? {});
   const hearingFilters = parseHearingFilters(searchParams ?? {});
   const organizationFilters = parseOrganizationFilters(searchParams ?? {}, "org");
-  const entries = await listLocalBundles();
-  const allBundles = (
+  const entries = await listBills();
+  const allBillPages = (
     await Promise.all(
       entries.map((e) => loadBillPage(e.biennium, e.billPrefix, e.billNumber))
     )
   ).filter((b): b is BillPage => Boolean(b));
-  const bundles = allBundles.filter((b) => bundleMatchesIssue(b, config));
-  const matchedBillIds = bundles.map((b) => b.bill.bill_id);
+  const billPages = allBillPages.filter((b) => billPageMatchesIssue(b, config));
+  const matchedBillIds = billPages.map((b) => b.bill.bill_id);
 
   const billResult = matchedBillIds.length === 0
     ? null
@@ -66,7 +66,7 @@ export async function IssuePage({
     hearingFiltersToSearch(hearingFilters, config.keywords),
   );
 
-  const totals = bundles.reduce(
+  const totals = billPages.reduce(
     (acc, b) => {
       acc.bills += 1;
       for (const section of b.hearings) {
@@ -90,7 +90,7 @@ export async function IssuePage({
     }
   );
 
-  const organizations = issueOrganizations(bundles);
+  const organizations = issueOrganizations(billPages);
 
   return (
     <article className="space-y-10">
@@ -101,7 +101,7 @@ export async function IssuePage({
         <p className="max-w-3xl text-stone-600">{config.description}</p>
       </section>
 
-      {bundles.length === 0 ? (
+      {billPages.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
           No {config.emptyLabel} legislation is available yet.
         </p>
@@ -187,9 +187,9 @@ export async function IssuePage({
   );
 }
 
-function issueOrganizations(bundles: BillPage[]): OrganizationListEntry[] {
+function issueOrganizations(billPages: BillPage[]): OrganizationListEntry[] {
   const orgs = new Map<string, OrganizationListEntry>();
-  for (const b of bundles) {
+  for (const b of billPages) {
     for (const section of b.hearings) {
       for (const org of section.organizations) {
         const existing = orgs.get(org.canonical_name);
@@ -231,12 +231,12 @@ function normalizePosition(position?: string): Position {
   return "Unknown";
 }
 
-function bundleMatchesIssue(bundle: BillPage, config: IssuePageConfig): boolean {
+function billPageMatchesIssue(page: BillPage, config: IssuePageConfig): boolean {
   const haystack = [
-    bundle.bill.bill_id,
-    bundle.bill.title,
-    bundle.bill.description,
-    ...bundle.hearings.flatMap((section) => [
+    page.bill.bill_id,
+    page.bill.title,
+    page.bill.description,
+    ...page.hearings.flatMap((section) => [
       section.hearing.agenda_item_label,
       section.hearing.committee_name,
       ...section.organizations.map((o) => o.canonical_name),

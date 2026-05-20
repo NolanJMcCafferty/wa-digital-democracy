@@ -1,4 +1,4 @@
-import type { Hearing } from "@/lib/bundle";
+import type { Hearing } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 
 export function HearingCard({ hearing }: { hearing: Hearing }) {

@@ -1,24 +1,5 @@
-// Types mirror internal/render/firstpage/bundle.go's struct shape exactly.
-// Keep in sync — the Go side is canonical.
-
-export type Bundle = {
-  generated_at: string;
-  bill: Bill;
-  status: Status;
-  // Hearing-dependent sections are absent for metadata-only bills (every
-  // bill ingested via `wa-dd ingest-session` without a curated hearing
-  // mapping). The bill-detail page hides these when undefined.
-  hearing?: Hearing;
-  testifiers: Testifier[];
-  transcript?: Transcript;
-  organizations: Organization[];
-  // Per-hearing sections. The bill-detail page renders one block per
-  // entry; the legacy top-level hearing/testifiers/transcript/organizations
-  // fields mirror hearings[0] for back-compat.
-  hearings?: HearingSection[];
-  sources: Source[];
-  known_limitations?: string[];
-};
+// Shared page/domain types returned by the Go API. Keep these in sync with
+// the page-level response structs in cmd/wa-dd-api and internal/render/firstpage.
 
 export type HearingSection = {
   hearing: Hearing;
