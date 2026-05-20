@@ -1,6 +1,5 @@
 import Link from "next/link";
 import type { Organization } from "@/lib/pageTypes";
-import { confidenceLabel } from "@/lib/format";
 import { slugify } from "@/lib/api";
 
 export function OrganizationsSection({
@@ -26,19 +25,14 @@ export function OrganizationsSection({
               key={o.canonical_name}
               className="rounded-lg border border-stone-300 bg-white p-5"
             >
-              <div className="mb-2 flex items-baseline justify-between gap-3">
-                <h3 className="text-lg font-semibold text-stone-900">
-                  <Link
-                    href={`/organizations/${slugify(o.canonical_name)}`}
-                    className="text-blue-700 underline hover:text-blue-900"
-                  >
-                    {o.canonical_name}
-                  </Link>
-                </h3>
-                <span className="text-xs uppercase tracking-wider text-stone-500">
-                  {confidenceLabel(o.match_confidence)}
-                </span>
-              </div>
+              <h3 className="mb-2 text-lg font-semibold text-stone-900">
+                <Link
+                  href={`/organizations/${slugify(o.canonical_name)}`}
+                  className="text-blue-700 underline hover:text-blue-900"
+                >
+                  {o.canonical_name}
+                </Link>
+              </h3>
 
               {o.aliases && o.aliases.length > 0 ? (
                 <p className="mb-2 text-xs text-stone-500">
@@ -48,6 +42,19 @@ export function OrganizationsSection({
 
               {o.match_notes ? (
                 <p className="mb-2 text-sm text-stone-600">{o.match_notes}</p>
+              ) : null}
+
+              {o.context_summary && o.context_summary.length > 0 ? (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {o.context_summary.map((label) => (
+                    <span
+                      key={label}
+                      className="rounded border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs font-medium text-stone-700"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
               ) : null}
 
               {typeof o.testifier_count === "number" &&

@@ -215,6 +215,22 @@ export type OrganizationPage = OrganizationListEntry & {
     position?: string;
     testifierCount: number;
   }>;
+  contexts: PublicRecordContext[];
+};
+
+export type PublicRecordContext = {
+  contextType: string;
+  sourceKind: string;
+  sourceLabel: string;
+  sourceName: string;
+  detail?: string;
+  amount?: string;
+  recordYear?: number;
+  recordDate?: string;
+  url?: string;
+  sourceRecordId?: number;
+  matchConfidence: Organization["match_confidence"];
+  evidence: string[];
 };
 
 // listBills returns the first page of bill list entries. Pages that need
@@ -766,6 +782,20 @@ type orgDetailResponse = orgListItem & {
     position?: string;
     testifier_count: number;
   }>;
+  contexts: Array<{
+    context_type: string;
+    source_kind: string;
+    source_label: string;
+    source_name: string;
+    detail?: string;
+    amount?: string;
+    record_year?: number;
+    record_date?: string;
+    url?: string;
+    source_record_id?: number;
+    match_confidence: Organization["match_confidence"];
+    evidence?: string[];
+  }>;
 };
 
 function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
@@ -813,6 +843,20 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       meetingDatetime: a.meeting_datetime,
       position: a.position,
       testifierCount: a.testifier_count,
+    })),
+    contexts: (detail.contexts ?? []).map((c) => ({
+      contextType: c.context_type,
+      sourceKind: c.source_kind,
+      sourceLabel: c.source_label,
+      sourceName: c.source_name,
+      detail: c.detail,
+      amount: c.amount,
+      recordYear: c.record_year,
+      recordDate: c.record_date,
+      url: c.url,
+      sourceRecordId: c.source_record_id,
+      matchConfidence: c.match_confidence,
+      evidence: c.evidence ?? [],
     })),
   };
 }
@@ -972,6 +1016,76 @@ export async function loadSpeakerClusterReview(clusterId: string): Promise<Speak
     throw new Error(`loadSpeakerClusterReview returned ${res.status}`);
   }
   return (await res.json()) as SpeakerClusterReview;
+}
+
+export type EntityMatchTranscriptSegment = {
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  cluster_label?: string;
+};
+
+export type EntityMatchTranscriptContext = {
+  tvw_event_id: string;
+  diarization_job_id?: number;
+  mention_start_ms: number;
+  mention_end_ms: number;
+  mention_text: string;
+  mention_confidence: number;
+  surrounding: EntityMatchTranscriptSegment[];
+};
+
+export type EntityMatchCandidate = {
+  id: number;
+  source_kind: string;
+  source_table: string;
+  source_pk?: number;
+  source_dataset_id?: string;
+  source_row_id?: string;
+  source_name: string;
+  normalized_name: string;
+  organization_id: number;
+  canonical_name: string;
+  candidate_confidence: string;
+  evidence: string[];
+  source_record_id?: number;
+  decision: string;
+  reviewed_confidence?: string;
+  transcript?: EntityMatchTranscriptContext;
+};
+
+export type EntityMatchDecision = "confirmed" | "rejected" | "needs_review";
+
+export async function listEntityMatchCandidates(opts: { sourceKind?: string; decision?: string; limit?: number } = {}): Promise<EntityMatchCandidate[]> {
+  const params = new URLSearchParams();
+  if (opts.sourceKind) params.set("source_kind", opts.sourceKind);
+  if (opts.decision) params.set("decision", opts.decision);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const url = `${API_BASE}/api/v1/admin/review/entities/candidates${params.toString() ? `?${params}` : ""}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`listEntityMatchCandidates returned ${res.status}`);
+  }
+  const body = (await res.json()) as { candidates: EntityMatchCandidate[] };
+  return body.candidates ?? [];
+}
+
+export async function decideEntityMatchCandidate(
+  candidateId: number | string,
+  decision: EntityMatchDecision,
+  confidence: string,
+  reviewer: string,
+  notes: string,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/entities/candidates/${encodeURIComponent(String(candidateId))}/decide`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision, confidence, reviewer, notes }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`decideEntityMatchCandidate returned ${res.status}: ${await res.text()}`);
+  }
 }
 
 export async function manuallyAssignSpeakerCluster(clusterId: string, kind: string, label: string, reviewer: string, notes: string): Promise<void> {

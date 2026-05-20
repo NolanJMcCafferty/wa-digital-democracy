@@ -76,6 +76,8 @@ func main() {
 	r.Post("/api/v1/admin/review/speakers/{taskId}/accept", adminSpeakerReviewDecisionHandler(store, "accept"))
 	r.Post("/api/v1/admin/review/speakers/{taskId}/reject", adminSpeakerReviewDecisionHandler(store, "reject"))
 	r.Post("/api/v1/admin/review/speakers/{taskId}/needs-more-evidence", adminSpeakerReviewDecisionHandler(store, "needs_more_evidence"))
+	r.Get("/api/v1/admin/review/entities/candidates", adminListEntityMatchCandidatesHandler(store))
+	r.Post("/api/v1/admin/review/entities/candidates/{candidateId}/decide", adminDecideEntityMatchHandler(store))
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -937,15 +939,30 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		Position        string    `json:"position,omitempty"`
 		TestifierCount  int       `json:"testifier_count"`
 	}
+	type publicContext struct {
+		ContextType     string   `json:"context_type"`
+		SourceKind      string   `json:"source_kind"`
+		SourceLabel     string   `json:"source_label"`
+		SourceName      string   `json:"source_name"`
+		Detail          string   `json:"detail,omitempty"`
+		Amount          string   `json:"amount,omitempty"`
+		RecordYear      int      `json:"record_year,omitempty"`
+		RecordDate      string   `json:"record_date,omitempty"`
+		URL             string   `json:"url,omitempty"`
+		SourceRecordID  int64    `json:"source_record_id,omitempty"`
+		MatchConfidence string   `json:"match_confidence"`
+		Evidence        []string `json:"evidence"`
+	}
 	type body struct {
-		Slug            string         `json:"slug"`
-		CanonicalName   string         `json:"canonical_name"`
-		Aliases         []string       `json:"aliases"`
-		MatchConfidence string         `json:"match_confidence"`
-		MatchNotes      string         `json:"match_notes,omitempty"`
-		TestifierCount  int            `json:"testifier_count"`
-		Positions       map[string]int `json:"positions"`
-		Appearances     []appearance   `json:"appearances"`
+		Slug            string          `json:"slug"`
+		CanonicalName   string          `json:"canonical_name"`
+		Aliases         []string        `json:"aliases"`
+		MatchConfidence string          `json:"match_confidence"`
+		MatchNotes      string          `json:"match_notes,omitempty"`
+		TestifierCount  int             `json:"testifier_count"`
+		Positions       map[string]int  `json:"positions"`
+		Appearances     []appearance    `json:"appearances"`
+		Contexts        []publicContext `json:"contexts"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		slug := chi.URLParam(req, "slug")
@@ -970,6 +987,11 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		contextsRaw, err := store.GetOrganizationPublicContexts(req.Context(), match.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 		apps := make([]appearance, 0, len(appsRaw))
 		for _, a := range appsRaw {
 			apps = append(apps, appearance{
@@ -982,6 +1004,27 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				MeetingDateTime: a.MeetingDateTime,
 				Position:        a.Position,
 				TestifierCount:  a.TestifierCount,
+			})
+		}
+		contexts := make([]publicContext, 0, len(contextsRaw))
+		for _, c := range contextsRaw {
+			evidence := c.Evidence
+			if evidence == nil {
+				evidence = []string{}
+			}
+			contexts = append(contexts, publicContext{
+				ContextType:     c.ContextType,
+				SourceKind:      c.SourceKind,
+				SourceLabel:     c.SourceLabel,
+				SourceName:      c.SourceName,
+				Detail:          c.Detail,
+				Amount:          c.Amount,
+				RecordYear:      c.RecordYear,
+				RecordDate:      c.RecordDate,
+				URL:             c.URL,
+				SourceRecordID:  c.SourceRecordID,
+				MatchConfidence: c.MatchConfidence,
+				Evidence:        evidence,
 			})
 		}
 		aliases := match.Aliases
@@ -1000,6 +1043,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				"Other": match.OtherCount, "Unknown": match.UnknownCount,
 			},
 			Appearances: apps,
+			Contexts:    contexts,
 		})
 	}
 }
@@ -1468,6 +1512,143 @@ func adminGetSpeakerReviewTaskHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, task)
+	}
+}
+
+func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
+	type segment struct {
+		StartMS      int    `json:"start_ms"`
+		EndMS        int    `json:"end_ms"`
+		Text         string `json:"text"`
+		ClusterLabel string `json:"cluster_label,omitempty"`
+	}
+	type transcriptContext struct {
+		TVWEventID        string    `json:"tvw_event_id"`
+		DiarizationJobID  int64     `json:"diarization_job_id,omitempty"`
+		MentionStartMS    int       `json:"mention_start_ms"`
+		MentionEndMS      int       `json:"mention_end_ms"`
+		MentionText       string    `json:"mention_text"`
+		MentionConfidence float64   `json:"mention_confidence"`
+		Surrounding       []segment `json:"surrounding"`
+	}
+	type item struct {
+		ID                  int64              `json:"id"`
+		SourceKind          string             `json:"source_kind"`
+		SourceTable         string             `json:"source_table"`
+		SourcePK            int64              `json:"source_pk,omitempty"`
+		SourceDatasetID     string             `json:"source_dataset_id,omitempty"`
+		SourceRowID         string             `json:"source_row_id,omitempty"`
+		SourceName          string             `json:"source_name"`
+		NormalizedName      string             `json:"normalized_name"`
+		OrganizationID      int64              `json:"organization_id"`
+		CanonicalName       string             `json:"canonical_name"`
+		CandidateConfidence string             `json:"candidate_confidence"`
+		Evidence            []string           `json:"evidence"`
+		SourceRecordID      int64              `json:"source_record_id,omitempty"`
+		Decision            string             `json:"decision"`
+		ReviewedConfidence  string             `json:"reviewed_confidence,omitempty"`
+		Transcript          *transcriptContext `json:"transcript,omitempty"`
+	}
+	return func(w http.ResponseWriter, req *http.Request) {
+		q := req.URL.Query()
+		sourceKind := strings.TrimSpace(q.Get("source_kind"))
+		decision := strings.TrimSpace(q.Get("decision"))
+		limit := 100
+		if v := q.Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		candidates, err := store.ListVendorEntityMatchCandidates(req.Context(), sourceKind, decision, limit)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		ids := make([]int64, 0, len(candidates))
+		for _, c := range candidates {
+			if c.SourceKind == "deepgram_organization_mention" {
+				ids = append(ids, c.ID)
+			}
+		}
+		ctxByID, err := store.ListEntityMatchTranscriptContext(req.Context(), ids)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		out := make([]item, 0, len(candidates))
+		for _, c := range candidates {
+			evidence := c.Evidence
+			if evidence == nil {
+				evidence = []string{}
+			}
+			it := item{
+				ID: c.ID, SourceKind: c.SourceKind, SourceTable: c.SourceTable,
+				SourcePK: c.SourcePK, SourceDatasetID: c.SourceDatasetID, SourceRowID: c.SourceRowID,
+				SourceName: c.SourceName, NormalizedName: c.NormalizedName,
+				OrganizationID: c.OrganizationID, CanonicalName: c.CanonicalName,
+				CandidateConfidence: c.CandidateConfidence, Evidence: evidence,
+				SourceRecordID: c.SourceRecordID,
+				Decision:       c.Decision, ReviewedConfidence: c.ReviewedConfidence,
+			}
+			if tc, ok := ctxByID[c.ID]; ok {
+				segs := make([]segment, 0, len(tc.Surrounding))
+				for _, s := range tc.Surrounding {
+					segs = append(segs, segment{StartMS: s.StartMS, EndMS: s.EndMS, Text: s.Text, ClusterLabel: s.ClusterLabel})
+				}
+				it.Transcript = &transcriptContext{
+					TVWEventID:        tc.TVWEventID,
+					DiarizationJobID:  tc.DiarizationJobID,
+					MentionStartMS:    tc.MentionStartMS,
+					MentionEndMS:      tc.MentionEndMS,
+					MentionText:       tc.MentionText,
+					MentionConfidence: tc.MentionConfidence,
+					Surrounding:       segs,
+				}
+			}
+			out = append(out, it)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"candidates": out})
+	}
+}
+
+func adminDecideEntityMatchHandler(store *db.Store) http.HandlerFunc {
+	type body struct {
+		Decision   string `json:"decision"`
+		Confidence string `json:"confidence"`
+		Reviewer   string `json:"reviewer"`
+		Notes      string `json:"notes"`
+	}
+	return func(w http.ResponseWriter, req *http.Request) {
+		candidateID, err := strconv.ParseInt(chi.URLParam(req, "candidateId"), 10, 64)
+		if err != nil || candidateID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad candidate id"})
+			return
+		}
+		var b body
+		_ = json.NewDecoder(req.Body).Decode(&b)
+		switch b.Decision {
+		case "confirmed", "rejected", "needs_review":
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decision must be confirmed, rejected, or needs_review"})
+			return
+		}
+		var organizationID int64
+		if err := store.Pool.QueryRow(req.Context(), `SELECT organization_id FROM vendor_entity_match_candidate WHERE id = $1`, candidateID).Scan(&organizationID); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "candidate not found"})
+			return
+		}
+		if _, err := store.UpsertVendorEntityMatchDecision(req.Context(), db.InsertVendorEntityMatchDecisionParams{
+			CandidateID:    candidateID,
+			OrganizationID: organizationID,
+			Decision:       b.Decision,
+			Confidence:     b.Confidence,
+			ReviewedBy:     b.Reviewer,
+			ReviewNotes:    b.Notes,
+		}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
 

@@ -1411,6 +1411,21 @@ type OrganizationAppearance struct {
 	TestifierCount  int
 }
 
+type OrganizationPublicContext struct {
+	ContextType     string
+	SourceKind      string
+	SourceLabel     string
+	SourceName      string
+	Detail          string
+	Amount          string
+	RecordYear      int
+	RecordDate      string
+	URL             string
+	SourceRecordID  int64
+	MatchConfidence string
+	Evidence        []string
+}
+
 // GetOrganizationAppearances returns every (agenda_item, org) appearance
 // where at least one testifier from that org signed in.
 func (s *Store) GetOrganizationAppearances(ctx context.Context, organizationID int64) ([]OrganizationAppearance, error) {
@@ -1460,6 +1475,172 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
 			a.BillNumber = *billNumber
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetOrganizationPublicContexts(ctx context.Context, organizationID int64) ([]OrganizationPublicContext, error) {
+	const q = `
+WITH ctx AS (
+  SELECT 'lobbying_registration'::text AS context_type,
+         'pdc_lobbying_organization'::text AS source_kind,
+         'PDC lobbying employer'::text AS source_label,
+         pe.name AS source_name,
+         NULLIF('Employer ID ' || pe.employer_id, '') AS detail,
+         ''::text AS amount,
+         CASE WHEN pe.last_employment_year ~ '^[0-9]+$' THEN pe.last_employment_year::int ELSE 0 END AS record_year,
+         ''::text AS record_date,
+         COALESCE(pe.last_employment_url, '') AS url,
+         COALESCE(pe.source_record_id,0) AS source_record_id,
+         o.match_confidence::text AS match_confidence,
+         jsonb_build_array('organization.pdc_lobbyist_employer_id:' || pe.employer_id) AS evidence
+    FROM organization o
+    JOIN pdc_employer pe ON pe.employer_id = o.pdc_lobbyist_employer_id
+   WHERE o.id = $1
+  UNION ALL
+  SELECT 'lobbying_registration',
+         m.source_kind::text,
+         'PDC lobbying employer',
+         pe.name,
+         NULLIF('Employer ID ' || pe.employer_id, ''),
+         '',
+         CASE WHEN pe.last_employment_year ~ '^[0-9]+$' THEN pe.last_employment_year::int ELSE 0 END,
+         '',
+         COALESCE(pe.last_employment_url, ''),
+         COALESCE(pe.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN pdc_employer pe ON pe.employer_id = m.source_row_id
+   WHERE m.organization_id = $1
+     AND m.source_kind = 'pdc_lobbying_organization'
+  UNION ALL
+  SELECT 'state_contract',
+         m.source_kind::text,
+         'DataWA agency contract',
+         c.contractor_name,
+         COALESCE(NULLIF(c.contract_number, ''), NULLIF(c.description, ''), 'Agency contract'),
+         COALESCE(c.total_amount::text, ''),
+         COALESCE(c.fiscal_year, 0),
+         '',
+         '',
+         COALESCE(c.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN datawa_contract c ON c.id = m.source_pk
+   WHERE m.organization_id = $1
+     AND m.source_kind = 'datawa_contract_contractor'
+  UNION ALL
+  SELECT 'state_contract',
+         m.source_kind::text,
+         'DataWA master contract sale',
+         s.vendor_name,
+         COALESCE(NULLIF(s.contract_number, ''), NULLIF(s.contract_title, ''), 'Master contract sale'),
+         COALESCE(s.total_sales_reported::text, ''),
+         COALESCE(s.report_year, 0),
+         '',
+         '',
+         COALESCE(s.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN datawa_master_contract_sale s ON s.id = m.source_pk
+   WHERE m.organization_id = $1
+     AND m.source_kind = 'datawa_master_contract_vendor'
+  UNION ALL
+  SELECT 'state_contract',
+         m.source_kind::text,
+         'DataWA IT contract',
+         c.contractor_name,
+         COALESCE(NULLIF(c.contract_number, ''), 'IT contract'),
+         COALESCE(c.total_contract_amount::text, ''),
+         COALESCE(c.report_fiscal_year, 0),
+         '',
+         '',
+         COALESCE(c.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN datawa_it_contract c ON c.id = m.source_pk
+   WHERE m.organization_id = $1
+     AND m.source_kind IN ('datawa_it_contract_contractor', 'datawa_it_contract_dba')
+  UNION ALL
+  SELECT 'state_vendor',
+         m.source_kind::text,
+         'WEBS vendor',
+         v.company_name,
+         COALESCE(NULLIF(v.description_of_work, ''), NULLIF(v.commodity_code, ''), 'WEBS vendor registration'),
+         '',
+         0,
+         '',
+         COALESCE(v.web_address, ''),
+         COALESCE(v.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN datawa_webs_vendor v ON v.id = m.source_pk
+   WHERE m.organization_id = $1
+     AND m.source_kind = 'datawa_webs_vendor'
+  UNION ALL
+  SELECT 'state_vendor_payment',
+         m.source_kind::text,
+         'FiscalWA vendor payment',
+         p.vendor_name,
+         COALESCE(NULLIF(p.agency_name, ''), NULLIF(p.subobject_name, ''), 'Vendor payment'),
+         COALESCE(p.amount::text, ''),
+         COALESCE(p.fiscal_year, 0),
+         '',
+         '',
+         COALESCE(p.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN fiscalwa_vendor_payment p ON p.id = m.source_pk
+   WHERE m.organization_id = $1
+     AND m.source_kind = 'fiscalwa_vendor_payment'
+  UNION ALL
+  SELECT 'federal_award',
+         m.source_kind::text,
+         'USAspending award',
+         a.recipient_name,
+         COALESCE(NULLIF(a.awarding_agency, ''), NULLIF(a.funding_agency, ''), a.award_id),
+         COALESCE(a.award_amount::text, ''),
+         COALESCE(EXTRACT(YEAR FROM a.start_date)::int, 0),
+         COALESCE(a.start_date::text, ''),
+         '',
+         COALESCE(a.source_record_id,0),
+         m.match_confidence::text,
+         m.evidence
+    FROM reviewed_vendor_entity_match m
+    JOIN federal_award a ON a.id = m.source_pk
+   WHERE m.organization_id = $1
+     AND m.source_kind = 'federal_award_recipient'
+)
+SELECT context_type, source_kind, source_label, COALESCE(source_name, ''),
+       COALESCE(detail, ''), amount, COALESCE(record_year, 0), record_date,
+       url, source_record_id, match_confidence, evidence
+  FROM ctx
+ ORDER BY context_type, record_year DESC NULLS LAST, source_name
+ LIMIT 100;`
+	rows, err := s.Pool.Query(ctx, q, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("organization public contexts: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationPublicContext{}
+	for rows.Next() {
+		var c OrganizationPublicContext
+		var evidence []byte
+		if err := rows.Scan(&c.ContextType, &c.SourceKind, &c.SourceLabel, &c.SourceName,
+			&c.Detail, &c.Amount, &c.RecordYear, &c.RecordDate, &c.URL,
+			&c.SourceRecordID, &c.MatchConfidence, &evidence); err != nil {
+			return nil, fmt.Errorf("scan organization public context: %w", err)
+		}
+		if len(evidence) > 0 {
+			_ = json.Unmarshal(evidence, &c.Evidence)
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
@@ -2230,6 +2411,18 @@ type VendorEntityMatchCandidate struct {
 	CandidateConfidence string
 	Evidence            []string
 	SourceRecordID      int64
+	Decision            string
+	ReviewedConfidence  string
+}
+
+type VendorEntityMatchProgress struct {
+	Phase         string
+	Scanned       int
+	Upserted      int
+	AutoConfirmed int
+	Skipped       int
+	SourceKind    string
+	ElapsedTime   time.Duration
 }
 
 type UpsertVendorEntityMatchCandidateParams struct {
@@ -2310,7 +2503,160 @@ RETURNING id;`
 	return id, nil
 }
 
+func (s *Store) ListVendorEntityMatchCandidates(ctx context.Context, sourceKind, decision string, limit int) ([]VendorEntityMatchCandidate, error) {
+	const q = `
+SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
+       COALESCE(c.source_dataset_id,''), COALESCE(c.source_row_id,''), c.source_name,
+       c.normalized_name, c.organization_id, o.canonical_name,
+       c.candidate_confidence::text, c.evidence, COALESCE(c.source_record_id,0),
+       COALESCE(d.decision::text, 'needs_review'), COALESCE(d.reviewed_confidence::text, '')
+  FROM vendor_entity_match_candidate c
+  JOIN organization o ON o.id = c.organization_id
+  LEFT JOIN vendor_entity_match_decision d ON d.candidate_id = c.id
+ WHERE ($1 = '' OR c.source_kind::text = $1)
+   AND ($2 = '' OR COALESCE(d.decision::text, 'needs_review') = $2)
+ ORDER BY c.updated_at DESC, c.id DESC
+ LIMIT CASE WHEN $3 > 0 THEN $3 ELSE 100 END;`
+	rows, err := s.Pool.Query(ctx, q, sourceKind, decision, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list vendor entity match candidates: %w", err)
+	}
+	defer rows.Close()
+	out := []VendorEntityMatchCandidate{}
+	for rows.Next() {
+		var c VendorEntityMatchCandidate
+		var evidence []byte
+		if err := rows.Scan(&c.ID, &c.SourceKind, &c.SourceTable, &c.SourcePK,
+			&c.SourceDatasetID, &c.SourceRowID, &c.SourceName, &c.NormalizedName,
+			&c.OrganizationID, &c.CanonicalName, &c.CandidateConfidence,
+			&evidence, &c.SourceRecordID, &c.Decision, &c.ReviewedConfidence); err != nil {
+			return nil, fmt.Errorf("scan vendor entity match candidate: %w", err)
+		}
+		if len(evidence) > 0 {
+			_ = json.Unmarshal(evidence, &c.Evidence)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+type EntityMatchTranscriptSegment struct {
+	StartMS      int
+	EndMS        int
+	Text         string
+	ClusterLabel string
+}
+
+type EntityMatchTranscriptContext struct {
+	CandidateID        int64
+	TVWEventID         string
+	DiarizationJobID   int64
+	MentionStartMS     int
+	MentionEndMS       int
+	MentionText        string
+	MentionConfidence  float64
+	Surrounding        []EntityMatchTranscriptSegment
+}
+
+// ListEntityMatchTranscriptContext returns deepgram-mention transcript context
+// for the given candidate ids. Only candidates with
+// source_kind = 'deepgram_organization_mention' produce a row; other source
+// kinds are silently absent from the result map.
+func (s *Store) ListEntityMatchTranscriptContext(ctx context.Context, candidateIDs []int64) (map[int64]EntityMatchTranscriptContext, error) {
+	out := map[int64]EntityMatchTranscriptContext{}
+	if len(candidateIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+WITH cand AS (
+  SELECT id, source_pk
+    FROM vendor_entity_match_candidate
+   WHERE id = ANY($1::bigint[])
+     AND source_kind = 'deepgram_organization_mention'
+     AND source_table = 'entity_mention'
+     AND source_pk IS NOT NULL
+)
+SELECT cand.id,
+       COALESCE(em.tvw_event_id, ''),
+       COALESCE(em.diarization_job_id, 0),
+       COALESCE(em.start_ms, 0),
+       COALESCE(em.end_ms, 0),
+       COALESCE(em.text, ''),
+       COALESCE(em.confidence, 0),
+       COALESCE(
+         jsonb_agg(
+           jsonb_build_object(
+             'start_ms', d.start_ms,
+             'end_ms', d.end_ms,
+             'text', COALESCE(d.text, ''),
+             'cluster_label', COALESCE(d.cluster_label, '')
+           )
+           ORDER BY d.start_ms
+         ) FILTER (WHERE d.id IS NOT NULL),
+         '[]'::jsonb
+       ) AS segments
+  FROM cand
+  JOIN entity_mention em ON em.id = cand.source_pk
+  LEFT JOIN diarized_speech_segment d
+    ON d.tvw_event_id = em.tvw_event_id
+   AND d.end_ms   >= COALESCE(em.start_ms, 0) - 15000
+   AND d.start_ms <= COALESCE(em.end_ms,   0) + 15000
+ GROUP BY cand.id, em.tvw_event_id, em.diarization_job_id,
+          em.start_ms, em.end_ms, em.text, em.confidence;`
+	rows, err := s.Pool.Query(ctx, q, candidateIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list entity match transcript context: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c EntityMatchTranscriptContext
+		var segs []byte
+		if err := rows.Scan(&c.CandidateID, &c.TVWEventID, &c.DiarizationJobID,
+			&c.MentionStartMS, &c.MentionEndMS, &c.MentionText, &c.MentionConfidence, &segs); err != nil {
+			return nil, fmt.Errorf("scan entity match transcript context: %w", err)
+		}
+		if len(segs) > 0 {
+			var raw []struct {
+				StartMS      int    `json:"start_ms"`
+				EndMS        int    `json:"end_ms"`
+				Text         string `json:"text"`
+				ClusterLabel string `json:"cluster_label"`
+			}
+			if err := json.Unmarshal(segs, &raw); err == nil {
+				for _, r := range raw {
+					c.Surrounding = append(c.Surrounding, EntityMatchTranscriptSegment{
+						StartMS: r.StartMS, EndMS: r.EndMS, Text: r.Text, ClusterLabel: r.ClusterLabel,
+					})
+				}
+			}
+		}
+		out[c.CandidateID] = c
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GenerateVendorEntityMatchCandidates(ctx context.Context, limit int) ([]VendorEntityMatchCandidate, error) {
+	return s.GenerateVendorEntityMatchCandidatesWithProgress(ctx, limit, nil)
+}
+
+func (s *Store) GenerateVendorEntityMatchCandidatesWithProgress(ctx context.Context, limit int, progress func(VendorEntityMatchProgress)) ([]VendorEntityMatchCandidate, error) {
+	started := time.Now()
+	emit := func(phase string, scanned, upserted, autoConfirmed, skipped int, sourceKind string) {
+		if progress == nil {
+			return
+		}
+		progress(VendorEntityMatchProgress{
+			Phase:         phase,
+			Scanned:       scanned,
+			Upserted:      upserted,
+			AutoConfirmed: autoConfirmed,
+			Skipped:       skipped,
+			SourceKind:    sourceKind,
+			ElapsedTime:   time.Since(started).Round(time.Second),
+		})
+	}
+
+	emit("querying", 0, 0, 0, 0, "")
 	rows, err := s.Pool.Query(ctx, vendorCandidateSourceQuery, limit)
 	if err != nil {
 		return nil, fmt.Errorf("vendor entity candidate source query: %w", err)
@@ -2318,20 +2664,37 @@ func (s *Store) GenerateVendorEntityMatchCandidates(ctx context.Context, limit i
 	defer rows.Close()
 
 	var out []VendorEntityMatchCandidate
+	scanned := 0
+	skipped := 0
+	autoConfirmed := 0
+	lastProgress := time.Now()
+	emit("processing", scanned, len(out), autoConfirmed, skipped, "")
 	for rows.Next() {
 		var sourceKind, sourceTable, sourceDatasetID, sourceRowID, sourceName, normalizedName string
 		var sourcePK, sourceRecordID int64
 		var orgID int64
+		var sourceMatchCount int
 		var canonical string
 		var aliases []string
-		if err := rows.Scan(&sourceKind, &sourceTable, &sourcePK, &sourceDatasetID, &sourceRowID, &sourceName, &normalizedName, &sourceRecordID, &orgID, &canonical, &aliases); err != nil {
+		if err := rows.Scan(&sourceKind, &sourceTable, &sourcePK, &sourceDatasetID, &sourceRowID, &sourceName, &normalizedName, &sourceRecordID, &orgID, &canonical, &aliases, &sourceMatchCount); err != nil {
 			return nil, fmt.Errorf("scan vendor entity candidate source: %w", err)
 		}
+		scanned++
 		if entitymatch.FalsePositiveRisk(normalizedName) {
+			skipped++
+			if scanned == 1 || scanned%1000 == 0 || time.Since(lastProgress) >= 10*time.Second {
+				emit("processing", scanned, len(out), autoConfirmed, skipped, sourceKind)
+				lastProgress = time.Now()
+			}
 			continue
 		}
 		confidence, evidence := entitymatch.ConfidenceFor(sourceName, canonical, aliases)
 		if confidence == "" {
+			skipped++
+			if scanned == 1 || scanned%1000 == 0 || time.Since(lastProgress) >= 10*time.Second {
+				emit("processing", scanned, len(out), autoConfirmed, skipped, sourceKind)
+				lastProgress = time.Now()
+			}
 			continue
 		}
 		id, err := s.UpsertVendorEntityMatchCandidate(ctx, UpsertVendorEntityMatchCandidateParams{
@@ -2350,18 +2713,50 @@ func (s *Store) GenerateVendorEntityMatchCandidates(ctx context.Context, limit i
 		if err != nil {
 			return nil, err
 		}
+		decision := ""
+		reviewedConfidence := ""
+		if sourceMatchCount == 1 && confidence == entitymatch.ConfidenceConfirmed {
+			if _, err := s.UpsertVendorEntityMatchDecision(ctx, InsertVendorEntityMatchDecisionParams{
+				CandidateID:    id,
+				OrganizationID: orgID,
+				Decision:       "confirmed",
+				Confidence:     confidence,
+				ReviewedBy:     "system:entitymatch",
+				ReviewNotes:    "Auto-confirmed unique exact organization-name match.",
+			}); err != nil {
+				return nil, err
+			}
+			decision = "confirmed"
+			reviewedConfidence = confidence
+			autoConfirmed++
+		}
 		out = append(out, VendorEntityMatchCandidate{
 			ID: id, SourceKind: sourceKind, SourceTable: sourceTable, SourcePK: sourcePK,
 			SourceDatasetID: sourceDatasetID, SourceRowID: sourceRowID, SourceName: sourceName,
 			NormalizedName: normalizedName, OrganizationID: orgID, CanonicalName: canonical,
 			CandidateConfidence: confidence, Evidence: evidence, SourceRecordID: sourceRecordID,
+			Decision: decision, ReviewedConfidence: reviewedConfidence,
 		})
+		if scanned == 1 || scanned%1000 == 0 || time.Since(lastProgress) >= 10*time.Second {
+			emit("processing", scanned, len(out), autoConfirmed, skipped, sourceKind)
+			lastProgress = time.Now()
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	emit("complete", scanned, len(out), autoConfirmed, skipped, "")
+	return out, nil
 }
 
 const vendorCandidateSourceQuery = `
 WITH source_names AS (
+  SELECT 'pdc_lobbying_organization'::text AS source_kind, 'pdc_employer'::text AS source_table,
+         0::bigint AS source_pk, 'xhn7-64im'::text AS source_dataset_id, employer_id AS source_row_id,
+         name AS source_name, normalized_name, source_record_id
+    FROM pdc_employer
+   WHERE name IS NOT NULL AND normalized_name IS NOT NULL
+  UNION ALL
   SELECT 'datawa_contract_contractor'::text AS source_kind, 'datawa_contract'::text AS source_table,
          id AS source_pk, source_dataset_id, source_row_id, contractor_name AS source_name,
          normalized_contractor_name AS normalized_name, source_record_id
@@ -2392,19 +2787,45 @@ WITH source_names AS (
          id, source_dataset_id, source_row_id, company_name, normalized_company_name, source_record_id
     FROM datawa_webs_vendor
    WHERE company_name IS NOT NULL AND normalized_company_name IS NOT NULL
+  UNION ALL
+  SELECT 'fiscalwa_vendor_payment', 'fiscalwa_vendor_payment',
+         id, source_dataset_id, source_row_id, vendor_name, normalized_vendor_name, source_record_id
+    FROM fiscalwa_vendor_payment
+   WHERE vendor_name IS NOT NULL AND normalized_vendor_name IS NOT NULL
+  UNION ALL
+  SELECT 'federal_award_recipient', 'federal_award',
+         id, 'usaspending'::text, award_id, recipient_name, normalized_recipient_name, source_record_id
+    FROM federal_award
+   WHERE recipient_name IS NOT NULL AND normalized_recipient_name IS NOT NULL
+), limited_source_names AS (
+SELECT *
+  FROM source_names
+ ORDER BY source_kind, normalized_name, source_name
+ LIMIT CASE WHEN $1 > 0 THEN $1 ELSE 100000 END
+), org_names AS (
+SELECT DISTINCT id, canonical_name, aliases, normalized_name
+  FROM (
+    SELECT id, canonical_name, aliases, wa_dd_normalize_entity_name(canonical_name) AS normalized_name
+      FROM organization
+    UNION ALL
+    SELECT o.id, o.canonical_name, o.aliases, wa_dd_normalize_entity_name(alias) AS normalized_name
+      FROM organization o
+      CROSS JOIN LATERAL unnest(o.aliases) alias
+  ) names
+ WHERE normalized_name IS NOT NULL
+), matches AS (
+SELECT s.source_kind, s.source_table, s.source_pk, s.source_dataset_id, s.source_row_id,
+       s.source_name, s.normalized_name, s.source_record_id,
+       o.id, o.canonical_name, o.aliases,
+       COUNT(*) OVER (PARTITION BY s.source_kind, s.source_dataset_id, s.source_row_id, s.source_name) AS source_match_count
+  FROM limited_source_names s
+  JOIN org_names o ON o.normalized_name = s.normalized_name
 )
 SELECT s.source_kind, s.source_table, s.source_pk, s.source_dataset_id, s.source_row_id,
        s.source_name, s.normalized_name, s.source_record_id,
-       o.id, o.canonical_name, o.aliases
-  FROM source_names s
-  JOIN organization o
-    ON s.normalized_name = wa_dd_normalize_entity_name(o.canonical_name)
-    OR s.normalized_name = ANY(
-       SELECT wa_dd_normalize_entity_name(alias)
-         FROM unnest(o.aliases) alias
-    )
- ORDER BY s.source_kind, s.normalized_name, o.canonical_name
- LIMIT CASE WHEN $1 > 0 THEN $1 ELSE 100000 END;`
+       s.id, s.canonical_name, s.aliases, s.source_match_count
+  FROM matches s
+ ORDER BY s.source_kind, s.normalized_name, s.canonical_name;`
 
 // UpsertFederalAwardParams is the normalized row shape for federal_award.
 type UpsertFederalAwardParams struct {
@@ -2433,9 +2854,10 @@ func (s *Store) UpsertFederalAward(ctx context.Context, p UpsertFederalAwardPara
 INSERT INTO federal_award (
   award_id, recipient_name, recipient_uei, awarding_agency, funding_agency,
   award_type, award_amount, start_date, end_date, place_state_code,
+  normalized_recipient_name,
   place_county, raw_fields, source_record_id
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,NULLIF($7,'')::numeric,$8,$9,$10,$11,$12::jsonb,$13
+  $1,$2,$3,$4,$5,$6,NULLIF($7,'')::numeric,$8,$9,$10,wa_dd_normalize_entity_name($2),$11,$12::jsonb,$13
 )
 ON CONFLICT (award_id) DO UPDATE SET
   recipient_name = EXCLUDED.recipient_name,
@@ -2447,6 +2869,7 @@ ON CONFLICT (award_id) DO UPDATE SET
   start_date = EXCLUDED.start_date,
   end_date = EXCLUDED.end_date,
   place_state_code = EXCLUDED.place_state_code,
+  normalized_recipient_name = EXCLUDED.normalized_recipient_name,
   place_county = EXCLUDED.place_county,
   raw_fields = EXCLUDED.raw_fields,
   source_record_id = EXCLUDED.source_record_id,
@@ -2549,9 +2972,9 @@ func (s *Store) UpsertFiscalWAVendorPayment(ctx context.Context, p UpsertFiscalW
 INSERT INTO fiscalwa_vendor_payment (
   source_dataset_id, source_row_id, biennium, fiscal_year, fiscal_month,
   agency_number, agency_name, object_code, object_category, subobject_code,
-  subobject_name, vendor_name, amount, raw_fields, source_record_id
+  subobject_name, vendor_name, normalized_vendor_name, amount, raw_fields, source_record_id
 ) VALUES (
-  $1,$2,$3,NULLIF($4,0),$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,'')::numeric,$14::jsonb,$15
+  $1,$2,$3,NULLIF($4,0),$5,$6,$7,$8,$9,$10,$11,$12,wa_dd_normalize_entity_name($12),NULLIF($13,'')::numeric,$14::jsonb,$15
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   biennium = EXCLUDED.biennium,
@@ -2564,6 +2987,7 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   subobject_code = EXCLUDED.subobject_code,
   subobject_name = EXCLUDED.subobject_name,
   vendor_name = EXCLUDED.vendor_name,
+  normalized_vendor_name = EXCLUDED.normalized_vendor_name,
   amount = EXCLUDED.amount,
   raw_fields = EXCLUDED.raw_fields,
   source_record_id = EXCLUDED.source_record_id,
@@ -4063,6 +4487,165 @@ ON CONFLICT (source_kind, source_table, source_pk, source_name) DO UPDATE SET
 	return nil
 }
 
+type DeepgramOrganizationEvidenceStats struct {
+	Scanned          int
+	MentionsUpserted int
+	Candidates       int
+	Skipped          int
+}
+
+type DeepgramOrganizationEvidenceProgress struct {
+	Phase              string
+	Stats              DeepgramOrganizationEvidenceStats
+	LookupCacheSize    int
+	LastNormalizedName string
+	ElapsedTime        time.Duration
+}
+
+func (s *Store) GenerateDeepgramOrganizationEvidence(ctx context.Context, minConfidence float64, limit int) (DeepgramOrganizationEvidenceStats, error) {
+	return s.GenerateDeepgramOrganizationEvidenceWithProgress(ctx, minConfidence, limit, nil)
+}
+
+func (s *Store) GenerateDeepgramOrganizationEvidenceWithProgress(ctx context.Context, minConfidence float64, limit int, progress func(DeepgramOrganizationEvidenceProgress)) (DeepgramOrganizationEvidenceStats, error) {
+	if minConfidence <= 0 {
+		minConfidence = 0.85
+	}
+	started := time.Now()
+	emit := func(phase string, stats DeepgramOrganizationEvidenceStats, cacheSize int, normalized string) {
+		if progress == nil {
+			return
+		}
+		progress(DeepgramOrganizationEvidenceProgress{
+			Phase:              phase,
+			Stats:              stats,
+			LookupCacheSize:    cacheSize,
+			LastNormalizedName: normalized,
+			ElapsedTime:        time.Since(started).Round(time.Second),
+		})
+	}
+
+	const q = `
+SELECT id, text, wa_dd_normalize_entity_name(text), COALESCE(confidence, 0)
+  FROM entity_mention
+ WHERE upper(entity_type) = 'ORGANIZATION'
+   AND text IS NOT NULL
+   AND wa_dd_normalize_entity_name(text) IS NOT NULL
+   AND confidence IS NOT NULL
+   AND confidence >= $1
+ ORDER BY confidence DESC, id DESC
+ LIMIT CASE WHEN $2 > 0 THEN $2 ELSE 100000 END;`
+	emit("querying", DeepgramOrganizationEvidenceStats{}, 0, "")
+	rows, err := s.Pool.Query(ctx, q, minConfidence, limit)
+	if err != nil {
+		return DeepgramOrganizationEvidenceStats{}, fmt.Errorf("list deepgram organization mentions: %w", err)
+	}
+	defer rows.Close()
+
+	var stats DeepgramOrganizationEvidenceStats
+	matchCache := map[string][]organizationNameMatch{}
+	lastProgress := time.Now()
+	emit("processing", stats, len(matchCache), "")
+	for rows.Next() {
+		var id int64
+		var text, normalized string
+		var providerConfidence float64
+		if err := rows.Scan(&id, &text, &normalized, &providerConfidence); err != nil {
+			return stats, fmt.Errorf("scan deepgram organization mention: %w", err)
+		}
+		stats.Scanned++
+		if entitymatch.FalsePositiveRisk(normalized) || junkOrganizationName(text, normalized) {
+			stats.Skipped++
+			if stats.Scanned == 1 || stats.Scanned%1000 == 0 || time.Since(lastProgress) >= 10*time.Second {
+				emit("processing", stats, len(matchCache), normalized)
+				lastProgress = time.Now()
+			}
+			continue
+		}
+		matches, ok := matchCache[normalized]
+		if !ok {
+			var err error
+			matches, err = s.organizationMatchesForNormalizedName(ctx, normalized)
+			if err != nil {
+				return stats, err
+			}
+			matchCache[normalized] = matches
+		}
+		mentionOrgID := int64(0)
+		if len(matches) == 1 {
+			mentionOrgID = matches[0].ID
+		}
+		if err := s.upsertOrganizationSourceMention(ctx, "deepgram_entity", "entity_mention", id, text, normalized, mentionOrgID, 1, 0, "possible"); err != nil {
+			return stats, err
+		}
+		stats.MentionsUpserted++
+		for _, match := range matches {
+			candidateID, err := s.UpsertVendorEntityMatchCandidate(ctx, UpsertVendorEntityMatchCandidateParams{
+				SourceKind:          "deepgram_organization_mention",
+				SourceTable:         "entity_mention",
+				SourcePK:            id,
+				SourceDatasetID:     "deepgram",
+				SourceRowID:         fmt.Sprintf("%d", id),
+				SourceName:          text,
+				NormalizedName:      normalized,
+				OrganizationID:      match.ID,
+				CandidateConfidence: "possible",
+				Evidence: []string{
+					"entity_type:ORGANIZATION",
+					fmt.Sprintf("deepgram_confidence:%.3f", providerConfidence),
+					"review_required:transcript_mention",
+				},
+			})
+			if err != nil {
+				return stats, err
+			}
+			if candidateID > 0 {
+				stats.Candidates++
+			}
+		}
+		if stats.Scanned == 1 || stats.Scanned%1000 == 0 || time.Since(lastProgress) >= 10*time.Second {
+			emit("processing", stats, len(matchCache), normalized)
+			lastProgress = time.Now()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return stats, err
+	}
+	emit("complete", stats, len(matchCache), "")
+	return stats, nil
+}
+
+type organizationNameMatch struct {
+	ID            int64
+	CanonicalName string
+	Aliases       []string
+}
+
+func (s *Store) organizationMatchesForNormalizedName(ctx context.Context, normalized string) ([]organizationNameMatch, error) {
+	const q = `
+SELECT id, canonical_name, aliases
+  FROM organization
+ WHERE wa_dd_normalize_entity_name(canonical_name) = $1
+    OR $1 = ANY(
+       SELECT wa_dd_normalize_entity_name(alias)
+         FROM unnest(aliases) alias
+    )
+ ORDER BY CASE WHEN match_confidence = 'confirmed' THEN 0 ELSE 1 END, canonical_name;`
+	rows, err := s.Pool.Query(ctx, q, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("organization normalized-name lookup: %w", err)
+	}
+	defer rows.Close()
+	var out []organizationNameMatch
+	for rows.Next() {
+		var m organizationNameMatch
+		if err := rows.Scan(&m.ID, &m.CanonicalName, &m.Aliases); err != nil {
+			return nil, fmt.Errorf("scan organization normalized-name match: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) organizationIDForAliasOrCanonical(ctx context.Context, name string) (int64, error) {
 	const q = `
 SELECT id
@@ -4285,25 +4868,55 @@ func (s *Store) LookupOrgCrossSource(ctx context.Context, normalizedName string)
 		return CrossSourceMatch{}, false, nil
 	}
 	{
-		const q = `SELECT ein, name FROM irs_bmf_organization WHERE normalized_name = $1 LIMIT 1`
-		var ein, name string
-		err := s.Pool.QueryRow(ctx, q, normalizedName).Scan(&ein, &name)
-		if err == nil {
-			return CrossSourceMatch{Source: "irs_bmf", EIN: ein, Name: name}, true, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		const q = `SELECT ein, name FROM irs_bmf_organization WHERE normalized_name = $1 ORDER BY ein LIMIT 2`
+		rows, err := s.Pool.Query(ctx, q, normalizedName)
+		if err != nil {
 			return CrossSourceMatch{}, false, fmt.Errorf("lookup irs bmf: %w", err)
+		}
+		var matches []CrossSourceMatch
+		for rows.Next() {
+			var ein, name string
+			if err := rows.Scan(&ein, &name); err != nil {
+				rows.Close()
+				return CrossSourceMatch{}, false, fmt.Errorf("scan irs bmf match: %w", err)
+			}
+			matches = append(matches, CrossSourceMatch{Source: "irs_bmf", EIN: ein, Name: name})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return CrossSourceMatch{}, false, fmt.Errorf("lookup irs bmf: %w", err)
+		}
+		if len(matches) == 1 {
+			return matches[0], true, nil
+		}
+		if len(matches) > 1 {
+			return CrossSourceMatch{}, false, nil
 		}
 	}
 	{
-		const q = `SELECT employer_id, name FROM pdc_employer WHERE normalized_name = $1 LIMIT 1`
-		var id, name string
-		err := s.Pool.QueryRow(ctx, q, normalizedName).Scan(&id, &name)
-		if err == nil {
-			return CrossSourceMatch{Source: "pdc_employer", EmployerID: id, Name: name}, true, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		const q = `SELECT employer_id, name FROM pdc_employer WHERE normalized_name = $1 ORDER BY employer_id LIMIT 2`
+		rows, err := s.Pool.Query(ctx, q, normalizedName)
+		if err != nil {
 			return CrossSourceMatch{}, false, fmt.Errorf("lookup pdc employer: %w", err)
+		}
+		var matches []CrossSourceMatch
+		for rows.Next() {
+			var id, name string
+			if err := rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return CrossSourceMatch{}, false, fmt.Errorf("scan pdc employer match: %w", err)
+			}
+			matches = append(matches, CrossSourceMatch{Source: "pdc_employer", EmployerID: id, Name: name})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return CrossSourceMatch{}, false, fmt.Errorf("lookup pdc employer: %w", err)
+		}
+		if len(matches) == 1 {
+			return matches[0], true, nil
+		}
+		if len(matches) > 1 {
+			return CrossSourceMatch{}, false, nil
 		}
 	}
 	return CrossSourceMatch{}, false, nil

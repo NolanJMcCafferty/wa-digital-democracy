@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -106,6 +107,7 @@ type Organization struct {
 	MatchNotes        string   `json:"match_notes,omitempty"`
 	TestifierPosition string   `json:"testifier_position,omitempty"`
 	TestifierCount    int      `json:"testifier_count,omitempty"`
+	ContextSummary    []string `json:"context_summary,omitempty"`
 }
 
 type Source struct {
@@ -477,9 +479,44 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
 		o.MatchNotes = deref(notes)
 		o.TestifierPosition = deref(pos)
 		o.TestifierCount = nTest
+		contexts, err := store.GetOrganizationPublicContexts(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		o.ContextSummary = summarizeOrganizationContexts(contexts)
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+func summarizeOrganizationContexts(contexts []db.OrganizationPublicContext) []string {
+	seen := map[string]struct{}{}
+	for _, c := range contexts {
+		label := ""
+		switch c.ContextType {
+		case "lobbying_registration":
+			label = "Lobbying record"
+		case "state_contract":
+			label = "Contract record"
+		case "state_vendor":
+			label = "Vendor record"
+		case "state_vendor_payment":
+			label = "Payment record"
+		case "federal_award":
+			label = "Federal award"
+		default:
+			label = strings.TrimSpace(c.SourceLabel)
+		}
+		if label != "" {
+			seen[label] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for label := range seen {
+		out = append(out, label)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func loadSourcesForSections(ctx context.Context, store *db.Store, sections []HearingSection) ([]Source, error) {

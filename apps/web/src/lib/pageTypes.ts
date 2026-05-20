@@ -97,6 +97,7 @@ export type Organization = {
   match_notes?: string;
   testifier_position?: string;
   testifier_count?: number;
+  context_summary?: string[];
 };
 
 export type Source = {

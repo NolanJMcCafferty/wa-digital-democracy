@@ -89,6 +89,12 @@ SUBCOMMANDS:
                      Cross-match seeded organizations against IRS BMF + PDC employers
   generate-vendor-entity-matches
                      Generate reviewable vendor/customer organization match candidates
+  list-entity-match-candidates
+                     List reviewable organization/entity match candidates
+  decide-entity-match
+                     Record a confirmed/rejected/needs_review entity-match decision
+  generate-deepgram-org-evidence
+                     Generate reviewable organization evidence from Deepgram entity mentions
   ingest-usaspending-wa-awards
                      Pull USAspending award rows performed in Washington into Postgres
   ingest-seattle-operating-budget
@@ -155,6 +161,12 @@ func main() {
 		os.Exit(runVerifyOrganizations(args))
 	case "generate-vendor-entity-matches":
 		os.Exit(runGenerateVendorEntityMatches(args))
+	case "list-entity-match-candidates":
+		os.Exit(runListEntityMatchCandidates(args))
+	case "decide-entity-match":
+		os.Exit(runDecideEntityMatch(args))
+	case "generate-deepgram-org-evidence":
+		os.Exit(runGenerateDeepgramOrgEvidence(args))
 	case "ingest-usaspending-wa-awards":
 		os.Exit(runIngestUSASpendingWAAwards(args))
 	case "ingest-seattle-operating-budget":
@@ -1525,7 +1537,44 @@ func runGenerateVendorEntityMatches(args []string) int {
 	}
 	defer store.Close()
 
-	candidates, err := store.GenerateVendorEntityMatchCandidates(ctx, *limit)
+	fmt.Fprintf(os.Stderr, "==> generate-vendor-entity-matches: starting (limit=%d)\n", *limit)
+	stopWatchdog := make(chan struct{})
+	watchdogDone := make(chan struct{})
+	go func() {
+		defer close(watchdogDone)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		started := time.Now()
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Fprintf(os.Stderr, "  checkpoint: still generating entity-match candidates (elapsed=%s)\n", time.Since(started).Round(time.Second))
+			case <-stopWatchdog:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	logProgress := func(p db.VendorEntityMatchProgress) {
+		source := ""
+		if p.SourceKind != "" {
+			source = " source=" + p.SourceKind
+		}
+		switch p.Phase {
+		case "querying":
+			fmt.Fprintf(os.Stderr, "  checkpoint: querying source rows and current organizations\n")
+		case "processing":
+			fmt.Fprintf(os.Stderr, "  checkpoint: processed=%d upserted=%d auto_confirmed=%d skipped=%d elapsed=%s%s\n",
+				p.Scanned, p.Upserted, p.AutoConfirmed, p.Skipped, p.ElapsedTime, source)
+		case "complete":
+			fmt.Fprintf(os.Stderr, "  checkpoint: complete processed=%d upserted=%d auto_confirmed=%d skipped=%d elapsed=%s\n",
+				p.Scanned, p.Upserted, p.AutoConfirmed, p.Skipped, p.ElapsedTime)
+		}
+	}
+	candidates, err := store.GenerateVendorEntityMatchCandidatesWithProgress(ctx, *limit, logProgress)
+	close(stopWatchdog)
+	<-watchdogDone
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "generate-vendor-entity-matches: %v\n", err)
 		return 1
@@ -1539,6 +1588,171 @@ func runGenerateVendorEntityMatches(args []string) int {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "==> generated %d reviewable vendor/entity match candidates\n", len(candidates))
+	return 0
+}
+
+func runListEntityMatchCandidates(args []string) int {
+	fs := flag.NewFlagSet("list-entity-match-candidates", flag.ContinueOnError)
+	var (
+		sourceKind = fs.String("source-kind", "", "optional entity_match_source_kind filter")
+		decision   = fs.String("decision", "", "optional decision filter: confirmed, rejected, needs_review")
+		limit      = fs.Int("limit", 100, "maximum candidates to list")
+		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		jsonOut    = fs.Bool("json", false, "write candidates as JSON to stdout")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "list-entity-match-candidates: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	candidates, err := store.ListVendorEntityMatchCandidates(ctx, strings.TrimSpace(*sourceKind), strings.TrimSpace(*decision), *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "list-entity-match-candidates: %v\n", err)
+		return 1
+	}
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(candidates); err != nil {
+			fmt.Fprintf(os.Stderr, "list-entity-match-candidates: encode: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	for _, c := range candidates {
+		fmt.Printf("%d\t%s\t%s\t%s\torg=%d\t%s\tcandidate=%s\tdecision=%s\n",
+			c.ID, c.SourceKind, c.SourceName, c.NormalizedName, c.OrganizationID,
+			c.CanonicalName, c.CandidateConfidence, c.Decision)
+	}
+	return 0
+}
+
+func runDecideEntityMatch(args []string) int {
+	fs := flag.NewFlagSet("decide-entity-match", flag.ContinueOnError)
+	var (
+		candidateID = fs.Int64("candidate-id", 0, "vendor_entity_match_candidate id")
+		decision    = fs.String("decision", "needs_review", "decision: confirmed, rejected, needs_review")
+		confidence  = fs.String("confidence", "possible", "reviewed confidence: confirmed, probable, possible, unmatched")
+		reviewer    = fs.String("reviewed-by", env("USER", "operator"), "reviewer/operator label")
+		notes       = fs.String("notes", "", "review notes")
+		orgID       = fs.Int64("organization-id", 0, "override organization id; defaults to candidate organization")
+		dsn         = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *candidateID <= 0 {
+		fmt.Fprintln(os.Stderr, "decide-entity-match: --candidate-id is required")
+		return 2
+	}
+	switch *decision {
+	case "confirmed", "rejected", "needs_review":
+	default:
+		fmt.Fprintln(os.Stderr, "decide-entity-match: --decision must be confirmed, rejected, or needs_review")
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "decide-entity-match: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+	organizationID := *orgID
+	if organizationID == 0 {
+		if err := store.Pool.QueryRow(ctx, `SELECT organization_id FROM vendor_entity_match_candidate WHERE id = $1`, *candidateID).Scan(&organizationID); err != nil {
+			fmt.Fprintf(os.Stderr, "decide-entity-match: lookup candidate %d: %v\n", *candidateID, err)
+			return 1
+		}
+	}
+	decisionID, err := store.UpsertVendorEntityMatchDecision(ctx, db.InsertVendorEntityMatchDecisionParams{
+		CandidateID:    *candidateID,
+		OrganizationID: organizationID,
+		Decision:       *decision,
+		Confidence:     *confidence,
+		ReviewedBy:     *reviewer,
+		ReviewNotes:    *notes,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "decide-entity-match: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "==> recorded entity-match decision %d for candidate %d\n", decisionID, *candidateID)
+	return 0
+}
+
+func runGenerateDeepgramOrgEvidence(args []string) int {
+	fs := flag.NewFlagSet("generate-deepgram-org-evidence", flag.ContinueOnError)
+	var (
+		minConfidence = fs.Float64("min-confidence", 0.85, "minimum Deepgram entity confidence")
+		limit         = fs.Int("limit", 0, "maximum entity mentions to inspect")
+		dsn           = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	store, err := db.Open(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "generate-deepgram-org-evidence: db open: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	fmt.Fprintf(os.Stderr, "==> generate-deepgram-org-evidence: starting (min-confidence=%.2f limit=%d)\n", *minConfidence, *limit)
+	stopWatchdog := make(chan struct{})
+	watchdogDone := make(chan struct{})
+	go func() {
+		defer close(watchdogDone)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		started := time.Now()
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Fprintf(os.Stderr, "  checkpoint: still generating Deepgram organization evidence (elapsed=%s)\n", time.Since(started).Round(time.Second))
+			case <-stopWatchdog:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	logProgress := func(p db.DeepgramOrganizationEvidenceProgress) {
+		last := ""
+		if p.LastNormalizedName != "" {
+			last = " last=" + p.LastNormalizedName
+		}
+		switch p.Phase {
+		case "querying":
+			fmt.Fprintf(os.Stderr, "  checkpoint: querying Deepgram ORGANIZATION mentions\n")
+		case "processing":
+			fmt.Fprintf(os.Stderr, "  checkpoint: scanned=%d mentions=%d candidates=%d skipped=%d lookup_cache=%d elapsed=%s%s\n",
+				p.Stats.Scanned, p.Stats.MentionsUpserted, p.Stats.Candidates,
+				p.Stats.Skipped, p.LookupCacheSize, p.ElapsedTime, last)
+		case "complete":
+			fmt.Fprintf(os.Stderr, "  checkpoint: complete scanned=%d mentions=%d candidates=%d skipped=%d lookup_cache=%d elapsed=%s\n",
+				p.Stats.Scanned, p.Stats.MentionsUpserted, p.Stats.Candidates,
+				p.Stats.Skipped, p.LookupCacheSize, p.ElapsedTime)
+		}
+	}
+	stats, err := store.GenerateDeepgramOrganizationEvidenceWithProgress(ctx, *minConfidence, *limit, logProgress)
+	close(stopWatchdog)
+	<-watchdogDone
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "generate-deepgram-org-evidence: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "==> deepgram org evidence: scanned=%d mentions=%d candidates=%d skipped=%d\n",
+		stats.Scanned, stats.MentionsUpserted, stats.Candidates, stats.Skipped)
 	return 0
 }
 
