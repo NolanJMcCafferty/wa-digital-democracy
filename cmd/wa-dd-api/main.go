@@ -68,6 +68,10 @@ func main() {
 	r.Get("/api/v1/sources", listSourcesHandler(store))
 	r.Get("/api/v1/search/transcripts", searchTranscriptsHandler(store))
 	r.Get("/api/v1/admin/review/speakers", adminListSpeakerReviewTasksHandler(store))
+	r.Get("/api/v1/admin/review/speakers/events", adminListSpeakerReviewEventsHandler(store))
+	r.Get("/api/v1/admin/review/speakers/events/{tvwEventId}", adminGetSpeakerReviewEventHandler(store))
+	r.Get("/api/v1/admin/review/speakers/clusters/{clusterId}", adminGetSpeakerClusterReviewHandler(store))
+	r.Post("/api/v1/admin/review/speakers/clusters/{clusterId}/assign", adminManualAssignSpeakerClusterHandler(store))
 	r.Get("/api/v1/admin/review/speakers/{taskId}", adminGetSpeakerReviewTaskHandler(store))
 	r.Post("/api/v1/admin/review/speakers/{taskId}/accept", adminSpeakerReviewDecisionHandler(store, "accept"))
 	r.Post("/api/v1/admin/review/speakers/{taskId}/reject", adminSpeakerReviewDecisionHandler(store, "reject"))
@@ -1038,6 +1042,17 @@ type diarizedSegmentResponse struct {
 	EndMS        int    `json:"end_ms"`
 	Text         string `json:"text"`
 	ClusterLabel string `json:"cluster_label,omitempty"`
+	SpeakerLabel string `json:"speaker_label,omitempty"`
+	SpeakerKind  string `json:"speaker_kind,omitempty"`
+	ReviewStatus string `json:"review_status,omitempty"`
+	Reviewed     bool   `json:"reviewed"`
+}
+
+func (s diarizedSegmentResponse) PublicSpeakerLabel() string {
+	if !s.Reviewed {
+		return ""
+	}
+	return s.SpeakerLabel
 }
 
 func mapHearingResponse(h db.HearingAggregate) hearingResponse {
@@ -1173,6 +1188,8 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 				for _, s := range segs {
 					out = append(out, diarizedSegmentResponse{
 						StartMS: s.StartMS, EndMS: s.EndMS, Text: s.Text, ClusterLabel: s.ClusterLabel,
+						SpeakerLabel: s.SpeakerLabel, SpeakerKind: s.SpeakerKind,
+						ReviewStatus: s.ReviewStatus, Reviewed: s.Reviewed,
 					})
 				}
 				resp.DiarizedTranscript = &diarizedTranscriptResponse{Segments: out}
@@ -1363,6 +1380,78 @@ func adminListSpeakerReviewTasksHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
+	}
+}
+
+func adminListSpeakerReviewEventsHandler(store *db.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		limit := 50
+		if v := req.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		events, err := store.ListSpeakerReviewEvents(req.Context(), limit)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	}
+}
+
+func adminGetSpeakerReviewEventHandler(store *db.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		tvwEventID := strings.TrimSpace(chi.URLParam(req, "tvwEventId"))
+		if tvwEventID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing event id"})
+			return
+		}
+		clusters, err := store.ListSpeakerClustersForEvent(req.Context(), tvwEventID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"tvw_event_id": tvwEventID, "clusters": clusters})
+	}
+}
+
+func adminGetSpeakerClusterReviewHandler(store *db.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(req, "clusterId"), 10, 64)
+		if err != nil || id <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad cluster id"})
+			return
+		}
+		cluster, err := store.GetSpeakerClusterReview(req.Context(), id)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, cluster)
+	}
+}
+
+func adminManualAssignSpeakerClusterHandler(store *db.Store) http.HandlerFunc {
+	type body struct {
+		Kind     string `json:"kind"`
+		Label    string `json:"label"`
+		Reviewer string `json:"reviewer"`
+		Notes    string `json:"notes"`
+	}
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(req, "clusterId"), 10, 64)
+		if err != nil || id <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad cluster id"})
+			return
+		}
+		var b body
+		_ = json.NewDecoder(req.Body).Decode(&b)
+		if err := store.ManualAssignSpeakerCluster(req.Context(), id, b.Kind, b.Label, b.Reviewer, b.Notes); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
 

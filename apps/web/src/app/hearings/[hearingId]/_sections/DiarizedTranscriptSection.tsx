@@ -1,5 +1,15 @@
-import type { DiarizedTranscript } from "@/lib/api";
+import type { DiarizedSegment, DiarizedTranscript } from "@/lib/api";
 import { formatMS, tvwDeepLink } from "@/lib/format";
+
+function displaySpeaker(segment: DiarizedSegment): { label: string; reviewed: boolean } | null {
+  if (segment.reviewed && segment.speaker_label) {
+    return { label: segment.speaker_label, reviewed: true };
+  }
+  if (segment.cluster_label) {
+    return { label: "Unreviewed speaker", reviewed: false };
+  }
+  return null;
+}
 
 export function DiarizedTranscriptSection({
   transcript,
@@ -30,12 +40,13 @@ export function DiarizedTranscriptSection({
             const link = tvwEventId
               ? tvwDeepLink(tvwEventId, s.start_ms)
               : "#";
+            const speaker = displaySpeaker(s);
             return (
               <li
                 key={`${s.start_ms}-${i}`}
                 className="rounded border border-stone-300 bg-white p-4"
               >
-                <div className="mb-2 flex items-baseline gap-3 text-xs">
+                <div className="mb-2 flex flex-wrap items-baseline gap-3 text-xs">
                   <a
                     href={link}
                     target="_blank"
@@ -44,9 +55,20 @@ export function DiarizedTranscriptSection({
                   >
                     {formatMS(s.start_ms)}
                   </a>
-                  {s.cluster_label ? (
-                    <span className="font-mono text-stone-700">
-                      {s.cluster_label}
+                  {speaker ? (
+                    <span
+                      className={
+                        speaker.reviewed
+                          ? "font-medium text-stone-800"
+                          : "text-stone-500"
+                      }
+                    >
+                      {speaker.label}
+                    </span>
+                  ) : null}
+                  {speaker?.reviewed ? (
+                    <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-emerald-800 ring-1 ring-emerald-200">
+                      reviewed
                     </span>
                   ) : null}
                 </div>
