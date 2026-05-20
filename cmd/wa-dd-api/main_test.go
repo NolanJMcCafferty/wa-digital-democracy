@@ -140,3 +140,29 @@ func TestLegislatorRole(t *testing.T) {
 		}
 	}
 }
+
+func TestDiarizedSegmentPublicSpeakerLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		seg  diarizedSegmentResponse
+		want string
+	}{
+		{
+			name: "reviewed assignment",
+			seg:  diarizedSegmentResponse{ClusterLabel: "SPEAKER_01", SpeakerLabel: "Jane Smith", Reviewed: true},
+			want: "Jane Smith",
+		},
+		{
+			name: "unreviewed cluster stays anonymous",
+			seg:  diarizedSegmentResponse{ClusterLabel: "SPEAKER_02", Reviewed: false},
+			want: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.seg.PublicSpeakerLabel(); got != c.want {
+				t.Fatalf("PublicSpeakerLabel() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

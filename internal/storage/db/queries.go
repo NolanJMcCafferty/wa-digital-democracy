@@ -3431,13 +3431,23 @@ type DiarizedHearingSegment struct {
 	EndMS        int
 	Text         string
 	ClusterLabel string
+	SpeakerLabel string
+	SpeakerKind  string
+	ReviewStatus string
+	Reviewed     bool
 }
 
 func (s *Store) ListDiarizedSegmentsByTVWEvent(ctx context.Context, tvwEventID string) ([]DiarizedHearingSegment, error) {
 	const q = `
-SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label
+SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label,
+       COALESCE(sa.speaker_label, ''), COALESCE(sa.speaker_kind::text, ''),
+       COALESCE(sa.review_status::text, ''), (sa.id IS NOT NULL) AS reviewed
   FROM diarized_speech_segment d
   JOIN diarization_job j ON j.id = d.diarization_job_id
+  LEFT JOIN speaker_assignment sa
+    ON sa.diarization_job_id = d.diarization_job_id
+   AND sa.speaker_cluster_id = d.speaker_cluster_id
+   AND sa.review_status = 'accepted'
  WHERE d.tvw_event_id = $1
    AND j.status = 'succeeded'
    AND j.id = (
@@ -3454,7 +3464,8 @@ SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label
 	out := []DiarizedHearingSegment{}
 	for rows.Next() {
 		var seg DiarizedHearingSegment
-		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &seg.ClusterLabel); err != nil {
+		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &seg.ClusterLabel,
+			&seg.SpeakerLabel, &seg.SpeakerKind, &seg.ReviewStatus, &seg.Reviewed); err != nil {
 			return nil, fmt.Errorf("scan diarized segment: %w", err)
 		}
 		out = append(out, seg)

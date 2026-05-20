@@ -135,6 +135,10 @@ export type DiarizedSegment = {
   end_ms: number;
   text: string;
   cluster_label?: string;
+  speaker_label?: string;
+  speaker_kind?: string;
+  review_status?: string;
+  reviewed?: boolean;
 };
 
 export type LegislatorListEntry = {

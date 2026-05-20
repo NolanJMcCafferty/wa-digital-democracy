@@ -1037,6 +1037,17 @@ type diarizedSegmentResponse struct {
 	EndMS        int    `json:"end_ms"`
 	Text         string `json:"text"`
 	ClusterLabel string `json:"cluster_label,omitempty"`
+	SpeakerLabel string `json:"speaker_label,omitempty"`
+	SpeakerKind  string `json:"speaker_kind,omitempty"`
+	ReviewStatus string `json:"review_status,omitempty"`
+	Reviewed     bool   `json:"reviewed"`
+}
+
+func (s diarizedSegmentResponse) PublicSpeakerLabel() string {
+	if !s.Reviewed {
+		return ""
+	}
+	return s.SpeakerLabel
 }
 
 func mapHearingResponse(h db.HearingAggregate) hearingResponse {
@@ -1172,6 +1183,8 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 				for _, s := range segs {
 					out = append(out, diarizedSegmentResponse{
 						StartMS: s.StartMS, EndMS: s.EndMS, Text: s.Text, ClusterLabel: s.ClusterLabel,
+						SpeakerLabel: s.SpeakerLabel, SpeakerKind: s.SpeakerKind,
+						ReviewStatus: s.ReviewStatus, Reviewed: s.Reviewed,
 					})
 				}
 				resp.DiarizedTranscript = &diarizedTranscriptResponse{Segments: out}
