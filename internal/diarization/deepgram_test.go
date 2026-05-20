@@ -86,6 +86,39 @@ func TestDeepgramProviderFallsBackToWordSegments(t *testing.T) {
 	}
 }
 
+func TestMergeConsecutiveSegments(t *testing.T) {
+	conf := func(v float64) *float64 { return &v }
+	in := []Segment{
+		{StartMS: 0, EndMS: 1000, SpeakerCluster: "SPEAKER_00", Text: "We'll", Confidence: conf(0.9)},
+		{StartMS: 1000, EndMS: 7000, SpeakerCluster: "SPEAKER_00", Text: "call to order today's meeting.", Confidence: conf(0.8)},
+		{StartMS: 7000, EndMS: 8000, SpeakerCluster: "SPEAKER_00", Text: "twenty twenty six.", Confidence: conf(0.7)},
+		{StartMS: 8000, EndMS: 9000, SpeakerCluster: "SPEAKER_01", Text: "Thank you.", Confidence: conf(0.95)},
+		{StartMS: 9000, EndMS: 10000, SpeakerCluster: "SPEAKER_00", Text: "Welcome.", Confidence: conf(0.6)},
+	}
+	got := MergeConsecutiveSegments(in)
+	if len(got) != 3 {
+		t.Fatalf("len=%d, want 3: %#v", len(got), got)
+	}
+	if got[0].StartMS != 0 || got[0].EndMS != 8000 || got[0].SpeakerCluster != "SPEAKER_00" {
+		t.Fatalf("merged seg = %#v", got[0])
+	}
+	if got[0].Text != "We'll call to order today's meeting. twenty twenty six." {
+		t.Fatalf("merged text = %q", got[0].Text)
+	}
+	if got[1].SpeakerCluster != "SPEAKER_01" || got[1].StartMS != 8000 || got[1].EndMS != 9000 {
+		t.Fatalf("seg[1] = %#v", got[1])
+	}
+	if got[2].SpeakerCluster != "SPEAKER_00" || got[2].StartMS != 9000 {
+		t.Fatalf("seg[2] = %#v", got[2])
+	}
+}
+
+func TestMergeConsecutiveSegmentsEmpty(t *testing.T) {
+	if got := MergeConsecutiveSegments(nil); len(got) != 0 {
+		t.Fatalf("len=%d, want 0", len(got))
+	}
+}
+
 func TestDeepgramProviderRequiresKey(t *testing.T) {
 	_, err := NewDeepgramProvider(DeepgramConfig{})
 	if err == nil || !strings.Contains(err.Error(), "API key") {

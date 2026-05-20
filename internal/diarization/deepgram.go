@@ -198,6 +198,19 @@ type deepgramResponse struct {
 	} `json:"results"`
 }
 
+// ParseDeepgramJSON parses a stored Deepgram prerecorded response into a
+// provider-neutral Result. Useful for offline reprocessing (e.g. re-merging
+// segments without recalling Deepgram).
+func ParseDeepgramJSON(raw []byte) (*Result, error) {
+	res, err := parseDeepgram(raw)
+	if err != nil {
+		return nil, err
+	}
+	res.Provider = "deepgram"
+	res.Raw = raw
+	return res, nil
+}
+
 func parseDeepgram(raw []byte) (*Result, error) {
 	var dg deepgramResponse
 	if err := json.Unmarshal(raw, &dg); err != nil {
@@ -209,8 +222,84 @@ func parseDeepgram(raw []byte) (*Result, error) {
 	if len(segments) == 0 {
 		segments = segmentsFromWords(words)
 	}
+	segments = MergeConsecutiveSegments(segments)
 	entities := deepgramEntities(dg, words)
 	return &Result{Segments: segments, Words: words, Entities: entities}, nil
+}
+
+// MergeConsecutiveSegments collapses adjacent segments belonging to the same
+// speaker cluster into a single segment per speaker turn. Deepgram (and most
+// diarization providers) emit one utterance per sentence/short pause, so
+// rendering them verbatim produces the choppy output every published
+// transcript UI hides — Otter, Rev, and AssemblyAI's reference renderers all
+// merge same-speaker runs into one block per turn. We do that post-processing
+// here so downstream storage and UI consumers never see the granular form.
+//
+// Inputs are assumed to be sorted by StartMS; ties keep input order. Text is
+// joined with single spaces; merged confidence is the duration-weighted mean
+// of the inputs' confidences (segments without confidence are skipped from
+// the average).
+func MergeConsecutiveSegments(segs []Segment) []Segment {
+	if len(segs) == 0 {
+		return segs
+	}
+	out := make([]Segment, 0, len(segs))
+	cur := segs[0]
+	var confSum float64
+	var confWeight float64
+	if cur.Confidence != nil {
+		w := float64(cur.EndMS - cur.StartMS)
+		if w <= 0 {
+			w = 1
+		}
+		confSum = *cur.Confidence * w
+		confWeight = w
+	}
+	flush := func() {
+		if confWeight > 0 {
+			v := confSum / confWeight
+			cur.Confidence = &v
+		}
+		out = append(out, cur)
+	}
+	for i := 1; i < len(segs); i++ {
+		s := segs[i]
+		if s.SpeakerCluster == cur.SpeakerCluster && s.SpeakerCluster != "" {
+			if s.EndMS > cur.EndMS {
+				cur.EndMS = s.EndMS
+			}
+			if t := strings.TrimSpace(s.Text); t != "" {
+				if cur.Text == "" {
+					cur.Text = t
+				} else {
+					cur.Text = cur.Text + " " + t
+				}
+			}
+			if s.Confidence != nil {
+				w := float64(s.EndMS - s.StartMS)
+				if w <= 0 {
+					w = 1
+				}
+				confSum += *s.Confidence * w
+				confWeight += w
+			}
+			continue
+		}
+		flush()
+		cur = s
+		confSum = 0
+		confWeight = 0
+		if cur.Confidence != nil {
+			w := float64(cur.EndMS - cur.StartMS)
+			if w <= 0 {
+				w = 1
+			}
+			confSum = *cur.Confidence * w
+			confWeight = w
+		}
+	}
+	flush()
+	return out
 }
 
 func deepgramEntities(dg deepgramResponse, words []Word) []EntityMention {

@@ -3015,6 +3015,48 @@ SELECT e.tvw_event_id
 	return out, rows.Err()
 }
 
+// SucceededDiarizationJob is the minimal job state that `wa-dd merge-segments`
+// needs to re-parse a stored Deepgram response and rewrite segments without
+// recalling the provider.
+type SucceededDiarizationJob struct {
+	ID            int64
+	TVWEventID    string
+	Provider      string
+	Model         string
+	RawResultPath string
+}
+
+// ListSucceededDiarizationJobs returns succeeded jobs that still have a raw
+// result file on disk, optionally filtered to one event_id. Used by
+// `merge-segments` to re-parse and re-merge in bulk.
+func (s *Store) ListSucceededDiarizationJobs(ctx context.Context, tvwEventID string) ([]SucceededDiarizationJob, error) {
+	const q = `
+SELECT j.id, j.tvw_event_id, j.provider, COALESCE(j.model,''), COALESCE(j.raw_result_path,'')
+  FROM diarization_job j
+  JOIN (
+    SELECT tvw_event_id, MAX(id) AS id
+      FROM diarization_job
+     WHERE status = 'succeeded'
+     GROUP BY tvw_event_id
+  ) latest ON latest.id = j.id
+ WHERE ($1 = '' OR j.tvw_event_id = $1)
+ ORDER BY j.tvw_event_id;`
+	rows, err := s.Pool.Query(ctx, q, tvwEventID)
+	if err != nil {
+		return nil, fmt.Errorf("list succeeded diarization jobs: %w", err)
+	}
+	defer rows.Close()
+	var out []SucceededDiarizationJob
+	for rows.Next() {
+		var j SucceededDiarizationJob
+		if err := rows.Scan(&j.ID, &j.TVWEventID, &j.Provider, &j.Model, &j.RawResultPath); err != nil {
+			return nil, fmt.Errorf("scan succeeded diarization job: %w", err)
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 type CreateDiarizationJobParams struct {
 	TVWEventID   string
 	AudioAssetID int64
