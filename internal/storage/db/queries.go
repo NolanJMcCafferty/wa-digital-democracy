@@ -943,7 +943,7 @@ EXISTS (
 	}
 	if len(p.BillIDs) > 0 {
 		idx := push(p.BillIDs)
-		where = append(where, fmt.Sprintf("b.bill_id = ANY($%d)", idx))
+		where = append(where, fmt.Sprintf("b.bill_number = ANY($%d)", idx))
 	}
 	if p.Status != "" {
 		// Status accepts either a coarse bucket ("passed", "failed",

@@ -69,14 +69,15 @@ export async function IssuePage({
   const totals = billPages.reduce(
     (acc, b) => {
       acc.bills += 1;
-      for (const section of b.hearings) {
-        acc.testifiers += section.testifiers.length;
-        acc.testified += section.testifiers.filter((t) => t.testified).length;
+      for (const section of b.hearings ?? []) {
+        const testifiers = section.testifiers ?? [];
+        acc.testifiers += testifiers.length;
+        acc.testified += testifiers.filter((t) => t.testified).length;
         acc.transcriptSegments += section.transcript?.segments?.length ?? 0;
-        acc.organizations += section.organizations.length;
-        for (const t of section.testifiers) acc.positions[t.position] += 1;
+        acc.organizations += (section.organizations ?? []).length;
+        for (const t of testifiers) acc.positions[t.position] += 1;
       }
-      acc.sources += b.sources.length;
+      acc.sources += (b.sources ?? []).length;
       return acc;
     },
     {
@@ -190,8 +191,8 @@ export async function IssuePage({
 function issueOrganizations(billPages: BillPage[]): OrganizationListEntry[] {
   const orgs = new Map<string, OrganizationListEntry>();
   for (const b of billPages) {
-    for (const section of b.hearings) {
-      for (const org of section.organizations) {
+    for (const section of b.hearings ?? []) {
+      for (const org of section.organizations ?? []) {
         const existing = orgs.get(org.canonical_name);
         const aliases = new Set([...(existing?.aliases ?? []), ...(org.aliases ?? [])]);
         const positions = {
@@ -236,10 +237,10 @@ function billPageMatchesIssue(page: BillPage, config: IssuePageConfig): boolean 
     page.bill.bill_id,
     page.bill.title,
     page.bill.description,
-    ...page.hearings.flatMap((section) => [
+    ...(page.hearings ?? []).flatMap((section) => [
       section.hearing.agenda_item_label,
       section.hearing.committee_name,
-      ...section.organizations.map((o) => o.canonical_name),
+      ...(section.organizations ?? []).map((o) => o.canonical_name),
     ]),
   ]
     .filter(Boolean)

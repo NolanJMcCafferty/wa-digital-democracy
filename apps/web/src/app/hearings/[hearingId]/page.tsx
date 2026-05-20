@@ -8,10 +8,17 @@ import { DiarizedTranscriptSection } from "./_sections/DiarizedTranscriptSection
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other"];
 
 const POSITION_STYLE: Record<Position, string> = {
-  Pro: "text-emerald-800 bg-emerald-100",
-  Con: "text-rose-800 bg-rose-100",
-  Other: "text-stone-700 bg-stone-200",
-  Unknown: "text-stone-500 bg-stone-100",
+  Pro: "border-emerald-400",
+  Con: "border-rose-400",
+  Other: "border-stone-400",
+  Unknown: "border-stone-300",
+};
+
+const POSITION_BADGE_STYLE: Record<Position, string> = {
+  Pro: "bg-emerald-100 text-emerald-900",
+  Con: "bg-rose-100 text-rose-900",
+  Other: "bg-stone-200 text-stone-800",
+  Unknown: "bg-stone-100 text-stone-500",
 };
 
 type Params = { hearingId: string };
@@ -53,20 +60,7 @@ export default async function HearingPage({
           <Metric label="Agenda items" value={hearing.agendaItems.length.toLocaleString()} />
           <Metric label="Signed in" value={totalSignIns.toLocaleString()} />
           <Metric label="Testified" value={totalTestified.toLocaleString()} />
-          <Metric label="TVW event" value={hearing.tvwEventId || "—"} />
-        </div>
-
-        <div className="flex flex-wrap gap-3 text-sm">
-          {hearing.tvwUrl ? (
-            <a
-              href={hearing.tvwUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded border border-stone-300 bg-white px-3 py-1.5 text-stone-800 hover:bg-stone-50"
-            >
-              Watch hearing on TVW →
-            </a>
-          ) : null}
+          <TVWMetric href={hearing.tvwUrl} />
         </div>
       </section>
 
@@ -84,7 +78,7 @@ export default async function HearingPage({
           )}
         </div>
 
-        <aside className="lg:sticky lg:top-6 lg:self-start">
+        <aside className={`lg:sticky lg:top-6 lg:self-start ${hearing.diarizedTranscript ? "lg:pt-11" : ""}`}>
           <section
             aria-labelledby="agenda-items-heading"
             className="space-y-3 rounded-lg border border-stone-300 bg-white p-4"
@@ -93,14 +87,14 @@ export default async function HearingPage({
               id="agenda-items-heading"
               className="text-sm font-semibold uppercase tracking-wider text-stone-600"
             >
-              Agenda
+              Agenda bills
             </h2>
             {hearing.agendaItems.length === 0 ? (
               <p className="text-sm text-stone-600">
                 No agenda items have been linked to this hearing yet.
               </p>
             ) : (
-              <ul className="space-y-2">
+              <ul className="divide-y divide-stone-200">
                 {hearing.agendaItems.map((item) => (
                   <AgendaItemCard
                     key={item.csiAgendaItemId || `${item.billId}-${item.agendaItemLabel}`}
@@ -119,32 +113,34 @@ export default async function HearingPage({
 function AgendaItemCard({ item }: { item: HearingAgendaItemEntry }) {
   const billSlug = `${item.billPrefix}${item.billNumber}`;
   const href = item.billId ? `/bills/${item.biennium}/${billSlug}` : null;
-  const testifiers = item.section?.testifiers ?? [];
+  const testifiedSpeakers = (item.section?.testifiers ?? []).filter((t) => t.testified);
   return (
-    <li className="space-y-2 rounded border border-stone-200 bg-stone-50 p-3">
-      <div className="space-y-1">
-        {item.billId ? (
-          href ? (
-            <Link
-              href={href}
-              className="text-sm font-semibold text-blue-700 hover:text-blue-900"
-            >
-              {item.billId}
-            </Link>
-          ) : (
-            <div className="text-sm font-semibold text-blue-700">{item.billId}</div>
-          )
-        ) : null}
-        <div className="text-sm text-stone-800">
+    <li className="space-y-3 py-3 first:pt-0 last:pb-0">
+      <div className="space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          {item.billId ? (
+            href ? (
+              <Link
+                href={href}
+                className="text-sm font-semibold text-blue-700 hover:text-blue-900"
+              >
+                {item.billId}
+              </Link>
+            ) : (
+              <div className="text-sm font-semibold text-blue-700">{item.billId}</div>
+            )
+          ) : null}
+        </div>
+        <div className="text-sm leading-snug text-stone-800">
           {item.agendaItemLabel || "Agenda item"}
         </div>
-        <div className="text-xs text-stone-500 tabular-nums">
+        <div className="text-xs text-stone-500">
           {item.testifierCount.toLocaleString()} signed in ·{" "}
           {item.testifiedCount.toLocaleString()} testified
         </div>
       </div>
-      {testifiers.length > 0 ? (
-        <PositionBreakdown testifiers={testifiers} />
+      {testifiedSpeakers.length > 0 ? (
+        <PositionBreakdown testifiers={testifiedSpeakers} />
       ) : null}
     </li>
   );
@@ -159,44 +155,60 @@ function PositionBreakdown({ testifiers }: { testifiers: Testifier[] }) {
   };
   for (const t of testifiers) groups[t.position]?.push(t);
   return (
-    <div className="space-y-2 border-t border-stone-200 pt-2">
+    <div className="space-y-3 border-t border-stone-200 pt-3">
       {POSITION_ORDER.map((p) => {
-        const testified = groups[p].filter((t) => t.testified);
-        if (groups[p].length === 0) return null;
+        const rows = groups[p];
         return (
-          <details key={p} className="text-xs">
-            <summary className="flex cursor-pointer items-center justify-between gap-2 text-stone-700">
+          <section key={p} className={`space-y-2 border-l-2 pl-3 ${POSITION_STYLE[p]}`}>
+            <h3 className="flex items-center justify-between gap-2">
               <span
-                className={`rounded px-1.5 py-0.5 font-medium uppercase tracking-wider ${POSITION_STYLE[p]}`}
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${POSITION_BADGE_STYLE[p]}`}
               >
                 {p}
               </span>
-              <span className="tabular-nums text-stone-500">
-                {testified.length.toLocaleString()} of{" "}
-                {groups[p].length.toLocaleString()}
+              <span className="text-xs tabular-nums text-stone-500">
+                {rows.length.toLocaleString()} speaker{rows.length === 1 ? "" : "s"}
               </span>
-            </summary>
-            <ul className="mt-1 space-y-0.5 pl-1 text-stone-700">
-              {groups[p].map((t, i) => (
-                <li
-                  key={`${t.raw_name}-${i}`}
-                  className={t.testified ? "" : "text-stone-400"}
-                >
-                  {t.raw_name}
-                  {t.raw_organization ? (
-                    <span className="text-stone-500">
-                      {" "}
-                      · {t.raw_organization}
+            </h3>
+            {rows.length > 0 ? (
+              <ul className="space-y-1.5">
+                {rows.map((t, i) => (
+                  <li
+                    key={`${t.raw_name}-${i}`}
+                    className="grid grid-cols-[1.75rem_1fr] gap-2 rounded-md px-2 py-1.5 hover:bg-stone-50"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold ring-1 ring-white ${POSITION_BADGE_STYLE[p]}`}
+                    >
+                      {initials(t.raw_name)}
                     </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </details>
+                    <span className="min-w-0">
+                      <span className="block break-words text-sm font-medium leading-snug text-stone-900">
+                        {t.raw_name}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-stone-400">No testified speakers</p>
+            )}
+          </section>
         );
       })}
     </div>
   );
+}
+
+function initials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -205,5 +217,28 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-xs uppercase tracking-wider text-stone-500">{label}</div>
       <div className="mt-1 font-semibold text-stone-900">{value}</div>
     </div>
+  );
+}
+
+function TVWMetric({ href }: { href?: string }) {
+  if (!href) {
+    return (
+      <div className="rounded border border-stone-300 bg-white p-3">
+        <div className="text-xs uppercase tracking-wider text-stone-500">TVW</div>
+        <div className="mt-1 font-semibold text-stone-400">Unavailable</div>
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="rounded border border-stone-300 bg-white p-3 text-stone-900 hover:border-blue-300 hover:bg-blue-50"
+    >
+      <div className="text-xs uppercase tracking-wider text-stone-500">TVW</div>
+      <div className="mt-1 font-semibold text-blue-700">Watch hearing →</div>
+    </a>
   );
 }
