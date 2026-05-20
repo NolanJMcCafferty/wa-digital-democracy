@@ -137,20 +137,23 @@ export type DiarizedSegment = {
   cluster_label?: string;
 };
 
-export type LegislatorBundleEntry = {
+export type LegislatorListEntry = {
   slug: string;
-  name: string;            // "Senator Alvarado" — kept for back-compat with /legislators/{slug} routes
-  displayName?: string;    // "Emily Alvarado"
+  name: string;
+  displayName?: string;
   firstName?: string;
   lastName?: string;
   chamber?: string;
-  district?: string;       // "34"
-  party?: string;          // "D" | "R"
+  district?: string;
+  party?: string;
   email?: string;
   phone?: string;
   photoUrl?: string;
   thumbnailUrl?: string;
   billCount?: number;
+};
+
+export type LegislatorPage = LegislatorListEntry & {
   appearances: Array<{
     biennium: string;
     billId: string;
@@ -183,7 +186,7 @@ export type SourceSummary = {
   endpoints: string[];
 };
 
-export type OrganizationBundleEntry = {
+export type OrganizationListEntry = {
   slug: string;
   canonicalName: string;
   aliases: string[];
@@ -191,6 +194,9 @@ export type OrganizationBundleEntry = {
   matchNotes?: string;
   testifierCount: number;
   positions: Record<Position, number>;
+};
+
+export type OrganizationPage = OrganizationListEntry & {
   appearances: Array<{
     biennium: string;
     billId: string;
@@ -635,20 +641,8 @@ type legislatorDetailResponse = {
   }>;
 };
 
-export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> {
-  const res = await fetch(`${API_BASE}/api/v1/legislators`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`listLegislatorBundles: ${API_BASE}/api/v1/legislators returned ${res.status}`);
-  }
-  const items = (await res.json()) as legislatorListItem[];
-  // The list endpoint returns aggregate counts, not appearances. We
-  // synthesize empty appearances arrays here so the existing
-  // LegislatorBundleEntry shape (which the legislators index page
-  // consumes for slug + name) keeps working. Pages that need the full
-  // appearance list call loadLegislatorBundle(slug) below.
-  return items.map((l) => ({
+function mapLegislatorListItem(l: legislatorListItem): LegislatorListEntry {
+  return {
     slug: l.slug,
     name: l.name,
     displayName: l.display_name,
@@ -662,16 +656,26 @@ export async function listLegislatorBundles(): Promise<LegislatorBundleEntry[]> 
     photoUrl: l.photo_url,
     thumbnailUrl: l.thumbnail_url,
     billCount: l.bill_count,
-    appearances: [],
-  }));
+  };
 }
 
-export async function loadLegislatorBundle(slug: string): Promise<LegislatorBundleEntry | null> {
+export async function listLegislators(): Promise<LegislatorListEntry[]> {
+  const res = await fetch(`${API_BASE}/api/v1/legislators`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`listLegislators: ${API_BASE}/api/v1/legislators returned ${res.status}`);
+  }
+  const items = (await res.json()) as legislatorListItem[];
+  return items.map(mapLegislatorListItem);
+}
+
+export async function loadLegislatorPage(slug: string): Promise<LegislatorPage | null> {
   const url = `${API_BASE}/api/v1/legislators/${encodeURIComponent(slug)}`;
   const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`loadLegislatorBundle ${url} returned ${res.status}`);
+    throw new Error(`loadLegislatorPage ${url} returned ${res.status}`);
   }
   const detail = (await res.json()) as legislatorDetailResponse;
   return {
@@ -733,15 +737,8 @@ type orgDetailResponse = orgListItem & {
   }>;
 };
 
-export async function listOrganizationBundles(): Promise<OrganizationBundleEntry[]> {
-  const res = await fetch(`${API_BASE}/api/v1/organizations`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`listOrganizationBundles: ${API_BASE}/api/v1/organizations returned ${res.status}`);
-  }
-  const items = (await res.json()) as orgListItem[];
-  return items.map((o) => ({
+function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
+  return {
     slug: o.slug,
     canonicalName: o.canonical_name,
     aliases: o.aliases ?? [],
@@ -749,26 +746,30 @@ export async function listOrganizationBundles(): Promise<OrganizationBundleEntry
     matchNotes: o.match_notes,
     testifierCount: o.testifier_count,
     positions: o.positions,
-    appearances: [],
-  }));
+  };
 }
 
-export async function loadOrganizationBundle(slug: string): Promise<OrganizationBundleEntry | null> {
+export async function listOrganizations(): Promise<OrganizationListEntry[]> {
+  const res = await fetch(`${API_BASE}/api/v1/organizations`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`listOrganizations: ${API_BASE}/api/v1/organizations returned ${res.status}`);
+  }
+  const items = (await res.json()) as orgListItem[];
+  return items.map(mapOrganizationListItem);
+}
+
+export async function loadOrganizationPage(slug: string): Promise<OrganizationPage | null> {
   const url = `${API_BASE}/api/v1/organizations/${encodeURIComponent(slug)}`;
   const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`loadOrganizationBundle ${url} returned ${res.status}`);
+    throw new Error(`loadOrganizationPage ${url} returned ${res.status}`);
   }
   const detail = (await res.json()) as orgDetailResponse;
   return {
-    slug: detail.slug,
-    canonicalName: detail.canonical_name,
-    aliases: detail.aliases ?? [],
-    matchConfidence: detail.match_confidence,
-    matchNotes: detail.match_notes,
-    testifierCount: detail.testifier_count,
-    positions: detail.positions,
+    ...mapOrganizationListItem(detail),
     appearances: detail.appearances.map((a) => ({
       biennium: a.biennium,
       billId: a.bill_id,

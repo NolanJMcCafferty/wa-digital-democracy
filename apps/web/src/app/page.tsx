@@ -4,9 +4,9 @@ import { SearchBox } from "./SearchBox";
 import { buildSearchIndex } from "@/lib/searchIndex";
 import {
   listHearingBundles,
-  listLegislatorBundles,
+  listLegislators,
   listLocalBundles,
-  listOrganizationBundles,
+  listOrganizations,
 } from "@/lib/loadBundle";
 // Issue tiles. Live issues link to /issues/{slug}; "coming soon"
 // placeholders read as a roadmap. Pattern mirrors CalMatters' "California
@@ -31,8 +31,8 @@ export default async function HomePage() {
   const [bundles, hearings, organizations, legislators, searchResults] = await Promise.all([
     listLocalBundles(),
     listHearingBundles(),
-    listOrganizationBundles(),
-    listLegislatorBundles(),
+    listOrganizations(),
+    listLegislators(),
     buildSearchIndex(),
   ]);
 
@@ -173,7 +173,7 @@ function SectionCard({
 function LegislatorMosaic({
   legislators,
 }: {
-  legislators: Awaited<ReturnType<typeof listLegislatorBundles>>;
+  legislators: Awaited<ReturnType<typeof listLegislators>>;
 }) {
   if (legislators.length === 0) return null;
   const senate = legislators.filter((l) => l.chamber === "Senate").length;
@@ -242,7 +242,7 @@ function LegislatorMosaic({
   );
 }
 
-function legislatorRenderKey(l: Awaited<ReturnType<typeof listLegislatorBundles>>[number]): string {
+function legislatorRenderKey(l: Awaited<ReturnType<typeof listLegislators>>[number]): string {
   return [
     l.slug,
     l.displayName ?? l.name,

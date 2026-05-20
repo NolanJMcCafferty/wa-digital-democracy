@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listLegislatorBundles, type LegislatorBundleEntry } from "@/lib/loadBundle";
+import { listLegislators, type LegislatorListEntry } from "@/lib/loadBundle";
 
 const PARTY_LABEL: Record<string, string> = {
   D: "Democrat",
@@ -59,7 +59,7 @@ function buildQueryString(
   return qs ? `?${qs}` : "";
 }
 
-function applyFilters(legislators: LegislatorBundleEntry[], f: PageFilters): LegislatorBundleEntry[] {
+function applyFilters(legislators: LegislatorListEntry[], f: PageFilters): LegislatorListEntry[] {
   const q = f.q?.toLowerCase() ?? "";
   const chamberSet = new Set(f.chambers);
   const partySet = new Set(f.parties);
@@ -91,7 +91,7 @@ function distinctSorted(values: Array<string | undefined>): string[] {
   return Array.from(set).sort();
 }
 
-function legislatorRenderKey(l: LegislatorBundleEntry): string {
+function legislatorRenderKey(l: LegislatorListEntry): string {
   return [
     l.slug,
     l.displayName ?? l.name,
@@ -107,7 +107,7 @@ export default async function LegislatorsPage({
 }) {
   const raw = await searchParams;
   const filters = parseFilters(raw);
-  const all = await listLegislatorBundles();
+  const all = await listLegislators();
   const filtered = applyFilters(all, filters);
 
   // Stable display order: chamber, district numerically, then last name.
@@ -316,7 +316,7 @@ export default async function LegislatorsPage({
                           )}
                         </td>
                         <td className="px-4 py-2.5 align-top text-right tabular-nums text-stone-700">
-                          {(l.billCount ?? l.appearances.length).toLocaleString()}
+                          {(l.billCount ?? 0).toLocaleString()}
                         </td>
                       </tr>
                     );

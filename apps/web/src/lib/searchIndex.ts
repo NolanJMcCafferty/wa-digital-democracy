@@ -2,9 +2,9 @@ import "server-only";
 
 import {
   listHearingBundles,
-  listLegislatorBundles,
+  listLegislators,
   listLocalBundles,
-  listOrganizationBundles,
+  listOrganizations,
   loadBillPage,
   type BillPage,
 } from "./loadBundle";
@@ -23,8 +23,8 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
   const [bundles, hearings, organizations, legislators] = await Promise.all([
     listLocalBundles(),
     listHearingBundles(),
-    listOrganizationBundles(),
-    listLegislatorBundles(),
+    listOrganizations(),
+    listLegislators(),
   ]);
   const loadedBundles = (
     await Promise.all(
@@ -70,12 +70,12 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
       withSearchText({
         type: "Legislator" as const,
         title: l.name,
-        subtitle: `${l.chamber ?? "Chamber unknown"} · ${l.appearances.length.toLocaleString()} sponsored bill${
-          l.appearances.length === 1 ? "" : "s"
+        subtitle: `${l.chamber ?? "Chamber unknown"} · ${(l.billCount ?? 0).toLocaleString()} sponsored bill${
+          l.billCount === 1 ? "" : "s"
         }`,
         href: `/legislators/${l.slug}`,
-        keywords: l.appearances
-          .map((a) => `${a.billId} ${a.billTitle ?? ""} ${a.sponsorType ?? ""}`)
+        keywords: [l.displayName, l.firstName, l.lastName, l.district, l.party]
+          .filter(Boolean)
           .join(" "),
       })
     ),

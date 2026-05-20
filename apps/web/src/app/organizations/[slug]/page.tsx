@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { listOrganizationBundles, loadOrganizationBundle } from "@/lib/loadBundle";
+import { listOrganizations, loadOrganizationPage } from "@/lib/loadBundle";
 import { formatDateTime } from "@/lib/format";
 import type { Position } from "@/lib/bundle";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
 export async function generateStaticParams() {
-  const orgs = await listOrganizationBundles();
+  const orgs = await listOrganizations();
   return orgs.map((o) => ({ slug: o.slug }));
 }
 
@@ -17,7 +17,7 @@ export default async function OrganizationPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const org = await loadOrganizationBundle(slug);
+  const org = await loadOrganizationPage(slug);
   if (!org) notFound();
 
   return (

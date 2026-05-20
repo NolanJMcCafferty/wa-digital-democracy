@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { OrganizationBundleEntry } from "@/lib/loadBundle";
+import type { OrganizationListEntry } from "@/lib/loadBundle";
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
@@ -47,9 +47,9 @@ function buildQueryString(
 }
 
 function applyFilters(
-  organizations: OrganizationBundleEntry[],
+  organizations: OrganizationListEntry[],
   filters: OrganizationPageFilters,
-): OrganizationBundleEntry[] {
+): OrganizationListEntry[] {
   const q = filters.q?.toLowerCase();
   return organizations.filter((o) => {
     if (o.matchConfidence !== "confirmed") {
@@ -71,7 +71,7 @@ export function OrganizationSearchResults({
 }: {
   basePath: string;
   filters: OrganizationPageFilters;
-  organizations: OrganizationBundleEntry[];
+  organizations: OrganizationListEntry[];
   paramPrefix?: string;
 }) {
   const filtered = applyFilters(organizations, filters);

@@ -1,4 +1,4 @@
-import { listOrganizationBundles } from "@/lib/loadBundle";
+import { listOrganizations } from "@/lib/loadBundle";
 import {
   OrganizationSearchResults,
   parseOrganizationFilters,
@@ -13,7 +13,7 @@ export default async function OrganizationsPage({
 }) {
   const raw = await searchParams;
   const filters = parseOrganizationFilters(raw);
-  const organizations = await listOrganizationBundles();
+  const organizations = await listOrganizations();
 
   return (
     <div className="space-y-6">

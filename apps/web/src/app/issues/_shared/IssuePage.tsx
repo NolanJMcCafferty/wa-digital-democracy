@@ -5,7 +5,7 @@ import {
   searchHearings,
   slugify,
   type BillPage,
-  type OrganizationBundleEntry,
+  type OrganizationListEntry,
 } from "@/lib/loadBundle";
 import type { Position } from "@/lib/bundle";
 import {
@@ -24,7 +24,7 @@ import {
 } from "../../organizations/OrganizationSearchResults";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
-const CONFIDENCE_RANK: Record<OrganizationBundleEntry["matchConfidence"], number> = {
+const CONFIDENCE_RANK: Record<OrganizationListEntry["matchConfidence"], number> = {
   confirmed: 4,
   probable: 3,
   possible: 2,
@@ -187,8 +187,8 @@ export async function IssuePage({
   );
 }
 
-function issueOrganizations(bundles: BillPage[]): OrganizationBundleEntry[] {
-  const orgs = new Map<string, OrganizationBundleEntry>();
+function issueOrganizations(bundles: BillPage[]): OrganizationListEntry[] {
+  const orgs = new Map<string, OrganizationListEntry>();
   for (const b of bundles) {
     for (const section of b.hearings) {
       for (const org of section.organizations) {
@@ -215,7 +215,6 @@ function issueOrganizations(bundles: BillPage[]): OrganizationBundleEntry[] {
           matchNotes: existing?.matchNotes ?? org.match_notes,
           testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
           positions,
-          appearances: [],
         });
       }
     }

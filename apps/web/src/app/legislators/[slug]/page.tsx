@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import {
-  listLegislatorBundles,
-  loadLegislatorBundle,
+  listLegislators,
+  loadLegislatorPage,
   searchBills,
 } from "@/lib/loadBundle";
 import {
@@ -11,7 +11,7 @@ import {
 } from "../../bills/BillSearchResults";
 
 export async function generateStaticParams() {
-  const legislators = await listLegislatorBundles();
+  const legislators = await listLegislators();
   return legislators.map((l) => ({ slug: l.slug }));
 }
 
@@ -25,7 +25,7 @@ export default async function LegislatorPage({
   const { slug } = await params;
   const raw = await searchParams;
   const filters = parseBillFilters(raw);
-  const legislator = await loadLegislatorBundle(slug);
+  const legislator = await loadLegislatorPage(slug);
   if (!legislator) notFound();
   const sponsoredBillResult = await searchBills({ ...filters, sponsor: slug });
 
