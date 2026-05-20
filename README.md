@@ -15,7 +15,7 @@ Per `~/Documents/v1/wiki/politics/Washington Digital Democracy - Recommended Tec
 - **Database:** Postgres (+ PostGIS later) with JSONB and `pg_trgm`.
 - **Raw storage:** local filesystem under `data/raw/` for prototype; S3/R2 in production.
 
-The first-page architecture is "Go produces a JSON bundle; Next.js renders the bundle."
+The page architecture is "Go assembles route-specific JSON page objects from Postgres; Next.js renders those page objects." Legacy one-off demo tooling can still write first-page bundle snapshots.
 
 ## Local dev
 
@@ -23,7 +23,7 @@ The first-page architecture is "Go produces a JSON bundle; Next.js renders the b
 cp .env.example .env.local  # fill in local-only secrets; .env.local is gitignored
 make up                     # start Postgres in Docker
 make migrate-up             # apply schema with project-pinned Goose
-make build-demo             # build the selected first-page JSON bundle
+make build-demo             # build the selected legacy first-page JSON bundle
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
 make psql                   # open a shell against the local DB

@@ -140,6 +140,18 @@ type Source struct {
 	FetchedAt time.Time `json:"fetched_at"`
 }
 
+// BillPage is the page-level response shape for the bill detail route.
+// Unlike Bundle, it does not carry legacy top-level hearing mirrors; the
+// page has bill-level fields plus explicit per-hearing sections.
+type BillPage struct {
+	GeneratedAt      time.Time        `json:"generated_at"`
+	Bill             Bill             `json:"bill"`
+	Status           Status           `json:"status"`
+	Hearings         []HearingSection `json:"hearings"`
+	Sources          []Source         `json:"sources"`
+	KnownLimitations []string         `json:"known_limitations,omitempty"`
+}
+
 // Build assembles a Bundle for the configured demo from Postgres state.
 // Requires a CSI agenda item id on the demo — this path is for the curated
 // hearing-bound view. For metadata-only bills (no agenda item), call
@@ -178,19 +190,48 @@ func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bu
 	return b, nil
 }
 
-// BuildByBill assembles a Bundle for any bill row in Postgres, regardless of
-// whether it has an associated hearing/agenda_item. The metadata-only
-// ingest-session pass produces these bills, so the bill-detail page must
-// render with just snapshot + status + sponsors when no hearing exists.
-//
-// When a hearing _does_ exist, this falls through to the same loaders as
-// Build by reading the most recent agenda_item for the bill.
+// BuildByBill assembles the legacy Bundle shape for callers that still need
+// it. New bill-detail HTTP callers should use BuildBillPage.
 func BuildByBill(
 	ctx context.Context,
 	store *db.Store,
 	biennium, prefix string,
 	number int,
 ) (*Bundle, error) {
+	page, err := BuildBillPage(ctx, store, biennium, prefix, number)
+	if err != nil {
+		return nil, err
+	}
+	b := &Bundle{
+		GeneratedAt:      page.GeneratedAt,
+		Bill:             page.Bill,
+		Status:           page.Status,
+		Testifiers:       []Testifier{},
+		Organizations:    []Organization{},
+		Hearings:         page.Hearings,
+		Sources:          page.Sources,
+		KnownLimitations: page.KnownLimitations,
+	}
+	if len(page.Hearings) > 0 {
+		first := page.Hearings[0]
+		hearingCopy := first.Hearing
+		b.Hearing = &hearingCopy
+		b.Testifiers = first.Testifiers
+		b.Transcript = first.Transcript
+		b.Organizations = first.Organizations
+	}
+	return b, nil
+}
+
+// BuildBillPage assembles the page-level bill detail response for any bill row
+// in Postgres. Metadata-only bills return snapshot/status/sources with an empty
+// hearings array; enriched bills return one HearingSection per agenda item.
+func BuildBillPage(
+	ctx context.Context,
+	store *db.Store,
+	biennium, prefix string,
+	number int,
+) (*BillPage, error) {
 	b := &Bundle{
 		GeneratedAt:   time.Now().UTC(),
 		Testifiers:    []Testifier{},
@@ -214,12 +255,6 @@ func BuildByBill(
 	if err != nil {
 		return nil, fmt.Errorf("hearing lookup: %w", err)
 	}
-	if len(demos) == 0 {
-		// No hearing yet — leave hearing/testifiers/transcript/orgs empty.
-		b.KnownLimitations = computeLimitations(b)
-		return b, nil
-	}
-
 	for _, demo := range demos {
 		section, err := BuildHearingSection(ctx, store, demo)
 		if err != nil {
@@ -228,20 +263,29 @@ func BuildByBill(
 		b.Hearings = append(b.Hearings, *section)
 	}
 
-	// Mirror the most-recent hearing into the back-compat top-level fields.
-	first := b.Hearings[0]
-	hearingCopy := first.Hearing
-	b.Hearing = &hearingCopy
-	b.Testifiers = first.Testifiers
-	b.Transcript = first.Transcript
-	b.Organizations = first.Organizations
-
+	if len(b.Hearings) > 0 {
+		// Populate the legacy mirror fields so the existing source/limitation
+		// helpers can run unchanged while BillPage stays clean at the boundary.
+		first := b.Hearings[0]
+		hearingCopy := first.Hearing
+		b.Hearing = &hearingCopy
+		b.Testifiers = first.Testifiers
+		b.Transcript = first.Transcript
+		b.Organizations = first.Organizations
+	}
 	if err := loadSources(ctx, store, b); err != nil {
 		return nil, fmt.Errorf("sources: %w", err)
 	}
-
 	b.KnownLimitations = computeLimitations(b)
-	return b, nil
+
+	return &BillPage{
+		GeneratedAt:      b.GeneratedAt,
+		Bill:             b.Bill,
+		Status:           b.Status,
+		Hearings:         b.Hearings,
+		Sources:          b.Sources,
+		KnownLimitations: b.KnownLimitations,
+	}, nil
 }
 
 // BuildHearingSection runs the per-hearing loaders against a scratch

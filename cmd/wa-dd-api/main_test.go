@@ -9,14 +9,14 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// TestFirstPageHandler_BadSlug exercises the slug-parse path without
+// TestBillPageHandler_BadSlug exercises the slug-parse path without
 // touching Postgres — the regex check happens before any DB call, so a
 // nil store is unreachable and a real *db.Store isn't required.
-func TestFirstPageHandler_BadSlug(t *testing.T) {
+func TestBillPageHandler_BadSlug(t *testing.T) {
 	r := chi.NewRouter()
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", firstPageHandler(nil))
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(nil))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/notaslug/first-page", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/notaslug/page", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

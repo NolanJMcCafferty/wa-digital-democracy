@@ -1,12 +1,12 @@
 import "server-only";
 
-import type { Bundle } from "./bundle";
 import {
   listHearingBundles,
   listLegislatorBundles,
   listLocalBundles,
   listOrganizationBundles,
-  loadBundle,
+  loadBillPage,
+  type BillPage,
 } from "./loadBundle";
 
 export type SearchResult = {
@@ -28,9 +28,9 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
   ]);
   const loadedBundles = (
     await Promise.all(
-      bundles.map((b) => loadBundle(b.biennium, b.billPrefix, b.billNumber))
+      bundles.map((b) => loadBillPage(b.biennium, b.billPrefix, b.billNumber))
     )
-  ).filter((b): b is Bundle => Boolean(b));
+  ).filter((b): b is BillPage => Boolean(b));
 
   return [
     ...loadedBundles.map((b) =>

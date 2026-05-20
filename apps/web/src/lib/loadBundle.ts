@@ -1,5 +1,5 @@
 import "server-only";
-import type { Bundle, HearingSection, Organization, Position, Sponsor } from "./bundle";
+import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Status } from "./bundle";
 
 // The Next.js bill-detail page is a Server Component, so its fetch runs
 // in the Node runtime and does NOT pass through next.config.ts rewrites.
@@ -793,18 +793,27 @@ export function slugify(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export async function loadBundle(
+export type BillPage = {
+  generated_at: string;
+  bill: Bill;
+  status: Status;
+  hearings: HearingSection[];
+  sources: Source[];
+  known_limitations?: string[];
+};
+
+export async function loadBillPage(
   biennium: string,
   billPrefix: string,
   billNumber: number,
-): Promise<Bundle | null> {
-  const url = `${API_BASE}/api/v1/bills/${biennium}/${billPrefix}${billNumber}/first-page`;
+): Promise<BillPage | null> {
+  const url = `${API_BASE}/api/v1/bills/${biennium}/${billPrefix}${billNumber}/page`;
   const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`loadBundle ${url} returned ${res.status}`);
+    throw new Error(`loadBillPage ${url} returned ${res.status}`);
   }
-  return (await res.json()) as Bundle;
+  return (await res.json()) as BillPage;
 }
 
 export type SpeakerReviewSegment = {

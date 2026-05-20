@@ -30,14 +30,14 @@ func openTestStore(t *testing.T) *db.Store {
 	return store
 }
 
-// TestFirstPageHandler_NotFound expects the test DB to NOT contain a
+// TestBillPageHandler_NotFound expects the test DB to NOT contain a
 // bill numbered 9999 — none of our seeded fixtures do.
-func TestFirstPageHandler_NotFound(t *testing.T) {
+func TestBillPageHandler_NotFound(t *testing.T) {
 	store := openTestStore(t)
 	r := chi.NewRouter()
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", firstPageHandler(store))
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/HB9999/first-page", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/HB9999/page", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -46,15 +46,15 @@ func TestFirstPageHandler_NotFound(t *testing.T) {
 	}
 }
 
-// TestFirstPageHandler_OK assumes HB 1501 has been ingested in the local
+// TestBillPageHandler_OK assumes HB 1501 has been ingested in the local
 // dev DB (the daily-batch seed). If it hasn't, skip — a clean check
 // for "is the success path wired" without forcing a fixture upload.
-func TestFirstPageHandler_OK(t *testing.T) {
+func TestBillPageHandler_OK(t *testing.T) {
 	store := openTestStore(t)
 	r := chi.NewRouter()
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", firstPageHandler(store))
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/HB1501/first-page", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/HB1501/page", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -68,9 +68,8 @@ func TestFirstPageHandler_OK(t *testing.T) {
 		Bill struct {
 			BillID string `json:"bill_id"`
 		} `json:"bill"`
-		Testifiers    []any `json:"testifiers"`
-		Organizations []any `json:"organizations"`
-		Sources       []any `json:"sources"`
+		Hearings []any `json:"hearings"`
+		Sources  []any `json:"sources"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -78,7 +77,7 @@ func TestFirstPageHandler_OK(t *testing.T) {
 	if body.Bill.BillID != "HB 1501" {
 		t.Errorf("bill_id = %q, want %q", body.Bill.BillID, "HB 1501")
 	}
-	if body.Testifiers == nil || body.Organizations == nil || body.Sources == nil {
+	if body.Hearings == nil || body.Sources == nil {
 		t.Errorf("collection fields should serialize as [], not null: %+v", body)
 	}
 }

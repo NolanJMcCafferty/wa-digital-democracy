@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadBundle } from "@/lib/loadBundle";
+import { loadBillPage } from "@/lib/loadBundle";
 import type { HearingSection } from "@/lib/bundle";
 import { BillSnapshot } from "./_sections/BillSnapshot";
 import { StatusTimeline } from "./_sections/StatusTimeline";
@@ -24,30 +24,16 @@ export default async function BillHearingPage({
   const parsed = parseBillSlug(slug);
   if (!parsed) notFound();
 
-  const bundle = await loadBundle(biennium, parsed.prefix, parsed.number);
-  if (!bundle) notFound();
-
-  const sections: HearingSection[] =
-    bundle.hearings && bundle.hearings.length > 0
-      ? bundle.hearings
-      : bundle.hearing
-        ? [
-            {
-              hearing: bundle.hearing,
-              testifiers: bundle.testifiers,
-              transcript: bundle.transcript,
-              organizations: bundle.organizations,
-            },
-          ]
-        : [];
+  const page = await loadBillPage(biennium, parsed.prefix, parsed.number);
+  if (!page) notFound();
 
   return (
     <article className="space-y-12">
-      <BillSnapshot bill={bundle.bill} />
+      <BillSnapshot bill={page.bill} />
 
-      <StatusTimeline status={bundle.status} />
+      <StatusTimeline status={page.status} />
 
-      {sections.length > 0 ? (
+      {page.hearings.length > 0 ? (
         <section aria-labelledby="hearings-heading" className="space-y-4">
           <h2
             id="hearings-heading"
@@ -56,7 +42,7 @@ export default async function BillHearingPage({
             Hearings
           </h2>
           <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {sections.map((s) => (
+            {page.hearings.map((s) => (
               <HearingSummaryCard
                 key={s.hearing.csi_agenda_item_id ?? s.hearing.meeting_datetime}
                 section={s}

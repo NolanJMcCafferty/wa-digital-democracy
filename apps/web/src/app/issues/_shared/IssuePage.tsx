@@ -1,12 +1,13 @@
 import {
   listLocalBundles,
-  loadBundle,
+  loadBillPage,
   searchBills,
   searchHearings,
   slugify,
+  type BillPage,
   type OrganizationBundleEntry,
 } from "@/lib/loadBundle";
-import type { Bundle, Position } from "@/lib/bundle";
+import type { Position } from "@/lib/bundle";
 import {
   BillSearchResults,
   parseBillFilters,
@@ -51,9 +52,9 @@ export async function IssuePage({
   const entries = await listLocalBundles();
   const allBundles = (
     await Promise.all(
-      entries.map((e) => loadBundle(e.biennium, e.billPrefix, e.billNumber))
+      entries.map((e) => loadBillPage(e.biennium, e.billPrefix, e.billNumber))
     )
-  ).filter((b): b is Bundle => Boolean(b));
+  ).filter((b): b is BillPage => Boolean(b));
   const bundles = allBundles.filter((b) => bundleMatchesIssue(b, config));
   const matchedBillIds = bundles.map((b) => b.bill.bill_id);
 
@@ -68,12 +69,14 @@ export async function IssuePage({
   const totals = bundles.reduce(
     (acc, b) => {
       acc.bills += 1;
-      acc.testifiers += b.testifiers.length;
-      acc.testified += b.testifiers.filter((t) => t.testified).length;
-      acc.transcriptSegments += b.transcript?.segments?.length ?? 0;
-      acc.organizations += b.organizations.length;
+      for (const section of b.hearings) {
+        acc.testifiers += section.testifiers.length;
+        acc.testified += section.testifiers.filter((t) => t.testified).length;
+        acc.transcriptSegments += section.transcript?.segments?.length ?? 0;
+        acc.organizations += section.organizations.length;
+        for (const t of section.testifiers) acc.positions[t.position] += 1;
+      }
       acc.sources += b.sources.length;
-      for (const t of b.testifiers) acc.positions[t.position] += 1;
       return acc;
     },
     {
@@ -184,35 +187,37 @@ export async function IssuePage({
   );
 }
 
-function issueOrganizations(bundles: Bundle[]): OrganizationBundleEntry[] {
+function issueOrganizations(bundles: BillPage[]): OrganizationBundleEntry[] {
   const orgs = new Map<string, OrganizationBundleEntry>();
   for (const b of bundles) {
-    for (const org of b.organizations) {
-      const existing = orgs.get(org.canonical_name);
-      const aliases = new Set([...(existing?.aliases ?? []), ...(org.aliases ?? [])]);
-      const positions = {
-        Pro: existing?.positions.Pro ?? 0,
-        Con: existing?.positions.Con ?? 0,
-        Other: existing?.positions.Other ?? 0,
-        Unknown: existing?.positions.Unknown ?? 0,
-      };
-      const position = normalizePosition(org.testifier_position);
-      positions[position] += org.testifier_count ?? 0;
-      const matchConfidence =
-        existing && CONFIDENCE_RANK[existing.matchConfidence] >= CONFIDENCE_RANK[org.match_confidence]
-          ? existing.matchConfidence
-          : org.match_confidence;
+    for (const section of b.hearings) {
+      for (const org of section.organizations) {
+        const existing = orgs.get(org.canonical_name);
+        const aliases = new Set([...(existing?.aliases ?? []), ...(org.aliases ?? [])]);
+        const positions = {
+          Pro: existing?.positions.Pro ?? 0,
+          Con: existing?.positions.Con ?? 0,
+          Other: existing?.positions.Other ?? 0,
+          Unknown: existing?.positions.Unknown ?? 0,
+        };
+        const position = normalizePosition(org.testifier_position);
+        positions[position] += org.testifier_count ?? 0;
+        const matchConfidence =
+          existing && CONFIDENCE_RANK[existing.matchConfidence] >= CONFIDENCE_RANK[org.match_confidence]
+            ? existing.matchConfidence
+            : org.match_confidence;
 
-      orgs.set(org.canonical_name, {
-        slug: existing?.slug ?? slugify(org.canonical_name),
-        canonicalName: org.canonical_name,
-        aliases: Array.from(aliases).filter((a) => a !== org.canonical_name).sort(),
-        matchConfidence,
-        matchNotes: existing?.matchNotes ?? org.match_notes,
-        testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
-        positions,
-        appearances: [],
-      });
+        orgs.set(org.canonical_name, {
+          slug: existing?.slug ?? slugify(org.canonical_name),
+          canonicalName: org.canonical_name,
+          aliases: Array.from(aliases).filter((a) => a !== org.canonical_name).sort(),
+          matchConfidence,
+          matchNotes: existing?.matchNotes ?? org.match_notes,
+          testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
+          positions,
+          appearances: [],
+        });
+      }
     }
   }
   return Array.from(orgs.values()).sort((a, b) => {
@@ -227,14 +232,16 @@ function normalizePosition(position?: string): Position {
   return "Unknown";
 }
 
-function bundleMatchesIssue(bundle: Bundle, config: IssuePageConfig): boolean {
+function bundleMatchesIssue(bundle: BillPage, config: IssuePageConfig): boolean {
   const haystack = [
     bundle.bill.bill_id,
     bundle.bill.title,
     bundle.bill.description,
-    bundle.hearing?.agenda_item_label,
-    bundle.hearing?.committee_name,
-    ...bundle.organizations.map((o) => o.canonical_name),
+    ...bundle.hearings.flatMap((section) => [
+      section.hearing.agenda_item_label,
+      section.hearing.committee_name,
+      ...section.organizations.map((o) => o.canonical_name),
+    ]),
   ]
     .filter(Boolean)
     .join(" ")

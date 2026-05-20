@@ -55,7 +55,11 @@ func main() {
 	r.Get("/healthz", healthHandler(store))
 	r.Get("/api/v1/addresses/suggest", suggestAddressesHandler())
 	r.Get("/api/v1/bills", listBillsHandler(store))
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", firstPageHandler(store))
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
+	// Back-compat alias for older frontend/code paths. Returns the same
+	// page-level shape as /page; despite the historical name, this is no
+	// longer a generic Bundle endpoint.
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", billPageHandler(store))
 	r.Get("/api/v1/legislators", listLegislatorsHandler(store))
 	r.Get("/api/v1/legislators/lookup", lookupLegislatorsByAddressHandler(store))
 	r.Get("/api/v1/legislators/{slug}", getLegislatorHandler(store))
@@ -221,7 +225,7 @@ func bucketStatus(s string) string {
 // the frontend route uses (mirrored from apps/web's parseBillSlug).
 var billSlugRe = regexp.MustCompile(`^([A-Za-z]+)([0-9]+)$`)
 
-func firstPageHandler(store *db.Store) http.HandlerFunc {
+func billPageHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		biennium := chi.URLParam(req, "biennium")
 		slug := chi.URLParam(req, "billNumber")
@@ -241,7 +245,7 @@ func firstPageHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 
-		bundle, err := firstpage.BuildByBill(req.Context(), store, biennium, prefix, number)
+		page, err := firstpage.BuildBillPage(req.Context(), store, biennium, prefix, number)
 		if err != nil {
 			if errors.Is(err, firstpage.ErrBillNotFound) {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not ingested"})
@@ -250,7 +254,7 @@ func firstPageHandler(store *db.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, bundle)
+		writeJSON(w, http.StatusOK, page)
 	}
 }
 
@@ -302,8 +306,8 @@ func upper(s string) string {
 }
 
 // ---------------------------------------------------------------------------
-// Aggregation handlers — back the home/index pages so the frontend stops
-// fanning out one /first-page request per bill.
+// Aggregation handlers — back the home/index pages so the frontend avoids
+// fanning out one page-detail request per bill.
 // ---------------------------------------------------------------------------
 
 func listLegislatorsHandler(store *db.Store) http.HandlerFunc {
@@ -1003,14 +1007,14 @@ const (
 )
 
 type hearingAgendaItemResponse struct {
-	CSIAgendaItemID string                  `json:"csi_agenda_item_id"`
-	AgendaItemLabel string                  `json:"agenda_item_label"`
-	Biennium        string                  `json:"biennium"`
-	BillID          string                  `json:"bill_id"`
-	BillPrefix      string                  `json:"bill_prefix"`
-	BillNumber      int                     `json:"bill_number"`
-	TestifierCount  int                     `json:"testifier_count"`
-	TestifiedCount  int                     `json:"testified_count"`
+	CSIAgendaItemID string                    `json:"csi_agenda_item_id"`
+	AgendaItemLabel string                    `json:"agenda_item_label"`
+	Biennium        string                    `json:"biennium"`
+	BillID          string                    `json:"bill_id"`
+	BillPrefix      string                    `json:"bill_prefix"`
+	BillNumber      int                       `json:"bill_number"`
+	TestifierCount  int                       `json:"testifier_count"`
+	TestifiedCount  int                       `json:"testified_count"`
 	Section         *firstpage.HearingSection `json:"section,omitempty"`
 }
 
@@ -1293,7 +1297,7 @@ func searchTranscriptsHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query().Get("q")
 
-		// Soft parsing — match the firstPageHandler style. Bad limit/offset
+		// Soft parsing — match the bill page handler style. Bad limit/offset
 		// values fall back to defaults rather than 400'ing.
 		limit := searchDefaultLimit
 		if v := req.URL.Query().Get("limit"); v != "" {

@@ -29,8 +29,7 @@ where things land, and how to debug a stuck or misbehaving run.
                        Next.js frontend at :3000
 ```
 
-The same Bundle JSON shape is produced by `firstpage.Build` regardless
-of which path populated the underlying Postgres rows.
+The public API now returns route-specific page objects assembled from Postgres. Legacy one-off demo tooling still uses the `firstpage.Build` Bundle shape for snapshot files.
 
 ## Legislative daily passes
 
@@ -382,8 +381,8 @@ All daily stages are safe to re-run. What changes:
   The raw response bytes are at `data/raw/<system>/<hash>` for inspection.
 - **Stuck rate limit?** `_session.json`'s per-bill durations. If they
   shoot up by 10x for a stretch, an upstream is throttling.
-- **Bundle doesn't render?** Hit
-  `http://localhost:8080/api/v1/bills/<biennium>/<slug>/first-page`
+- **Bill page doesn't render?** Hit
+  `http://localhost:8080/api/v1/bills/<biennium>/<slug>/page`
   directly. The frontend turns 404 into Next.js 404, but other errors
   are visible in the API response body.
 
