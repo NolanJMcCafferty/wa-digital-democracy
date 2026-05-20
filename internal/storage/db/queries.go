@@ -1406,6 +1406,7 @@ type OrganizationAppearance struct {
 	HearingID       int64
 	HearingTitle    string
 	CommitteeName   string
+	Chamber         string
 	MeetingDateTime time.Time
 	Position        string
 	TestifierCount  int
@@ -1435,6 +1436,7 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
        h.id,
        COALESCE(a.label, ''),
        h.committee_name,
+       COALESCE(h.chamber, ''),
        h.meeting_datetime,
        MAX(t.position::text) AS position,
        COUNT(t.id) AS testifier_count
@@ -1444,7 +1446,7 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
   LEFT JOIN bill   b ON b.id = a.bill_id
  WHERE t.normalized_org_id = $1
  GROUP BY b.biennium, b.bill_number, b.prefix, b.number,
-          a.csi_agenda_item_id, h.id, a.label, h.committee_name, h.meeting_datetime
+          a.csi_agenda_item_id, h.id, a.label, h.committee_name, h.chamber, h.meeting_datetime
  ORDER BY h.meeting_datetime DESC;`
 	rows, err := s.Pool.Query(ctx, q, organizationID)
 	if err != nil {
@@ -1458,7 +1460,7 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
 		var billNumber *int
 		if err := rows.Scan(&biennium, &billID, &prefix, &billNumber,
 			&a.CSIAgendaItemID, &a.HearingID, &a.HearingTitle,
-			&a.CommitteeName, &a.MeetingDateTime,
+			&a.CommitteeName, &a.Chamber, &a.MeetingDateTime,
 			&a.Position, &a.TestifierCount); err != nil {
 			return nil, fmt.Errorf("scan appearance: %w", err)
 		}
@@ -1483,7 +1485,7 @@ func (s *Store) GetOrganizationPublicContexts(ctx context.Context, organizationI
 	const q = `
 WITH ctx AS (
   SELECT 'lobbying_registration'::text AS context_type,
-         'pdc_lobbying_organization'::text AS source_kind,
+         m.source_kind::text AS source_kind,
          'PDC lobbying employer'::text AS source_label,
          pe.name AS source_name,
          NULLIF('Employer ID ' || pe.employer_id, '') AS detail,
@@ -1492,28 +1494,22 @@ WITH ctx AS (
          ''::text AS record_date,
          COALESCE(pe.last_employment_url, '') AS url,
          COALESCE(pe.source_record_id,0) AS source_record_id,
-         o.match_confidence::text AS match_confidence,
-         jsonb_build_array('organization.pdc_lobbyist_employer_id:' || pe.employer_id) AS evidence
-    FROM organization o
-    JOIN pdc_employer pe ON pe.employer_id = o.pdc_lobbyist_employer_id
-   WHERE o.id = $1
-  UNION ALL
-  SELECT 'lobbying_registration',
-         m.source_kind::text,
-         'PDC lobbying employer',
-         pe.name,
-         NULLIF('Employer ID ' || pe.employer_id, ''),
-         '',
-         CASE WHEN pe.last_employment_year ~ '^[0-9]+$' THEN pe.last_employment_year::int ELSE 0 END,
-         '',
-         COALESCE(pe.last_employment_url, ''),
-         COALESCE(pe.source_record_id,0),
-         m.match_confidence::text,
-         m.evidence
-    FROM reviewed_vendor_entity_match m
-    JOIN pdc_employer pe ON pe.employer_id = m.source_row_id
-   WHERE m.organization_id = $1
-     AND m.source_kind = 'pdc_lobbying_organization'
+         m.match_confidence::text AS match_confidence,
+         m.evidence AS evidence
+    FROM (
+      SELECT DISTINCT ON (source_row_id) *
+        FROM reviewed_vendor_entity_match
+       WHERE organization_id = $1
+         AND source_kind = 'pdc_lobbying_organization'
+       ORDER BY source_row_id, reviewed_at DESC
+    ) m
+    JOIN LATERAL (
+      SELECT *
+        FROM pdc_employer pe2
+       WHERE pe2.employer_id = m.source_row_id
+       ORDER BY pe2.last_employment_year DESC NULLS LAST, pe2.source_record_id DESC
+       LIMIT 1
+    ) pe ON TRUE
   UNION ALL
   SELECT 'state_contract',
          m.source_kind::text,
@@ -1617,11 +1613,13 @@ WITH ctx AS (
    WHERE m.organization_id = $1
      AND m.source_kind = 'federal_award_recipient'
 )
-SELECT context_type, source_kind, source_label, COALESCE(source_name, ''),
+SELECT DISTINCT ON (source_kind, source_record_id, source_name, detail)
+       context_type, source_kind, source_label, COALESCE(source_name, ''),
        COALESCE(detail, ''), amount, COALESCE(record_year, 0), record_date,
        url, source_record_id, match_confidence, evidence
   FROM ctx
- ORDER BY context_type, record_year DESC NULLS LAST, source_name
+ ORDER BY source_kind, source_record_id, source_name, detail,
+          context_type, record_year DESC NULLS LAST
  LIMIT 100;`
 	rows, err := s.Pool.Query(ctx, q, organizationID)
 	if err != nil {
@@ -2504,6 +2502,27 @@ RETURNING id;`
 }
 
 func (s *Store) ListVendorEntityMatchCandidates(ctx context.Context, sourceKind, decision string, limit int) ([]VendorEntityMatchCandidate, error) {
+	out, _, err := s.ListVendorEntityMatchCandidatesPage(ctx, sourceKind, decision, limit, 0)
+	return out, err
+}
+
+// ListVendorEntityMatchCandidatesPage returns a page of candidates plus the
+// total row count matching the same source_kind/decision filters. limit <= 0
+// falls back to 100; offset < 0 is clamped to 0.
+func (s *Store) ListVendorEntityMatchCandidatesPage(ctx context.Context, sourceKind, decision string, limit, offset int) ([]VendorEntityMatchCandidate, int, error) {
+	if offset < 0 {
+		offset = 0
+	}
+	const countQ = `
+SELECT COUNT(*)
+  FROM vendor_entity_match_candidate c
+  LEFT JOIN vendor_entity_match_decision d ON d.candidate_id = c.id
+ WHERE ($1 = '' OR c.source_kind::text = $1)
+   AND ($2 = '' OR COALESCE(d.decision::text, 'needs_review') = $2);`
+	var total int
+	if err := s.Pool.QueryRow(ctx, countQ, sourceKind, decision).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count vendor entity match candidates: %w", err)
+	}
 	const q = `
 SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
        COALESCE(c.source_dataset_id,''), COALESCE(c.source_row_id,''), c.source_name,
@@ -2516,10 +2535,11 @@ SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
  WHERE ($1 = '' OR c.source_kind::text = $1)
    AND ($2 = '' OR COALESCE(d.decision::text, 'needs_review') = $2)
  ORDER BY c.updated_at DESC, c.id DESC
- LIMIT CASE WHEN $3 > 0 THEN $3 ELSE 100 END;`
-	rows, err := s.Pool.Query(ctx, q, sourceKind, decision, limit)
+ LIMIT CASE WHEN $3 > 0 THEN $3 ELSE 100 END
+ OFFSET $4;`
+	rows, err := s.Pool.Query(ctx, q, sourceKind, decision, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("list vendor entity match candidates: %w", err)
+		return nil, 0, fmt.Errorf("list vendor entity match candidates: %w", err)
 	}
 	defer rows.Close()
 	out := []VendorEntityMatchCandidate{}
@@ -2530,14 +2550,17 @@ SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
 			&c.SourceDatasetID, &c.SourceRowID, &c.SourceName, &c.NormalizedName,
 			&c.OrganizationID, &c.CanonicalName, &c.CandidateConfidence,
 			&evidence, &c.SourceRecordID, &c.Decision, &c.ReviewedConfidence); err != nil {
-			return nil, fmt.Errorf("scan vendor entity match candidate: %w", err)
+			return nil, 0, fmt.Errorf("scan vendor entity match candidate: %w", err)
 		}
 		if len(evidence) > 0 {
 			_ = json.Unmarshal(evidence, &c.Evidence)
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
 }
 
 type EntityMatchTranscriptSegment struct {

@@ -52,7 +52,7 @@ function applyFilters(
 ): OrganizationListEntry[] {
   const q = filters.q?.toLowerCase();
   return organizations.filter((o) => {
-    if (o.matchConfidence !== "confirmed") {
+    if (!o.confirmed) {
       return false;
     }
     if (q) {

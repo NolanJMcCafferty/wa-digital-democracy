@@ -195,7 +195,7 @@ export type OrganizationListEntry = {
   slug: string;
   canonicalName: string;
   aliases: string[];
-  matchConfidence: Organization["match_confidence"];
+  confirmed: boolean;
   matchNotes?: string;
   testifierCount: number;
   positions: Record<Position, number>;
@@ -211,6 +211,7 @@ export type OrganizationPage = OrganizationListEntry & {
     hearingId?: number;
     hearingTitle: string;
     committeeName: string;
+    chamber?: string;
     meetingDatetime: string;
     position?: string;
     testifierCount: number;
@@ -229,7 +230,6 @@ export type PublicRecordContext = {
   recordDate?: string;
   url?: string;
   sourceRecordId?: number;
-  matchConfidence: Organization["match_confidence"];
   evidence: string[];
 };
 
@@ -778,6 +778,7 @@ type orgDetailResponse = orgListItem & {
     hearing_id?: number;
     hearing_title: string;
     committee_name: string;
+    chamber?: string;
     meeting_datetime: string;
     position?: string;
     testifier_count: number;
@@ -803,7 +804,7 @@ function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
     slug: o.slug,
     canonicalName: o.canonical_name,
     aliases: o.aliases ?? [],
-    matchConfidence: o.match_confidence,
+    confirmed: o.match_confidence === "confirmed",
     matchNotes: o.match_notes,
     testifierCount: o.testifier_count,
     positions: o.positions,
@@ -840,6 +841,7 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       hearingId: a.hearing_id,
       hearingTitle: a.hearing_title,
       committeeName: a.committee_name,
+      chamber: a.chamber,
       meetingDatetime: a.meeting_datetime,
       position: a.position,
       testifierCount: a.testifier_count,
@@ -855,7 +857,6 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       recordDate: c.record_date,
       url: c.url,
       sourceRecordId: c.source_record_id,
-      matchConfidence: c.match_confidence,
       evidence: c.evidence ?? [],
     })),
   };
@@ -1056,31 +1057,45 @@ export type EntityMatchCandidate = {
 
 export type EntityMatchDecision = "confirmed" | "rejected" | "needs_review";
 
-export async function listEntityMatchCandidates(opts: { sourceKind?: string; decision?: string; limit?: number } = {}): Promise<EntityMatchCandidate[]> {
+export type EntityMatchCandidatesPage = {
+  candidates: EntityMatchCandidate[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export async function listEntityMatchCandidates(
+  opts: { sourceKind?: string; decision?: string; limit?: number; offset?: number } = {},
+): Promise<EntityMatchCandidatesPage> {
   const params = new URLSearchParams();
   if (opts.sourceKind) params.set("source_kind", opts.sourceKind);
   if (opts.decision) params.set("decision", opts.decision);
   if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.offset) params.set("offset", String(opts.offset));
   const url = `${API_BASE}/api/v1/admin/review/entities/candidates${params.toString() ? `?${params}` : ""}`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`listEntityMatchCandidates returned ${res.status}`);
   }
-  const body = (await res.json()) as { candidates: EntityMatchCandidate[] };
-  return body.candidates ?? [];
+  const body = (await res.json()) as Partial<EntityMatchCandidatesPage>;
+  return {
+    candidates: body.candidates ?? [],
+    total: body.total ?? 0,
+    limit: body.limit ?? opts.limit ?? 50,
+    offset: body.offset ?? opts.offset ?? 0,
+  };
 }
 
 export async function decideEntityMatchCandidate(
   candidateId: number | string,
   decision: EntityMatchDecision,
-  confidence: string,
   reviewer: string,
   notes: string,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/admin/review/entities/candidates/${encodeURIComponent(String(candidateId))}/decide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision, confidence, reviewer, notes }),
+    body: JSON.stringify({ decision, reviewer, notes }),
     cache: "no-store",
   });
   if (!res.ok) {

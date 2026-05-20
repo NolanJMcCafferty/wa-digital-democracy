@@ -935,6 +935,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		HearingID       int64     `json:"hearing_id"`
 		HearingTitle    string    `json:"hearing_title"`
 		CommitteeName   string    `json:"committee_name"`
+		Chamber         string    `json:"chamber,omitempty"`
 		MeetingDateTime time.Time `json:"meeting_datetime"`
 		Position        string    `json:"position,omitempty"`
 		TestifierCount  int       `json:"testifier_count"`
@@ -1001,6 +1002,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				HearingID:       a.HearingID,
 				HearingTitle:    a.HearingTitle,
 				CommitteeName:   a.CommitteeName,
+				Chamber:         a.Chamber,
 				MeetingDateTime: a.MeetingDateTime,
 				Position:        a.Position,
 				TestifierCount:  a.TestifierCount,
@@ -1553,13 +1555,22 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 		q := req.URL.Query()
 		sourceKind := strings.TrimSpace(q.Get("source_kind"))
 		decision := strings.TrimSpace(q.Get("decision"))
-		limit := 100
+		limit := 50
 		if v := q.Get("limit"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				limit = n
 			}
 		}
-		candidates, err := store.ListVendorEntityMatchCandidates(req.Context(), sourceKind, decision, limit)
+		if limit > 200 {
+			limit = 200
+		}
+		offset := 0
+		if v := q.Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+		candidates, total, err := store.ListVendorEntityMatchCandidatesPage(req.Context(), sourceKind, decision, limit, offset)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -1607,7 +1618,12 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 			}
 			out = append(out, it)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"candidates": out})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"candidates": out,
+			"total":      total,
+			"limit":      limit,
+			"offset":     offset,
+		})
 	}
 }
 

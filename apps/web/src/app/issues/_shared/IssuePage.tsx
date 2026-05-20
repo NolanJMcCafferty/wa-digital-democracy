@@ -22,13 +22,6 @@ import {
   parseOrganizationFilters,
 } from "../../organizations/OrganizationSearchResults";
 
-const CONFIDENCE_RANK: Record<OrganizationListEntry["matchConfidence"], number> = {
-  confirmed: 4,
-  probable: 3,
-  possible: 2,
-  unmatched: 1,
-};
-
 export type IssuePageConfig = {
   slug: string;
   title: string;
@@ -148,16 +141,13 @@ function issueOrganizations(billPages: BillPage[]): OrganizationListEntry[] {
         };
         const position = normalizePosition(org.testifier_position);
         positions[position] += org.testifier_count ?? 0;
-        const matchConfidence =
-          existing && CONFIDENCE_RANK[existing.matchConfidence] >= CONFIDENCE_RANK[org.match_confidence]
-            ? existing.matchConfidence
-            : org.match_confidence;
+        const confirmed = (existing?.confirmed ?? false) || org.match_confidence === "confirmed";
 
         orgs.set(org.canonical_name, {
           slug: existing?.slug ?? slugify(org.canonical_name),
           canonicalName: org.canonical_name,
           aliases: Array.from(aliases).filter((a) => a !== org.canonical_name).sort(),
-          matchConfidence,
+          confirmed,
           matchNotes: existing?.matchNotes ?? org.match_notes,
           testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
           positions,

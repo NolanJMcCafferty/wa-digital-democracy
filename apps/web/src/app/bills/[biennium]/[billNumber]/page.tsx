@@ -1,10 +1,14 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadBillPage } from "@/lib/api";
+import { loadBillPage, type HearingPage } from "@/lib/api";
 import type { HearingSection } from "@/lib/pageTypes";
 import { BillSnapshot } from "./_sections/BillSnapshot";
 import { StatusTimeline } from "./_sections/StatusTimeline";
-import { formatDateTime } from "@/lib/format";
+import {
+  HearingSearchResults,
+  parseHearingFilters,
+  type RawHearingSearchParams,
+} from "@/app/hearings/HearingSearchResults";
+import { filterHearings } from "@/app/hearings/filterHearings";
 
 type Params = { biennium: string; billNumber: string };
 
@@ -17,8 +21,10 @@ function parseBillSlug(slug: string): { prefix: string; number: number } | null 
 
 export default async function BillHearingPage({
   params,
+  searchParams,
 }: {
   params: Promise<Params>;
+  searchParams: Promise<RawHearingSearchParams>;
 }) {
   const { biennium, billNumber: slug } = await params;
   const parsed = parseBillSlug(slug);
@@ -27,13 +33,18 @@ export default async function BillHearingPage({
   const page = await loadBillPage(biennium, parsed.prefix, parsed.number);
   if (!page) notFound();
 
+  const allHearings = billHearingsToHearings(page.bill, page.hearings);
+  const filters = parseHearingFilters(await searchParams);
+  const { hearings, total, offset, facets } = filterHearings(allHearings, filters);
+  const basePath = `/bills/${biennium}/${slug}`;
+
   return (
     <article className="space-y-12">
       <BillSnapshot bill={page.bill} />
 
       <StatusTimeline status={page.status} />
 
-      {page.hearings.length > 0 ? (
+      {allHearings.length > 0 ? (
         <section aria-labelledby="hearings-heading" className="space-y-4">
           <h2
             id="hearings-heading"
@@ -41,58 +52,54 @@ export default async function BillHearingPage({
           >
             Hearings
           </h2>
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {page.hearings.map((s) => (
-              <HearingSummaryCard
-                key={s.hearing.csi_agenda_item_id ?? s.hearing.meeting_datetime}
-                section={s}
-              />
-            ))}
-          </ul>
+          <HearingSearchResults
+            basePath={basePath}
+            filters={filters}
+            hearings={hearings}
+            total={total}
+            offset={offset}
+            facets={facets}
+            hiddenFilters={["bill", "speaker", "biennium", "topic"]}
+          />
         </section>
       ) : null}
     </article>
   );
 }
 
-function HearingSummaryCard({ section }: { section: HearingSection }) {
-  const { hearing, testifiers } = section;
-  const testifiedCount = testifiers.filter((t) => t.testified).length;
-  const href = hearing.hearing_id ? `/hearings/${hearing.hearing_id}` : null;
-  const card = (
-    <div className="flex h-full flex-col gap-2 rounded-lg border border-stone-300 bg-white p-4 transition hover:border-stone-500 hover:shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <span className="font-semibold text-stone-900">
-          {hearing.committee_name}
-        </span>
-        {hearing.committee_acronym ? (
-          <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs uppercase tracking-wider text-stone-600">
-            {hearing.committee_acronym}
-          </span>
-        ) : null}
-      </div>
-      <div className="text-sm text-stone-600 tabular-nums">
-        {formatDateTime(hearing.meeting_datetime)}
-      </div>
-      {hearing.agenda_item_label ? (
-        <div className="text-sm text-stone-700">{hearing.agenda_item_label}</div>
-      ) : null}
-      <div className="mt-auto flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
-        <span>{testifiers.length.toLocaleString()} signed in</span>
-        <span>{testifiedCount.toLocaleString()} testified</span>
-      </div>
-    </div>
-  );
-
-  return (
-    <li>
-      {href ? (
-        <Link href={href} className="block h-full text-stone-900">
-          {card}
-        </Link>
-      ) : (
-        card
-      )}
-    </li>
-  );
+function billHearingsToHearings(
+  bill: { biennium: string; bill_id: string },
+  sections: HearingSection[],
+): HearingPage[] {
+  const billPrefixMatch = bill.bill_id.match(/^([A-Z]+)([0-9]+)$/i);
+  const billPrefix = billPrefixMatch ? billPrefixMatch[1].toUpperCase() : "";
+  const billNumber = billPrefixMatch ? parseInt(billPrefixMatch[2], 10) : 0;
+  return sections.map((s) => {
+    const { hearing, testifiers } = s;
+    const date = new Date(hearing.meeting_datetime);
+    const title = `${hearing.committee_name} · ${date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })}`;
+    return {
+      hearingId: hearing.hearing_id ?? 0,
+      title,
+      committeeName: hearing.committee_name,
+      chamber: hearing.chamber,
+      meetingDatetime: hearing.meeting_datetime,
+      agendaItems: [
+        {
+          csiAgendaItemId: hearing.csi_agenda_item_id ?? "",
+          agendaItemLabel: hearing.agenda_item_label ?? "",
+          biennium: bill.biennium,
+          billId: bill.bill_id,
+          billPrefix,
+          billNumber,
+          testifierCount: testifiers.length,
+          testifiedCount: testifiers.filter((t) => t.testified).length,
+        },
+      ],
+    };
+  });
 }

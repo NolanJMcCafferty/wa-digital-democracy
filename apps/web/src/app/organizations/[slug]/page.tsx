@@ -1,8 +1,12 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { listOrganizations, loadOrganizationPage } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
+import { listOrganizations, loadOrganizationPage, type HearingPage } from "@/lib/api";
 import type { Position } from "@/lib/pageTypes";
+import {
+  HearingSearchResults,
+  parseHearingFilters,
+  type RawHearingSearchParams,
+} from "@/app/hearings/HearingSearchResults";
+import { filterHearings } from "@/app/hearings/filterHearings";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
@@ -13,12 +17,18 @@ export async function generateStaticParams() {
 
 export default async function OrganizationPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<RawHearingSearchParams>;
 }) {
   const { slug } = await params;
   const org = await loadOrganizationPage(slug);
   if (!org) notFound();
+
+  const allHearings = appearancesToHearings(org.appearances);
+  const filters = parseHearingFilters(await searchParams);
+  const { hearings, total, offset, facets } = filterHearings(allHearings, filters);
 
   return (
     <article className="space-y-10">
@@ -35,13 +45,10 @@ export default async function OrganizationPage({
               Also known as: {org.aliases.join(", ")}
             </p>
           ) : null}
-          {org.matchNotes ? (
-            <p className="max-w-3xl text-stone-600">{org.matchNotes}</p>
-          ) : null}
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 text-sm">
+      <section className="grid grid-cols-3 gap-3 text-sm">
         <Metric label="Linked testifiers" value={org.testifierCount.toLocaleString()} />
         <Metric label="Appearances" value={org.appearances.length.toLocaleString()} />
         <Metric label="Public records" value={org.contexts.length.toLocaleString()} />
@@ -60,7 +67,7 @@ export default async function OrganizationPage({
           </div>
           <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
             {org.contexts.map((c, idx) => (
-              <li key={`${c.sourceKind}-${c.sourceRecordId ?? idx}-${c.sourceName}`} className="p-4">
+              <li key={`${c.sourceKind}-${c.sourceRecordId ?? "x"}-${idx}`} className="p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -116,41 +123,15 @@ export default async function OrganizationPage({
         <h2 id="appearances-heading" className="text-xl font-semibold text-stone-900">
           Hearing appearances
         </h2>
-        <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
-          {org.appearances.map((a) => {
-            const billSlug = `${a.billPrefix}${a.billNumber}`;
-            return (
-              <li key={`${a.billId}-${a.csiAgendaItemId}`} className="p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1">
-                    <Link
-                      href={`/bills/${a.biennium}/${billSlug}`}
-                      className="font-medium text-blue-700 underline hover:text-blue-900"
-                    >
-                      {a.billId} — {a.hearingTitle}
-                    </Link>
-                    <p className="text-sm text-stone-600">
-                      {a.committeeName} · {formatDateTime(a.meetingDatetime)}
-                    </p>
-                    <p className="text-xs text-stone-500">
-                      {a.testifierCount.toLocaleString()} linked testifier
-                      {a.testifierCount === 1 ? "" : "s"}
-                      {a.position ? ` · ${a.position}` : ""}
-                    </p>
-                  </div>
-                  {a.hearingId ? (
-                    <Link
-                      href={`/hearings/${a.hearingId}`}
-                      className="text-sm text-blue-700 underline hover:text-blue-900"
-                    >
-                      Hearing page →
-                    </Link>
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <HearingSearchResults
+          basePath={`/organizations/${slug}`}
+          filters={filters}
+          hearings={hearings}
+          total={total}
+          offset={offset}
+          facets={facets}
+          hiddenFilters={["speaker"]}
+        />
       </section>
 
     </article>
@@ -181,6 +162,46 @@ function contextLabel(contextType: string): string {
     default:
       return "Record";
   }
+}
+
+type OrgAppearance = NonNullable<Awaited<ReturnType<typeof loadOrganizationPage>>>["appearances"][number];
+
+function appearancesToHearings(appearances: OrgAppearance[]): HearingPage[] {
+  const byHearing = new Map<number, HearingPage>();
+  for (const a of appearances) {
+    if (!a.hearingId) continue;
+    let h = byHearing.get(a.hearingId);
+    if (!h) {
+      const date = new Date(a.meetingDatetime);
+      const title = `${a.committeeName} · ${date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}`;
+      h = {
+        hearingId: a.hearingId,
+        title,
+        committeeName: a.committeeName,
+        chamber: a.chamber ?? "",
+        meetingDatetime: a.meetingDatetime,
+        agendaItems: [],
+      };
+      byHearing.set(a.hearingId, h);
+    }
+    h.agendaItems.push({
+      csiAgendaItemId: a.csiAgendaItemId ?? "",
+      agendaItemLabel: a.hearingTitle,
+      biennium: a.biennium,
+      billId: a.billId,
+      billPrefix: a.billPrefix,
+      billNumber: a.billNumber,
+      testifierCount: a.testifierCount,
+      testifiedCount: 0,
+    });
+  }
+  return Array.from(byHearing.values()).sort((a, b) =>
+    b.meetingDatetime.localeCompare(a.meetingDatetime),
+  );
 }
 
 function formatAmount(amount?: string): string {
