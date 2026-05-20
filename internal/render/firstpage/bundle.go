@@ -1,6 +1,6 @@
 // Package firstpage assembles bill page payloads and legacy first-page
 // snapshot JSON from Postgres state. New live API routes should expose
-// explicit page objects; Bundle remains for the curated snapshot path.
+// explicit page objects; LegacySnapshot remains for the curated snapshot path.
 package firstpage
 
 import (
@@ -17,13 +17,10 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// Bundle is the JSON payload Phase 5 renders.
-//
-// Hearing-dependent sections (Hearing, Testifiers, Transcript, Organizations)
-// are pointer/optional because metadata-only ingest (`wa-dd ingest-session`)
-// produces bills without any agenda_item rows. The frontend hides those
-// sections when absent.
-type Bundle struct {
+// LegacySnapshot is the old curated-demo JSON payload written by
+// `wa-dd build-bundle`. Live API routes should return page-specific structs
+// such as BillPage and HearingSection instead.
+type LegacySnapshot struct {
 	GeneratedAt time.Time `json:"generated_at"`
 	Bill        Bill      `json:"bill"`
 	Status      Status    `json:"status"`
@@ -141,8 +138,7 @@ type Source struct {
 }
 
 // BillPage is the page-level response shape for the bill detail route.
-// Unlike Bundle, it does not carry legacy top-level hearing mirrors; the
-// page has bill-level fields plus explicit per-hearing sections.
+// It has bill-level fields plus explicit per-hearing sections.
 type BillPage struct {
 	GeneratedAt      time.Time        `json:"generated_at"`
 	Bill             Bill             `json:"bill"`
@@ -154,55 +150,128 @@ type BillPage struct {
 
 // Build assembles a legacy snapshot payload for the configured demo from Postgres state.
 // Requires a CSI agenda item id on the demo — this path is for the curated
-// hearing-bound view. For metadata-only bills (no agenda item), call
-// BuildByBill instead.
-func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Bundle, error) {
-	// Initialize collection fields to non-nil empty slices so JSON serializes
-	// to [] rather than null when a section has no data —
-	// the frontend treats these as arrays unconditionally.
-	b := &Bundle{
-		GeneratedAt:   time.Now().UTC(),
-		Testifiers:    []Testifier{},
-		Organizations: []Organization{},
-		Sources:       []Source{},
-	}
-
-	if err := loadBill(ctx, store, demo, b); err != nil {
+// hearing-bound snapshot export. Live HTTP callers should use page-level
+// builders instead.
+func Build(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*LegacySnapshot, error) {
+	bill, status, err := loadBill(ctx, store, demo)
+	if err != nil {
 		return nil, fmt.Errorf("bill: %w", err)
 	}
-	if err := loadHearingAndAgenda(ctx, store, demo, b); err != nil {
+	hearing, err := loadHearingAndAgenda(ctx, store, demo)
+	if err != nil {
 		return nil, fmt.Errorf("hearing: %w", err)
 	}
-	if err := loadTestifiers(ctx, store, demo, b); err != nil {
+	testifiers, err := loadTestifiers(ctx, store, demo)
+	if err != nil {
 		return nil, fmt.Errorf("testifiers: %w", err)
 	}
-	if err := loadTranscript(ctx, store, demo, b); err != nil {
+	transcript, err := loadTranscript(ctx, store, demo)
+	if err != nil {
 		return nil, fmt.Errorf("transcript: %w", err)
 	}
-	if err := loadOrganizations(ctx, store, demo, b); err != nil {
+	organizations, err := loadOrganizations(ctx, store, demo)
+	if err != nil {
 		return nil, fmt.Errorf("organizations: %w", err)
 	}
-	if err := loadSources(ctx, store, b); err != nil {
+	sources, err := loadSourcesForAgendaItems(ctx, store, []string{hearing.CSIAgendaItemID})
+	if err != nil {
 		return nil, fmt.Errorf("sources: %w", err)
 	}
 
-	b.KnownLimitations = computeLimitations(b)
-	return b, nil
+	snapshot := &LegacySnapshot{
+		GeneratedAt:   time.Now().UTC(),
+		Bill:          bill,
+		Status:        status,
+		Hearing:       &hearing,
+		Testifiers:    testifiers,
+		Transcript:    transcript,
+		Organizations: organizations,
+		Sources:       sources,
+	}
+	snapshot.KnownLimitations = computeLegacySnapshotLimitations(snapshot)
+	return snapshot, nil
 }
 
-// BuildByBill assembles the legacy snapshot shape for callers that still need
-// it. New bill-detail HTTP callers should use BuildBillPage.
-func BuildByBill(
+// BuildBillPage assembles the page-level bill detail response for any bill row
+// in Postgres. Metadata-only bills return snapshot/status/sources with an empty
+// hearings array; enriched bills return one HearingSection per agenda item.
+func BuildBillPage(
 	ctx context.Context,
 	store *db.Store,
 	biennium, prefix string,
 	number int,
-) (*Bundle, error) {
-	page, err := BuildBillPage(ctx, store, biennium, prefix, number)
-	if err != nil {
-		return nil, err
+) (*BillPage, error) {
+	demo := &config.SelectedDemo{
+		Biennium:   biennium,
+		BillPrefix: prefix,
+		BillNumber: number,
 	}
-	b := &Bundle{
+	bill, status, err := loadBill(ctx, store, demo)
+	if err != nil {
+		if errors.Is(err, ErrBillNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("bill: %w", err)
+	}
+
+	demos, err := LookupAllSelectedDemos(ctx, store, biennium, prefix, number)
+	if err != nil {
+		return nil, fmt.Errorf("hearing lookup: %w", err)
+	}
+	hearings := make([]HearingSection, 0, len(demos))
+	for _, demo := range demos {
+		section, err := BuildHearingSection(ctx, store, demo)
+		if err != nil {
+			return nil, err
+		}
+		hearings = append(hearings, *section)
+	}
+
+	sources, err := loadSourcesForSections(ctx, store, hearings)
+	if err != nil {
+		return nil, fmt.Errorf("sources: %w", err)
+	}
+	page := &BillPage{
+		GeneratedAt: time.Now().UTC(),
+		Bill:        bill,
+		Status:      status,
+		Hearings:    hearings,
+		Sources:     sources,
+	}
+	page.KnownLimitations = computeBillPageLimitations(page)
+	return page, nil
+}
+
+// BuildHearingSection returns the page section tied to one agenda_item. The
+// hearing-detail handler reuses this for each agenda item rendered under a
+// committee hearing.
+func BuildHearingSection(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*HearingSection, error) {
+	hearing, err := loadHearingAndAgenda(ctx, store, demo)
+	if err != nil {
+		return nil, fmt.Errorf("hearing: %w", err)
+	}
+	testifiers, err := loadTestifiers(ctx, store, demo)
+	if err != nil {
+		return nil, fmt.Errorf("testifiers: %w", err)
+	}
+	transcript, err := loadTranscript(ctx, store, demo)
+	if err != nil {
+		return nil, fmt.Errorf("transcript: %w", err)
+	}
+	organizations, err := loadOrganizations(ctx, store, demo)
+	if err != nil {
+		return nil, fmt.Errorf("organizations: %w", err)
+	}
+	return &HearingSection{
+		Hearing:       hearing,
+		Testifiers:    testifiers,
+		Transcript:    transcript,
+		Organizations: organizations,
+	}, nil
+}
+
+func legacySnapshotFromBillPage(page *BillPage) *LegacySnapshot {
+	snapshot := &LegacySnapshot{
 		GeneratedAt:      page.GeneratedAt,
 		Bill:             page.Bill,
 		Status:           page.Status,
@@ -215,112 +284,15 @@ func BuildByBill(
 	if len(page.Hearings) > 0 {
 		first := page.Hearings[0]
 		hearingCopy := first.Hearing
-		b.Hearing = &hearingCopy
-		b.Testifiers = first.Testifiers
-		b.Transcript = first.Transcript
-		b.Organizations = first.Organizations
+		snapshot.Hearing = &hearingCopy
+		snapshot.Testifiers = first.Testifiers
+		snapshot.Transcript = first.Transcript
+		snapshot.Organizations = first.Organizations
 	}
-	return b, nil
+	return snapshot
 }
 
-// BuildBillPage assembles the page-level bill detail response for any bill row
-// in Postgres. Metadata-only bills return snapshot/status/sources with an empty
-// hearings array; enriched bills return one HearingSection per agenda item.
-func BuildBillPage(
-	ctx context.Context,
-	store *db.Store,
-	biennium, prefix string,
-	number int,
-) (*BillPage, error) {
-	b := &Bundle{
-		GeneratedAt:   time.Now().UTC(),
-		Testifiers:    []Testifier{},
-		Organizations: []Organization{},
-		Sources:       []Source{},
-	}
-
-	demo := &config.SelectedDemo{
-		Biennium:   biennium,
-		BillPrefix: prefix,
-		BillNumber: number,
-	}
-	if err := loadBill(ctx, store, demo, b); err != nil {
-		if errors.Is(err, ErrBillNotFound) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("bill: %w", err)
-	}
-
-	demos, err := LookupAllSelectedDemos(ctx, store, biennium, prefix, number)
-	if err != nil {
-		return nil, fmt.Errorf("hearing lookup: %w", err)
-	}
-	for _, demo := range demos {
-		section, err := BuildHearingSection(ctx, store, demo)
-		if err != nil {
-			return nil, err
-		}
-		b.Hearings = append(b.Hearings, *section)
-	}
-
-	if len(b.Hearings) > 0 {
-		// Populate the legacy mirror fields so the existing source/limitation
-		// helpers can run unchanged while BillPage stays clean at the boundary.
-		first := b.Hearings[0]
-		hearingCopy := first.Hearing
-		b.Hearing = &hearingCopy
-		b.Testifiers = first.Testifiers
-		b.Transcript = first.Transcript
-		b.Organizations = first.Organizations
-	}
-	if err := loadSources(ctx, store, b); err != nil {
-		return nil, fmt.Errorf("sources: %w", err)
-	}
-	b.KnownLimitations = computeLimitations(b)
-
-	return &BillPage{
-		GeneratedAt:      b.GeneratedAt,
-		Bill:             b.Bill,
-		Status:           b.Status,
-		Hearings:         b.Hearings,
-		Sources:          b.Sources,
-		KnownLimitations: b.KnownLimitations,
-	}, nil
-}
-
-// BuildHearingSection runs the per-hearing loaders against a scratch
-// scratch payload and pulls the resulting fields into a HearingSection. Exported
-// so the hearing-detail handler can reuse it for the per-agenda-item
-// blocks rendered on /hearings/{id}.
-func BuildHearingSection(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*HearingSection, error) {
-	scratch := &Bundle{
-		Testifiers:    []Testifier{},
-		Organizations: []Organization{},
-	}
-	if err := loadHearingAndAgenda(ctx, store, demo, scratch); err != nil {
-		return nil, fmt.Errorf("hearing: %w", err)
-	}
-	if err := loadTestifiers(ctx, store, demo, scratch); err != nil {
-		return nil, fmt.Errorf("testifiers: %w", err)
-	}
-	if err := loadTranscript(ctx, store, demo, scratch); err != nil {
-		return nil, fmt.Errorf("transcript: %w", err)
-	}
-	if err := loadOrganizations(ctx, store, demo, scratch); err != nil {
-		return nil, fmt.Errorf("organizations: %w", err)
-	}
-	section := &HearingSection{
-		Testifiers:    scratch.Testifiers,
-		Transcript:    scratch.Transcript,
-		Organizations: scratch.Organizations,
-	}
-	if scratch.Hearing != nil {
-		section.Hearing = *scratch.Hearing
-	}
-	return section, nil
-}
-
-func loadBill(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
+func loadBill(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (Bill, Status, error) {
 	const q = `
 SELECT id, biennium, bill_number, title, description, chamber_origin,
        current_status, status_date, official_url
@@ -340,12 +312,12 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		&currentStatus, &statusDate, &officialURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("%w: %s in %s", ErrBillNotFound, demo.BillID(), demo.Biennium)
+		return Bill{}, Status{}, fmt.Errorf("%w: %s in %s", ErrBillNotFound, demo.BillID(), demo.Biennium)
 	}
 	if err != nil {
-		return err
+		return Bill{}, Status{}, err
 	}
-	b.Bill = Bill{
+	bill := Bill{
 		Biennium:      biennium,
 		BillID:        billNumber,
 		Title:         deref(title),
@@ -353,7 +325,7 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		ChamberOrigin: deref(chamberOrigin),
 		OfficialURL:   deref(officialURL),
 	}
-	b.Status = Status{
+	status := Status{
 		Current:    deref(currentStatus),
 		StatusDate: statusDate,
 	}
@@ -367,7 +339,7 @@ SELECT l.name, l.chamber, bs.sponsor_type, COALESCE(l.lws_sponsor_id, '')
  ORDER BY CASE bs.sponsor_type WHEN 'Primary' THEN 0 ELSE 1 END, l.name;`
 	rows, err := store.Pool.Query(ctx, sponsorQ, billRowID)
 	if err != nil {
-		return err
+		return Bill{}, Status{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -375,11 +347,14 @@ SELECT l.name, l.chamber, bs.sponsor_type, COALESCE(l.lws_sponsor_id, '')
 		var ch *string
 		var lwsSponsorID string
 		if err := rows.Scan(&s.Name, &ch, &s.SponsorType, &lwsSponsorID); err != nil {
-			return err
+			return Bill{}, Status{}, err
 		}
 		s.Chamber = deref(ch)
 		s.PhotoURL, s.ThumbnailURL = legislatorPhotoURLs(lwsSponsorID)
-		b.Bill.Sponsors = append(b.Bill.Sponsors, s)
+		bill.Sponsors = append(bill.Sponsors, s)
+	}
+	if err := rows.Err(); err != nil {
+		return Bill{}, Status{}, err
 	}
 
 	// Status timeline.
@@ -388,20 +363,20 @@ SELECT action_date, history_line FROM bill_status_change
  WHERE bill_id = $1 ORDER BY action_date ASC, id ASC;`
 	rows2, err := store.Pool.Query(ctx, tlQ, billRowID)
 	if err != nil {
-		return err
+		return Bill{}, Status{}, err
 	}
 	defer rows2.Close()
 	for rows2.Next() {
 		var e StatusEntry
 		if err := rows2.Scan(&e.ActionDate, &e.HistoryLine); err != nil {
-			return err
+			return Bill{}, Status{}, err
 		}
-		b.Status.Timeline = append(b.Status.Timeline, e)
+		status.Timeline = append(status.Timeline, e)
 	}
-	return rows2.Err()
+	return bill, status, rows2.Err()
 }
 
-func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
+func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (Hearing, error) {
 	const q = `
 SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
        h.location, h.official_agenda_url, h.tvw_url, h.tvw_event_id,
@@ -424,12 +399,12 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 		&label, &csiAID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("no agenda_item row for csi_agenda_item_id=%s", demo.Agenda.CSIAgendaItemID)
+		return Hearing{}, fmt.Errorf("no agenda_item row for csi_agenda_item_id=%s", demo.Agenda.CSIAgendaItemID)
 	}
 	if err != nil {
-		return err
+		return Hearing{}, err
 	}
-	b.Hearing = &Hearing{
+	return Hearing{
 		HearingID:         hearingID,
 		CommitteeName:     commName,
 		CommitteeAcronym:  deref(commAcronym),
@@ -441,11 +416,10 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 		TVWEventID:        deref(tvwEventID),
 		AgendaItemLabel:   label,
 		CSIAgendaItemID:   csiAID,
-	}
-	return nil
+	}, nil
 }
 
-func loadTestifiers(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
+func loadTestifiers(ctx context.Context, store *db.Store, demo *config.SelectedDemo) ([]Testifier, error) {
 	const q = `
 SELECT t.raw_name, t.raw_organization, t.position, t.testified,
        t.time_signed_in, t.normalized_org_id
@@ -458,9 +432,10 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
    t.raw_name;`
 	rows, err := store.Pool.Query(ctx, q, demo.Agenda.CSIAgendaItemID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
+	out := []Testifier{}
 	for rows.Next() {
 		var (
 			t        Testifier
@@ -469,17 +444,17 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 			orgID    *int64
 		)
 		if err := rows.Scan(&t.RawName, &rawOrg, &t.Position, &t.Testified, &signedAt, &orgID); err != nil {
-			return err
+			return nil, err
 		}
 		t.RawOrganization = deref(rawOrg)
 		t.TimeSignedIn = signedAt
 		t.OrganizationID = orgID
-		b.Testifiers = append(b.Testifiers, t)
+		out = append(out, t)
 	}
-	return rows.Err()
+	return out, rows.Err()
 }
 
-func loadTranscript(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
+func loadTranscript(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*Transcript, error) {
 	// Caption URL + agenda-bound segment range.
 	const headQ = `
 SELECT te.caption_url,
@@ -498,21 +473,20 @@ SELECT te.caption_url,
 	)
 	err := store.Pool.QueryRow(ctx, headQ, demo.Agenda.CSIAgendaItemID).Scan(&captionURL, &startMS, &endMS)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil // no transcript yet — render with empty section
+		return nil, nil // no transcript yet — render with empty section
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	b.Transcript = &Transcript{}
-	b.Transcript.CaptionURL = deref(captionURL)
+	tr := &Transcript{CaptionURL: deref(captionURL)}
 	if startMS != nil {
-		b.Transcript.BillSegmentStart = *startMS
+		tr.BillSegmentStart = *startMS
 	}
 	if endMS != nil {
-		b.Transcript.BillSegmentEnd = *endMS
+		tr.BillSegmentEnd = *endMS
 	}
-	if b.Transcript.BillSegmentEnd <= b.Transcript.BillSegmentStart {
-		return nil
+	if tr.BillSegmentEnd <= tr.BillSegmentStart {
+		return tr, nil
 	}
 	// Read the windows that SegmentTranscript decided on, rather than
 	// re-deriving them in SQL with a different gap threshold. The
@@ -521,18 +495,18 @@ SELECT te.caption_url,
 	// only one of them split a span.
 	stored, err := store.ListAgendaItemWindowsByAgendaItem(ctx, demo.Agenda.CSIAgendaItemID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, w := range stored {
-		b.Transcript.Windows = append(b.Transcript.Windows, TranscriptWindow{
+		tr.Windows = append(tr.Windows, TranscriptWindow{
 			StartMS: w.StartMS,
 			EndMS:   w.EndMS,
 		})
 	}
-	if len(b.Transcript.Windows) == 0 && startMS != nil && endMS != nil {
+	if len(tr.Windows) == 0 && startMS != nil && endMS != nil {
 		// Fallback for hearings ingested before the persisted-window
 		// migration: synthesize a single window from the head bounds.
-		b.Transcript.Windows = append(b.Transcript.Windows, TranscriptWindow{StartMS: *startMS, EndMS: *endMS})
+		tr.Windows = append(tr.Windows, TranscriptWindow{StartMS: *startMS, EndMS: *endMS})
 	}
 
 	// Pull segments in all bill discussion windows.
@@ -544,24 +518,24 @@ SELECT ts.start_ms, ts.end_ms, ts.text, ts.speaker_label, ts.speaker_confidence:
  ORDER BY ts.start_ms ASC;`
 	rows, err := store.Pool.Query(ctx, segQ, demo.Agenda.CSIAgendaItemID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			s     TranscriptSegment
+			seg   TranscriptSegment
 			label *string
 		)
-		if err := rows.Scan(&s.StartMS, &s.EndMS, &s.Text, &label, &s.SpeakerConfidence); err != nil {
-			return err
+		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &label, &seg.SpeakerConfidence); err != nil {
+			return nil, err
 		}
-		s.SpeakerLabel = deref(label)
-		b.Transcript.Segments = append(b.Transcript.Segments, s)
+		seg.SpeakerLabel = deref(label)
+		tr.Segments = append(tr.Segments, seg)
 	}
-	return rows.Err()
+	return tr, rows.Err()
 }
 
-func loadOrganizations(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
+func loadOrganizations(ctx context.Context, store *db.Store, demo *config.SelectedDemo) ([]Organization, error) {
 	const q = `
 SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_notes,
        MIN(t.position::text) AS pos,
@@ -573,9 +547,10 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
  GROUP BY o.id;`
 	rows, err := store.Pool.Query(ctx, q, demo.Agenda.CSIAgendaItemID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
+	out := []Organization{}
 	for rows.Next() {
 		var (
 			o     Organization
@@ -585,38 +560,35 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
 			nTest int
 		)
 		if err := rows.Scan(&id, &o.CanonicalName, &o.Aliases, &o.MatchConfidence, &notes, &pos, &nTest); err != nil {
-			return err
+			return nil, err
 		}
 		o.MatchNotes = deref(notes)
 		o.TestifierPosition = deref(pos)
 		o.TestifierCount = nTest
-		b.Organizations = append(b.Organizations, o)
+		out = append(out, o)
 	}
-	return rows.Err()
+	return out, rows.Err()
 }
 
-// loadSources surfaces every distinct source_record we touched while
-// building this page (joined via the ids attached to bill, hearing,
-// agenda_item, testifier, tvw_event, and transcript_segment).
+func loadSourcesForSections(ctx context.Context, store *db.Store, sections []HearingSection) ([]Source, error) {
+	csiIDs := make([]string, 0, len(sections))
+	for _, section := range sections {
+		if section.Hearing.CSIAgendaItemID != "" {
+			csiIDs = append(csiIDs, section.Hearing.CSIAgendaItemID)
+		}
+	}
+	return loadSourcesForAgendaItems(ctx, store, csiIDs)
+}
+
+// loadSourcesForAgendaItems surfaces every distinct source_record touched by
+// the rendered agenda items (joined via bill, hearing, agenda_item, testifier,
+// tvw_event, transcript_segment, and bill_status_change).
 //
 // Per the wiki: "every public fact needs provenance" — the source panel
 // is part of the product, not engineering metadata.
-func loadSources(ctx context.Context, store *db.Store, b *Bundle) error {
-	// Collect every CSI agenda item id we're rendering on this page so the
-	// source panel reflects provenance for all hearings, not just the most
-	// recent one.
-	var csiIDs []string
-	if len(b.Hearings) > 0 {
-		for _, h := range b.Hearings {
-			if h.Hearing.CSIAgendaItemID != "" {
-				csiIDs = append(csiIDs, h.Hearing.CSIAgendaItemID)
-			}
-		}
-	} else if b.Hearing != nil && b.Hearing.CSIAgendaItemID != "" {
-		csiIDs = append(csiIDs, b.Hearing.CSIAgendaItemID)
-	}
+func loadSourcesForAgendaItems(ctx context.Context, store *db.Store, csiIDs []string) ([]Source, error) {
 	if len(csiIDs) == 0 {
-		return nil
+		return []Source{}, nil
 	}
 	const q = `
 SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_at
@@ -633,42 +605,70 @@ SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_
  ORDER BY sr.fetched_at DESC;`
 	rows, err := store.Pool.Query(ctx, q, csiIDs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
+	out := []Source{}
 	for rows.Next() {
 		var s Source
 		if err := rows.Scan(&s.System, &s.Endpoint, &s.URL, &s.FetchedAt); err != nil {
-			return err
+			return nil, err
 		}
-		b.Sources = append(b.Sources, s)
+		out = append(out, s)
 	}
-	return rows.Err()
+	return out, rows.Err()
 }
 
-func computeLimitations(b *Bundle) []string {
+func computeLegacySnapshotLimitations(snapshot *LegacySnapshot) []string {
+	page := &BillPage{
+		Bill:    snapshot.Bill,
+		Status:  snapshot.Status,
+		Sources: snapshot.Sources,
+	}
+	if snapshot.Hearing != nil {
+		page.Hearings = []HearingSection{{
+			Hearing:       *snapshot.Hearing,
+			Testifiers:    snapshot.Testifiers,
+			Transcript:    snapshot.Transcript,
+			Organizations: snapshot.Organizations,
+		}}
+	}
+	return computeBillPageLimitations(page)
+}
+
+func computeBillPageLimitations(page *BillPage) []string {
 	var out []string
-	if len(b.Bill.Sponsors) == 0 {
+	if len(page.Bill.Sponsors) == 0 {
 		out = append(out, "Sponsors not yet ingested.")
 	}
-	if len(b.Status.Timeline) == 0 {
+	if len(page.Status.Timeline) == 0 {
 		out = append(out, "Status timeline not available — LWS may have returned no history changes.")
 	}
-	if b.Hearing == nil {
+	if len(page.Hearings) == 0 {
 		out = append(out, "No hearing has been ingested for this bill yet.")
 		return out
 	}
-	if b.Hearing.TVWEventID == "" {
-		out = append(out, "TVW event not linked to this hearing.")
-	}
-	if b.Transcript == nil || len(b.Transcript.Segments) == 0 {
-		if b.Transcript == nil || b.Transcript.CaptionURL == "" {
-			out = append(out, "No captions available for this hearing's TVW event.")
-		} else {
-			out = append(out, "No transcript segments matched this bill discussion (manual transcript_override may help).")
+	hasTVW := false
+	hasTranscriptSegments := false
+	hasOrganizations := false
+	for _, section := range page.Hearings {
+		if section.Hearing.TVWEventID != "" {
+			hasTVW = true
+		}
+		if section.Transcript != nil && len(section.Transcript.Segments) > 0 {
+			hasTranscriptSegments = true
+		}
+		if len(section.Organizations) > 0 {
+			hasOrganizations = true
 		}
 	}
-	if len(b.Organizations) == 0 {
+	if !hasTVW {
+		out = append(out, "TVW event not linked to any ingested hearing.")
+	}
+	if !hasTranscriptSegments {
+		out = append(out, "No transcript segments matched this bill discussion (manual transcript_override may help).")
+	}
+	if !hasOrganizations {
 		out = append(out, "Organization context section is empty — run populate-organizations and source-specific entity matching to surface reviewed organization records.")
 	}
 	return out
