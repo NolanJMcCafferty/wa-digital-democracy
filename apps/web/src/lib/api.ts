@@ -868,6 +868,8 @@ export type SpeakerReviewTask = {
   EvidenceText: string;
   EvidenceStartMS: number;
   EvidenceEndMS: number;
+  CurrentSpeakerLabel?: string;
+  CurrentReviewStatus?: string;
   SampleSegments?: SpeakerReviewSegment[];
 };
 
@@ -902,5 +904,80 @@ export async function decideSpeakerReviewTask(taskId: string, action: "accept" |
   });
   if (!res.ok) {
     throw new Error(`decideSpeakerReviewTask ${action} returned ${res.status}: ${await res.text()}`);
+  }
+}
+
+export type SpeakerReviewEvent = {
+  TVWEventID: string;
+  ClusterCount: number;
+  AssignedCount: number;
+  PendingTaskCount: number;
+  UnresolvedClusterCount: number;
+  TotalSpeechMS: number;
+};
+
+export type SpeakerIdentityEvidence = {
+  ID: number;
+  EvidenceType: string;
+  EvidenceText: string;
+  CandidateKind: string;
+  CandidateID: number;
+  CandidateLabel: string;
+  Confidence: number;
+  StartMS: number;
+  EndMS: number;
+};
+
+export type SpeakerClusterReview = {
+  ClusterID: number;
+  DiarizationJobID: number;
+  TVWEventID: string;
+  ClusterLabel: string;
+  TotalSpeechMS: number;
+  TurnCount: number;
+  CurrentSpeakerLabel?: string;
+  CurrentSpeakerKind?: string;
+  CurrentReviewStatus?: string;
+  Tasks?: SpeakerReviewTask[];
+  Evidence?: SpeakerIdentityEvidence[];
+  SampleSegments?: SpeakerReviewSegment[];
+};
+
+export async function listSpeakerReviewEvents(): Promise<SpeakerReviewEvent[]> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/events`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`listSpeakerReviewEvents returned ${res.status}`);
+  }
+  const body = (await res.json()) as { events: SpeakerReviewEvent[] };
+  return body.events ?? [];
+}
+
+export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<SpeakerClusterReview[]> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(tvwEventId)}`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`loadSpeakerReviewEvent returned ${res.status}`);
+  }
+  const body = (await res.json()) as { clusters: SpeakerClusterReview[] };
+  return body.clusters ?? [];
+}
+
+export async function loadSpeakerClusterReview(clusterId: string): Promise<SpeakerClusterReview | null> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`loadSpeakerClusterReview returned ${res.status}`);
+  }
+  return (await res.json()) as SpeakerClusterReview;
+}
+
+export async function manuallyAssignSpeakerCluster(clusterId: string, kind: string, label: string, reviewer: string, notes: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}/assign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, label, reviewer, notes }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`manuallyAssignSpeakerCluster returned ${res.status}: ${await res.text()}`);
   }
 }

@@ -30,6 +30,11 @@ export default async function SpeakerReviewDetail({ params }: { params: Promise<
           <Link href="/admin/review/speakers" className="text-sm text-stone-500 underline">← Back to tasks</Link>
           <h1 className="mt-2 text-3xl font-bold text-stone-900">Review {task.ClusterLabel} → {task.CandidateLabel}</h1>
           <p className="text-stone-600">Event {task.TVWEventID} · job {task.DiarizationJobID} · {(task.TotalSpeechMS / 60000).toFixed(1)} spoken minutes</p>
+          {task.CurrentSpeakerLabel ? (
+            <p className="mt-2 rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-emerald-200">
+              Current accepted assignment: <strong>{task.CurrentSpeakerLabel}</strong>
+            </p>
+          ) : null}
         </div>
         <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800">{task.Status}</span>
       </div>
