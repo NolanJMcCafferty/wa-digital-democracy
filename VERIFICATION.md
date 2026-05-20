@@ -30,5 +30,3 @@ The expected data path is:
 1. `wa-dd` ingestion commands write normalized, source-linked records to Postgres.
 2. `wa-dd-api` assembles route-specific JSON responses from Postgres.
 3. The Next.js app renders those API responses.
-
-Generated first-page bundle snapshots are no longer part of the supported flow.

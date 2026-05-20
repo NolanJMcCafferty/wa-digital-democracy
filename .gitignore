@@ -8,7 +8,6 @@
 /data/spike/*.html
 /data/spike/*.json
 
-# Raw object store and processed bundles
 /data/raw/
 /data/processed/
 
