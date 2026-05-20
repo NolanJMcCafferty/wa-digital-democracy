@@ -1,5 +1,5 @@
 import "server-only";
-import type { Bundle, Organization, Position, Sponsor } from "./bundle";
+import type { Bundle, HearingSection, Organization, Position, Sponsor } from "./bundle";
 
 // The Next.js bill-detail page is a Server Component, so its fetch runs
 // in the Node runtime and does NOT pass through next.config.ts rewrites.
@@ -106,6 +106,7 @@ export type HearingAgendaItemEntry = {
   billNumber: number;
   testifierCount: number;
   testifiedCount: number;
+  section?: HearingSection;
 };
 
 export type HearingBundleEntry = {
@@ -118,10 +119,22 @@ export type HearingBundleEntry = {
   tvwUrl?: string;
   tvwEventId?: string;
   agendaItems: HearingAgendaItemEntry[];
+  diarizedTranscript?: DiarizedTranscript;
   // Back-compat convenience fields for search/list snippets. For true
   // hearing pages these refer to the first agenda item, when present.
   csiAgendaItemId?: string;
   billId?: string;
+};
+
+export type DiarizedTranscript = {
+  segments: DiarizedSegment[];
+};
+
+export type DiarizedSegment = {
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  cluster_label?: string;
 };
 
 export type LegislatorBundleEntry = {
@@ -261,6 +274,7 @@ type hearingAgendaItemResponse = {
   bill_number: number;
   testifier_count: number;
   testified_count: number;
+  section?: HearingSection;
 };
 
 type hearingResponseItem = {
@@ -272,6 +286,7 @@ type hearingResponseItem = {
   tvw_url?: string;
   tvw_event_id?: string;
   agenda_items: hearingAgendaItemResponse[];
+  diarized_transcript?: DiarizedTranscript;
 };
 
 type hearingsResponse = {
@@ -319,6 +334,7 @@ function mapHearingItem(h: hearingResponseItem): HearingBundleEntry {
     billNumber: a.bill_number,
     testifierCount: a.testifier_count,
     testifiedCount: a.testified_count,
+    section: a.section,
   }));
   const first = agendaItems[0];
   const title = `${h.committee_name} · ${new Date(h.meeting_datetime).toLocaleDateString("en-US", {
@@ -336,6 +352,7 @@ function mapHearingItem(h: hearingResponseItem): HearingBundleEntry {
     tvwUrl: h.tvw_url,
     tvwEventId: h.tvw_event_id,
     agendaItems,
+    diarizedTranscript: h.diarized_transcript,
     csiAgendaItemId: first?.csiAgendaItemId,
     billId: first?.billId,
   };

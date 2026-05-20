@@ -3381,6 +3381,45 @@ SELECT start_ms, end_ms, COALESCE(text,'')
 	return out, rows.Err()
 }
 
+// DiarizedHearingSegment is one row from the most recent succeeded
+// diarization job for a hearing's TVW event. Covers the entire hearing,
+// not just one bill discussion (transcript_segment is the per-bill view).
+type DiarizedHearingSegment struct {
+	StartMS      int
+	EndMS        int
+	Text         string
+	ClusterLabel string
+}
+
+func (s *Store) ListDiarizedSegmentsByTVWEvent(ctx context.Context, tvwEventID string) ([]DiarizedHearingSegment, error) {
+	const q = `
+SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label
+  FROM diarized_speech_segment d
+  JOIN diarization_job j ON j.id = d.diarization_job_id
+ WHERE d.tvw_event_id = $1
+   AND j.status = 'succeeded'
+   AND j.id = (
+     SELECT id FROM diarization_job
+      WHERE tvw_event_id = $1 AND status = 'succeeded'
+      ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1
+   )
+ ORDER BY d.start_ms ASC;`
+	rows, err := s.Pool.Query(ctx, q, tvwEventID)
+	if err != nil {
+		return nil, fmt.Errorf("list diarized segments: %w", err)
+	}
+	defer rows.Close()
+	out := []DiarizedHearingSegment{}
+	for rows.Next() {
+		var seg DiarizedHearingSegment
+		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &seg.ClusterLabel); err != nil {
+			return nil, fmt.Errorf("scan diarized segment: %w", err)
+		}
+		out = append(out, seg)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) AcceptSpeakerReviewTask(ctx context.Context, taskID int64, reviewer, notes string) error {
 	t, err := s.GetSpeakerReviewTask(ctx, taskID)
 	if err != nil {

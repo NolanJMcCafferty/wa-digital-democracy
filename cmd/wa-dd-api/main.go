@@ -1003,25 +1003,38 @@ const (
 )
 
 type hearingAgendaItemResponse struct {
-	CSIAgendaItemID string `json:"csi_agenda_item_id"`
-	AgendaItemLabel string `json:"agenda_item_label"`
-	Biennium        string `json:"biennium"`
-	BillID          string `json:"bill_id"`
-	BillPrefix      string `json:"bill_prefix"`
-	BillNumber      int    `json:"bill_number"`
-	TestifierCount  int    `json:"testifier_count"`
-	TestifiedCount  int    `json:"testified_count"`
+	CSIAgendaItemID string                  `json:"csi_agenda_item_id"`
+	AgendaItemLabel string                  `json:"agenda_item_label"`
+	Biennium        string                  `json:"biennium"`
+	BillID          string                  `json:"bill_id"`
+	BillPrefix      string                  `json:"bill_prefix"`
+	BillNumber      int                     `json:"bill_number"`
+	TestifierCount  int                     `json:"testifier_count"`
+	TestifiedCount  int                     `json:"testified_count"`
+	Section         *firstpage.HearingSection `json:"section,omitempty"`
 }
 
 type hearingResponse struct {
-	HearingID       int64                       `json:"hearing_id"`
-	CommitteeName   string                      `json:"committee_name"`
-	Chamber         string                      `json:"chamber"`
-	MeetingDateTime time.Time                   `json:"meeting_datetime"`
-	Location        string                      `json:"location,omitempty"`
-	TVWURL          string                      `json:"tvw_url,omitempty"`
-	TVWEventID      string                      `json:"tvw_event_id,omitempty"`
-	AgendaItems     []hearingAgendaItemResponse `json:"agenda_items"`
+	HearingID          int64                       `json:"hearing_id"`
+	CommitteeName      string                      `json:"committee_name"`
+	Chamber            string                      `json:"chamber"`
+	MeetingDateTime    time.Time                   `json:"meeting_datetime"`
+	Location           string                      `json:"location,omitempty"`
+	TVWURL             string                      `json:"tvw_url,omitempty"`
+	TVWEventID         string                      `json:"tvw_event_id,omitempty"`
+	AgendaItems        []hearingAgendaItemResponse `json:"agenda_items"`
+	DiarizedTranscript *diarizedTranscriptResponse `json:"diarized_transcript,omitempty"`
+}
+
+type diarizedTranscriptResponse struct {
+	Segments []diarizedSegmentResponse `json:"segments"`
+}
+
+type diarizedSegmentResponse struct {
+	StartMS      int    `json:"start_ms"`
+	EndMS        int    `json:"end_ms"`
+	Text         string `json:"text"`
+	ClusterLabel string `json:"cluster_label,omitempty"`
 }
 
 func mapHearingResponse(h db.HearingAggregate) hearingResponse {
@@ -1125,7 +1138,44 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, mapHearingResponse(*hearing))
+		resp := mapHearingResponse(*hearing)
+		// Populate the full per-agenda-item sections (testifiers,
+		// transcript, organizations) so /hearings/{id} can render them.
+		// The list endpoint deliberately omits these to keep the payload
+		// small.
+		for i := range resp.AgendaItems {
+			demo, err := firstpage.LookupSelectedDemoByAgendaItem(req.Context(), store, resp.AgendaItems[i].CSIAgendaItemID)
+			if err != nil {
+				if errors.Is(err, firstpage.ErrBillNotFound) {
+					continue
+				}
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			section, err := firstpage.BuildHearingSection(req.Context(), store, demo)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			resp.AgendaItems[i].Section = section
+		}
+		if resp.TVWEventID != "" {
+			segs, err := store.ListDiarizedSegmentsByTVWEvent(req.Context(), resp.TVWEventID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			if len(segs) > 0 {
+				out := make([]diarizedSegmentResponse, 0, len(segs))
+				for _, s := range segs {
+					out = append(out, diarizedSegmentResponse{
+						StartMS: s.StartMS, EndMS: s.EndMS, Text: s.Text, ClusterLabel: s.ClusterLabel,
+					})
+				}
+				resp.DiarizedTranscript = &diarizedTranscriptResponse{Segments: out}
+			}
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 

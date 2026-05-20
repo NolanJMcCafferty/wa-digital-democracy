@@ -81,6 +81,7 @@ type StatusEntry struct {
 }
 
 type Hearing struct {
+	HearingID         int64     `json:"hearing_id,omitempty"`
 	CommitteeName     string    `json:"committee_name"`
 	CommitteeAcronym  string    `json:"committee_acronym,omitempty"`
 	Chamber           string    `json:"chamber"`
@@ -220,7 +221,7 @@ func BuildByBill(
 	}
 
 	for _, demo := range demos {
-		section, err := buildHearingSection(ctx, store, demo)
+		section, err := BuildHearingSection(ctx, store, demo)
 		if err != nil {
 			return nil, err
 		}
@@ -243,9 +244,11 @@ func BuildByBill(
 	return b, nil
 }
 
-// buildHearingSection runs the per-hearing loaders against a scratch
-// Bundle and pulls the resulting fields into a HearingSection.
-func buildHearingSection(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*HearingSection, error) {
+// BuildHearingSection runs the per-hearing loaders against a scratch
+// Bundle and pulls the resulting fields into a HearingSection. Exported
+// so the hearing-detail handler can reuse it for the per-agenda-item
+// blocks rendered on /hearings/{id}.
+func BuildHearingSection(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*HearingSection, error) {
 	scratch := &Bundle{
 		Testifiers:    []Testifier{},
 		Organizations: []Organization{},
@@ -356,7 +359,7 @@ SELECT action_date, history_line FROM bill_status_change
 
 func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
 	const q = `
-SELECT h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
+SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
        h.location, h.official_agenda_url, h.tvw_url, h.tvw_event_id,
        a.label, a.csi_agenda_item_id
   FROM agenda_item a
@@ -364,12 +367,14 @@ SELECT h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
  WHERE a.csi_agenda_item_id = $1
  LIMIT 1;`
 	var (
+		hearingID                                                         int64
 		commName, chamber, label, csiAID                                  string
 		commAcronym, location, officialAgendaURL, tvwURL, tvwEventID, tmp *string
 	)
 	_ = tmp
 	var meetingDT time.Time
 	err := store.Pool.QueryRow(ctx, q, demo.Agenda.CSIAgendaItemID).Scan(
+		&hearingID,
 		&commName, &commAcronym, &chamber, &meetingDT,
 		&location, &officialAgendaURL, &tvwURL, &tvwEventID,
 		&label, &csiAID,
@@ -381,6 +386,7 @@ SELECT h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
 		return err
 	}
 	b.Hearing = &Hearing{
+		HearingID:         hearingID,
 		CommitteeName:     commName,
 		CommitteeAcronym:  deref(commAcronym),
 		Chamber:           chamber,

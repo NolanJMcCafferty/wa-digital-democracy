@@ -57,6 +57,7 @@ export type StatusEntry = {
 };
 
 export type Hearing = {
+  hearing_id?: number;
   committee_name: string;
   committee_acronym?: string;
   chamber: string;
