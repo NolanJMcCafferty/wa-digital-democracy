@@ -23,8 +23,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
+	firstpage "github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
@@ -61,7 +62,7 @@ func main() {
 	r.Get("/api/v1/organizations", listOrganizationsHandler(store))
 	r.Get("/api/v1/organizations/{slug}", getOrganizationHandler(store))
 	r.Get("/api/v1/hearings", listHearingsHandler(store))
-	r.Get("/api/v1/hearings/{csiAgendaItemId}", getHearingHandler(store))
+	r.Get("/api/v1/hearings/{hearingId}", getHearingHandler(store))
 	r.Get("/api/v1/sources", listSourcesHandler(store))
 	r.Get("/api/v1/search/transcripts", searchTranscriptsHandler(store))
 	r.Get("/api/v1/admin/review/speakers", adminListSpeakerReviewTasksHandler(store))
@@ -924,6 +925,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		BillPrefix      string    `json:"bill_prefix"`
 		BillNumber      int       `json:"bill_number"`
 		CSIAgendaItemID string    `json:"csi_agenda_item_id,omitempty"`
+		HearingID       int64     `json:"hearing_id"`
 		HearingTitle    string    `json:"hearing_title"`
 		CommitteeName   string    `json:"committee_name"`
 		MeetingDateTime time.Time `json:"meeting_datetime"`
@@ -970,6 +972,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				Biennium: a.Biennium, BillID: a.BillID,
 				BillPrefix: a.BillPrefix, BillNumber: a.BillNumber,
 				CSIAgendaItemID: a.CSIAgendaItemID,
+				HearingID:       a.HearingID,
 				HearingTitle:    a.HearingTitle,
 				CommitteeName:   a.CommitteeName,
 				MeetingDateTime: a.MeetingDateTime,
@@ -1003,20 +1006,57 @@ const (
 	hearingsMaxLimit     = 100
 )
 
-func listHearingsHandler(store *db.Store) http.HandlerFunc {
-	type item struct {
-		CSIAgendaItemID string    `json:"csi_agenda_item_id"`
-		AgendaItemLabel string    `json:"agenda_item_label"`
-		CommitteeName   string    `json:"committee_name"`
-		Chamber         string    `json:"chamber"`
-		MeetingDateTime time.Time `json:"meeting_datetime"`
-		Biennium        string    `json:"biennium"`
-		BillID          string    `json:"bill_id"`
-		BillPrefix      string    `json:"bill_prefix"`
-		BillNumber      int       `json:"bill_number"`
+type hearingAgendaItemResponse struct {
+	CSIAgendaItemID string `json:"csi_agenda_item_id"`
+	AgendaItemLabel string `json:"agenda_item_label"`
+	Biennium        string `json:"biennium"`
+	BillID          string `json:"bill_id"`
+	BillPrefix      string `json:"bill_prefix"`
+	BillNumber      int    `json:"bill_number"`
+	TestifierCount  int    `json:"testifier_count"`
+	TestifiedCount  int    `json:"testified_count"`
+}
+
+type hearingResponse struct {
+	HearingID       int64                       `json:"hearing_id"`
+	CommitteeName   string                      `json:"committee_name"`
+	Chamber         string                      `json:"chamber"`
+	MeetingDateTime time.Time                   `json:"meeting_datetime"`
+	Location        string                      `json:"location,omitempty"`
+	TVWURL          string                      `json:"tvw_url,omitempty"`
+	TVWEventID      string                      `json:"tvw_event_id,omitempty"`
+	AgendaItems     []hearingAgendaItemResponse `json:"agenda_items"`
+}
+
+func mapHearingResponse(h db.HearingAggregate) hearingResponse {
+	items := make([]hearingAgendaItemResponse, 0, len(h.AgendaItems))
+	for _, a := range h.AgendaItems {
+		items = append(items, hearingAgendaItemResponse{
+			CSIAgendaItemID: a.CSIAgendaItemID,
+			AgendaItemLabel: a.AgendaItemLabel,
+			Biennium:        a.Biennium,
+			BillID:          a.BillID,
+			BillPrefix:      a.BillPrefix,
+			BillNumber:      a.BillNumber,
+			TestifierCount:  a.TestifierCount,
+			TestifiedCount:  a.TestifiedCount,
+		})
 	}
+	return hearingResponse{
+		HearingID:       h.HearingID,
+		CommitteeName:   h.CommitteeName,
+		Chamber:         h.Chamber,
+		MeetingDateTime: h.MeetingDateTime,
+		Location:        h.Location,
+		TVWURL:          h.TVWURL,
+		TVWEventID:      h.TVWEventID,
+		AgendaItems:     items,
+	}
+}
+
+func listHearingsHandler(store *db.Store) http.HandlerFunc {
 	type body struct {
-		Hearings []item                 `json:"hearings"`
+		Hearings []hearingResponse      `json:"hearings"`
 		Total    int                    `json:"total"`
 		Limit    int                    `json:"limit"`
 		Offset   int                    `json:"offset"`
@@ -1059,24 +1099,14 @@ func listHearingsHandler(store *db.Store) http.HandlerFunc {
 		}
 
 		out := body{
-			Hearings: make([]item, 0, len(hs)),
+			Hearings: make([]hearingResponse, 0, len(hs)),
 			Total:    total,
 			Limit:    params.Limit,
 			Offset:   params.Offset,
 			Facets:   facets,
 		}
 		for _, h := range hs {
-			out.Hearings = append(out.Hearings, item{
-				CSIAgendaItemID: h.CSIAgendaItemID,
-				AgendaItemLabel: h.AgendaItemLabel,
-				CommitteeName:   h.CommitteeName,
-				Chamber:         h.Chamber,
-				MeetingDateTime: h.MeetingDateTime,
-				Biennium:        h.Biennium,
-				BillID:          h.BillID,
-				BillPrefix:      h.BillPrefix,
-				BillNumber:      h.BillNumber,
-			})
+			out.Hearings = append(out.Hearings, mapHearingResponse(h))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -1084,22 +1114,22 @@ func listHearingsHandler(store *db.Store) http.HandlerFunc {
 
 func getHearingHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		csiID := chi.URLParam(req, "csiAgendaItemId")
-		demo, err := firstpage.LookupSelectedDemoByAgendaItem(req.Context(), store, csiID)
+		idParam := chi.URLParam(req, "hearingId")
+		hearingID, err := strconv.ParseInt(idParam, 10, 64)
+		if err != nil || hearingID <= 0 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "hearing not found"})
+			return
+		}
+		hearing, err := store.GetHearing(req.Context(), hearingID)
 		if err != nil {
-			if errors.Is(err, firstpage.ErrBillNotFound) {
+			if errors.Is(err, pgx.ErrNoRows) {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "hearing not found"})
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		bundle, err := firstpage.Build(req.Context(), store, demo)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, bundle)
+		writeJSON(w, http.StatusOK, mapHearingResponse(*hearing))
 	}
 }
 

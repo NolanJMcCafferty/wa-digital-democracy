@@ -1423,6 +1423,7 @@ type OrganizationAppearance struct {
 	BillPrefix      string
 	BillNumber      int
 	CSIAgendaItemID string
+	HearingID       int64
 	HearingTitle    string
 	CommitteeName   string
 	MeetingDateTime time.Time
@@ -1436,6 +1437,7 @@ func (s *Store) GetOrganizationAppearances(ctx context.Context, organizationID i
 	const q = `
 SELECT b.biennium, b.bill_number, b.prefix, b.number,
        COALESCE(a.csi_agenda_item_id, ''),
+       h.id,
        COALESCE(a.label, ''),
        h.committee_name,
        h.meeting_datetime,
@@ -1447,7 +1449,7 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
   LEFT JOIN bill   b ON b.id = a.bill_id
  WHERE t.normalized_org_id = $1
  GROUP BY b.biennium, b.bill_number, b.prefix, b.number,
-          a.csi_agenda_item_id, a.label, h.committee_name, h.meeting_datetime
+          a.csi_agenda_item_id, h.id, a.label, h.committee_name, h.meeting_datetime
  ORDER BY h.meeting_datetime DESC;`
 	rows, err := s.Pool.Query(ctx, q, organizationID)
 	if err != nil {
@@ -1460,7 +1462,7 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
 		var biennium, billID, prefix *string
 		var billNumber *int
 		if err := rows.Scan(&biennium, &billID, &prefix, &billNumber,
-			&a.CSIAgendaItemID, &a.HearingTitle,
+			&a.CSIAgendaItemID, &a.HearingID, &a.HearingTitle,
 			&a.CommitteeName, &a.MeetingDateTime,
 			&a.Position, &a.TestifierCount); err != nil {
 			return nil, fmt.Errorf("scan appearance: %w", err)
@@ -1482,23 +1484,34 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
 	return out, rows.Err()
 }
 
-// HearingAggregate is the row shape ListHearings returns.
-type HearingAggregate struct {
+// HearingAgendaItemAggregate is one agenda item/bill associated with a hearing.
+type HearingAgendaItemAggregate struct {
 	CSIAgendaItemID string
 	AgendaItemLabel string
-	CommitteeName   string
-	Chamber         string
-	MeetingDateTime time.Time
 	Biennium        string
 	BillID          string
 	BillPrefix      string
 	BillNumber      int
+	TestifierCount  int
+	TestifiedCount  int
+}
+
+// HearingAggregate is the row shape ListHearings returns: one row per
+// hearing/committee meeting, with agenda items nested under it.
+type HearingAggregate struct {
+	HearingID       int64
+	CommitteeName   string
+	Chamber         string
+	MeetingDateTime time.Time
+	Location        string
+	TVWURL          string
+	TVWEventID      string
+	AgendaItems     []HearingAgendaItemAggregate
 	HasTVW          bool
 }
 
-// ListHearings returns every agenda_item joined to its hearing + bill,
-// ordered by meeting datetime descending. Only includes rows where the
-// hearing has a TVW event mapping (the curated subset).
+// ListHearings returns every hearing with a TVW event mapping, ordered by
+// meeting datetime descending. Agenda items are nested under each hearing.
 func (s *Store) ListHearings(ctx context.Context) ([]HearingAggregate, error) {
 	hits, _, err := s.SearchHearings(ctx, HearingSearchParams{Limit: 100000, Offset: 0})
 	return hits, err
@@ -1527,7 +1540,9 @@ type HearingSearchFacets struct {
 }
 
 // SearchHearings is the paginated, filtered query backing /api/v1/hearings.
-// Returns (hits, total, err).
+// Returns (hits, total, err). The returned hits are hearing-level rows;
+// filters that refer to bills, speakers, or topic keywords match if any
+// agenda item under the hearing matches.
 func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]HearingAggregate, int, error) {
 	if p.Limit <= 0 {
 		p.Limit = 50
@@ -1548,13 +1563,21 @@ func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]He
 	}
 	if bq := strings.TrimSpace(p.Bill); bq != "" {
 		idx := push(bq)
-		where = append(where, fmt.Sprintf(
-			"(b.bill_number ILIKE '%%' || $%d || '%%' OR b.title ILIKE '%%' || $%d || '%%')", idx, idx))
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM agenda_item a
+			JOIN bill b ON b.id = a.bill_id
+			WHERE a.hearing_id = h.id
+			  AND (b.bill_number ILIKE '%%' || $%d || '%%' OR b.title ILIKE '%%' || $%d || '%%')
+		)`, idx, idx))
 	}
 	if sp := strings.TrimSpace(p.Speaker); sp != "" {
 		idx := push(sp)
-		where = append(where, fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM testifier t WHERE t.agenda_item_id = a.id AND t.raw_name ILIKE '%%' || $%d || '%%')", idx))
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM agenda_item a
+			JOIN testifier t ON t.agenda_item_id = a.id
+			WHERE a.hearing_id = h.id
+			  AND t.raw_name ILIKE '%%' || $%d || '%%'
+		)`, idx))
 	}
 	if chambers := nonEmptyStrings(p.Chambers); len(chambers) > 0 {
 		placeholders := make([]string, 0, len(chambers))
@@ -1567,24 +1590,29 @@ func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]He
 		ors := make([]string, 0, len(keywords))
 		for _, kw := range keywords {
 			idx := push(kw)
-			ors = append(ors, fmt.Sprintf(
-				"(b.title ILIKE '%%' || $%d || '%%' OR COALESCE(b.description,'') ILIKE '%%' || $%d || '%%' OR a.label ILIKE '%%' || $%d || '%%' OR h.committee_name ILIKE '%%' || $%d || '%%')",
-				idx, idx, idx, idx))
+			ors = append(ors, fmt.Sprintf(`(
+				h.committee_name ILIKE '%%' || $%d || '%%'
+				OR EXISTS (
+					SELECT 1 FROM agenda_item a
+					JOIN bill b ON b.id = a.bill_id
+					WHERE a.hearing_id = h.id
+					  AND (b.title ILIKE '%%' || $%d || '%%' OR COALESCE(b.description,'') ILIKE '%%' || $%d || '%%' OR a.label ILIKE '%%' || $%d || '%%')
+				)
+			)`, idx, idx, idx, idx))
 		}
 		where = append(where, "("+strings.Join(ors, " OR ")+")")
 	}
 	if p.Biennium != "" {
 		idx := push(p.Biennium)
-		where = append(where, fmt.Sprintf("b.biennium = $%d", idx))
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM agenda_item a
+			JOIN bill b ON b.id = a.bill_id
+			WHERE a.hearing_id = h.id AND b.biennium = $%d
+		)`, idx))
 	}
 	whereSQL := strings.Join(where, " AND ")
 
-	const baseFROM = `
-FROM agenda_item a
-JOIN hearing h ON h.id = a.hearing_id
-JOIN bill    b ON b.id = a.bill_id`
-
-	countQ := "SELECT COUNT(*) " + baseFROM + " WHERE " + whereSQL
+	countQ := "SELECT COUNT(*) FROM hearing h WHERE " + whereSQL
 	var total int
 	if err := s.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count hearings: %w", err)
@@ -1592,11 +1620,11 @@ JOIN bill    b ON b.id = a.bill_id`
 
 	args = append(args, p.Limit, p.Offset)
 	q := `
-SELECT a.csi_agenda_item_id, a.label,
-       h.committee_name, h.chamber, h.meeting_datetime,
-       b.biennium, b.bill_number, b.prefix, b.number,
+SELECT h.id, h.committee_name, h.chamber, h.meeting_datetime,
+       COALESCE(h.location, ''), COALESCE(h.tvw_url, ''), COALESCE(h.tvw_event_id, ''),
        (h.tvw_event_id IS NOT NULL) AS has_tvw
-` + baseFROM + ` WHERE ` + whereSQL + `
+  FROM hearing h
+ WHERE ` + whereSQL + `
  ORDER BY h.meeting_datetime DESC
  LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
 	rows, err := s.Pool.Query(ctx, q, args...)
@@ -1605,17 +1633,86 @@ SELECT a.csi_agenda_item_id, a.label,
 	}
 	defer rows.Close()
 	out := []HearingAggregate{}
+	ids := make([]int64, 0)
 	for rows.Next() {
 		var hh HearingAggregate
-		if err := rows.Scan(&hh.CSIAgendaItemID, &hh.AgendaItemLabel,
-			&hh.CommitteeName, &hh.Chamber, &hh.MeetingDateTime,
-			&hh.Biennium, &hh.BillID, &hh.BillPrefix, &hh.BillNumber,
-			&hh.HasTVW); err != nil {
+		if err := rows.Scan(&hh.HearingID, &hh.CommitteeName, &hh.Chamber, &hh.MeetingDateTime,
+			&hh.Location, &hh.TVWURL, &hh.TVWEventID, &hh.HasTVW); err != nil {
 			return nil, 0, fmt.Errorf("scan hearing: %w", err)
 		}
+		ids = append(ids, hh.HearingID)
 		out = append(out, hh)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(ids) > 0 {
+		itemsByHearing, err := s.listAgendaItemsForHearings(ctx, ids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for i := range out {
+			out[i].AgendaItems = itemsByHearing[out[i].HearingID]
+		}
+	}
+	return out, total, nil
+}
+
+func (s *Store) listAgendaItemsForHearings(ctx context.Context, hearingIDs []int64) (map[int64][]HearingAgendaItemAggregate, error) {
+	rows, err := s.Pool.Query(ctx, `
+SELECT a.hearing_id, COALESCE(a.csi_agenda_item_id, ''), a.label,
+       COALESCE(b.biennium, ''), COALESCE(b.bill_number, ''), COALESCE(b.prefix, ''), COALESCE(b.number, 0),
+       COUNT(t.id) AS testifier_count,
+       COUNT(t.id) FILTER (WHERE t.testified) AS testified_count
+  FROM agenda_item a
+  LEFT JOIN bill b ON b.id = a.bill_id
+  LEFT JOIN testifier t ON t.agenda_item_id = a.id
+ WHERE a.hearing_id = ANY($1)
+ GROUP BY a.hearing_id, a.id, b.biennium, b.bill_number, b.prefix, b.number
+ ORDER BY a.hearing_id, a.order_index NULLS LAST, a.id`, hearingIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list hearing agenda items: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]HearingAgendaItemAggregate, len(hearingIDs))
+	for rows.Next() {
+		var hearingID int64
+		var item HearingAgendaItemAggregate
+		if err := rows.Scan(&hearingID, &item.CSIAgendaItemID, &item.AgendaItemLabel,
+			&item.Biennium, &item.BillID, &item.BillPrefix, &item.BillNumber,
+			&item.TestifierCount, &item.TestifiedCount); err != nil {
+			return nil, fmt.Errorf("scan hearing agenda item: %w", err)
+		}
+		out[hearingID] = append(out[hearingID], item)
+	}
+	return out, rows.Err()
+}
+
+// GetHearing returns one hearing/committee meeting by internal hearing ID,
+// with all agenda items nested under it.
+func (s *Store) GetHearing(ctx context.Context, hearingID int64) (*HearingAggregate, error) {
+	const q = `
+SELECT h.id, h.committee_name, h.chamber, h.meeting_datetime,
+       COALESCE(h.location, ''), COALESCE(h.tvw_url, ''), COALESCE(h.tvw_event_id, ''),
+       (h.tvw_event_id IS NOT NULL) AS has_tvw
+  FROM hearing h
+ WHERE h.id = $1
+   AND h.tvw_event_id IS NOT NULL
+ LIMIT 1;`
+	var h HearingAggregate
+	if err := s.Pool.QueryRow(ctx, q, hearingID).Scan(&h.HearingID, &h.CommitteeName, &h.Chamber,
+		&h.MeetingDateTime, &h.Location, &h.TVWURL, &h.TVWEventID, &h.HasTVW); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, pgx.ErrNoRows
+		}
+		return nil, fmt.Errorf("get hearing: %w", err)
+	}
+	itemsByHearing, err := s.listAgendaItemsForHearings(ctx, []int64{hearingID})
+	if err != nil {
+		return nil, err
+	}
+	h.AgendaItems = itemsByHearing[hearingID]
+	return &h, nil
 }
 
 // ListHearingSearchFacets returns the distinct chamber/committee/biennium

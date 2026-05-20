@@ -168,9 +168,9 @@ func TestAggregationHandlers(t *testing.T) {
 func TestGetHearingHandler_NotFound(t *testing.T) {
 	store := openTestStore(t)
 	r := chi.NewRouter()
-	r.Get("/api/v1/hearings/{csiAgendaItemId}", getHearingHandler(store))
+	r.Get("/api/v1/hearings/{hearingId}", getHearingHandler(store))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings/00000", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings/999999999", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -181,28 +181,39 @@ func TestGetHearingHandler_NotFound(t *testing.T) {
 func TestGetHearingHandler_OK(t *testing.T) {
 	store := openTestStore(t)
 	r := chi.NewRouter()
-	r.Get("/api/v1/hearings/{csiAgendaItemId}", getHearingHandler(store))
+	r.Get("/api/v1/hearings/{hearingId}", getHearingHandler(store))
 
-	// Demo seed: HB 1501 lives at csi_agenda_item_id=27885.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings/27885", nil)
+	// Demo seed: HB 1501 lives on hearing.id=2 in the local daily-batch DB.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings/2", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code == http.StatusNotFound {
-		t.Skip("agenda item 27885 (HB 1501) not ingested in the test DB; run `make daily` first")
+		t.Skip("hearing 2 (HB 1501) not ingested in the test DB; run `make daily` first")
 	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 	var body struct {
-		Bill struct {
+		HearingID   int64 `json:"hearing_id"`
+		AgendaItems []struct {
 			BillID string `json:"bill_id"`
-		} `json:"bill"`
+		} `json:"agenda_items"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.Bill.BillID != "HB 1501" {
-		t.Errorf("bill_id = %q, want %q", body.Bill.BillID, "HB 1501")
+	if body.HearingID != 2 {
+		t.Errorf("hearing_id = %d, want 2", body.HearingID)
+	}
+	found := false
+	for _, item := range body.AgendaItems {
+		if item.BillID == "HB 1501" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("agenda_items did not include HB 1501: %+v", body.AgendaItems)
 	}
 }
 
@@ -218,7 +229,6 @@ func TestGetLegislatorHandler_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
 	}
 }
-
 
 func TestSearchTranscriptsHandler_Empty(t *testing.T) {
 	store := openTestStore(t)

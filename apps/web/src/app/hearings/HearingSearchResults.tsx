@@ -304,15 +304,17 @@ export function HearingSearchResults({
               </thead>
               <tbody className="divide-y divide-stone-200">
                 {hearings.map((h) => {
-                  const href = `/hearings/${h.csiAgendaItemId}`;
+                  const href = `/hearings/${h.hearingId}`;
+                  const billSummary = h.agendaItems.map((a) => a.billId).filter(Boolean).join(", ");
                   return (
-                    <tr key={h.csiAgendaItemId} className="hover:bg-stone-50">
+                    <tr key={h.hearingId} className="hover:bg-stone-50">
                       <td className="px-4 py-2.5 align-top">
                         <Link href={href} className="font-medium text-stone-900 hover:underline">
                           {h.title}
                         </Link>
                         <div className="mt-0.5 text-xs text-stone-500">
-                          <span className="font-mono">{h.billId}</span>
+                          {h.agendaItems.length.toLocaleString()} agenda item{h.agendaItems.length === 1 ? "" : "s"}
+                          {billSummary ? <> · <span className="font-mono">{billSummary}</span></> : null}
                         </div>
                       </td>
                       <td className="px-4 py-2.5 align-top text-stone-700">

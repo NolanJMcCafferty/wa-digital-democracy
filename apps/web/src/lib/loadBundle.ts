@@ -97,13 +97,31 @@ function mapBillItem(b: listResponseItem): BundleListEntry {
   };
 }
 
-export type HearingBundleEntry = BundleListEntry & {
+export type HearingAgendaItemEntry = {
   csiAgendaItemId: string;
+  agendaItemLabel: string;
+  biennium: string;
+  billId: string;
+  billPrefix: string;
+  billNumber: number;
+  testifierCount: number;
+  testifiedCount: number;
+};
+
+export type HearingBundleEntry = {
+  hearingId: number;
   title: string;
   committeeName: string;
   chamber: string;
   meetingDatetime: string;
-  billId: string;
+  location?: string;
+  tvwUrl?: string;
+  tvwEventId?: string;
+  agendaItems: HearingAgendaItemEntry[];
+  // Back-compat convenience fields for search/list snippets. For true
+  // hearing pages these refer to the first agenda item, when present.
+  csiAgendaItemId?: string;
+  billId?: string;
 };
 
 export type LegislatorBundleEntry = {
@@ -168,6 +186,7 @@ export type OrganizationBundleEntry = {
     billPrefix: string;
     billNumber: number;
     csiAgendaItemId?: string;
+    hearingId?: number;
     hearingTitle: string;
     committeeName: string;
     meetingDatetime: string;
@@ -235,16 +254,26 @@ export async function searchBills(filters: BillSearchFilters): Promise<BillSearc
   };
 }
 
-type hearingResponseItem = {
+type hearingAgendaItemResponse = {
   csi_agenda_item_id: string;
   agenda_item_label: string;
-  committee_name: string;
-  chamber: string;
-  meeting_datetime: string;
   biennium: string;
   bill_id: string;
   bill_prefix: string;
   bill_number: number;
+  testifier_count: number;
+  testified_count: number;
+};
+
+type hearingResponseItem = {
+  hearing_id: number;
+  committee_name: string;
+  chamber: string;
+  meeting_datetime: string;
+  location?: string;
+  tvw_url?: string;
+  tvw_event_id?: string;
+  agenda_items: hearingAgendaItemResponse[];
 };
 
 type hearingsResponse = {
@@ -283,16 +312,34 @@ export type HearingSearchResult = {
 };
 
 function mapHearingItem(h: hearingResponseItem): HearingBundleEntry {
+  const agendaItems = (h.agenda_items ?? []).map((a) => ({
+    csiAgendaItemId: a.csi_agenda_item_id,
+    agendaItemLabel: a.agenda_item_label,
+    biennium: a.biennium,
+    billId: a.bill_id,
+    billPrefix: a.bill_prefix,
+    billNumber: a.bill_number,
+    testifierCount: a.testifier_count,
+    testifiedCount: a.testified_count,
+  }));
+  const first = agendaItems[0];
+  const title = `${h.committee_name} · ${new Date(h.meeting_datetime).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  })}`;
   return {
-    biennium: h.biennium,
-    billPrefix: h.bill_prefix,
-    billNumber: h.bill_number,
-    billId: h.bill_id,
-    title: h.agenda_item_label || h.bill_id,
-    csiAgendaItemId: h.csi_agenda_item_id,
+    hearingId: h.hearing_id,
+    title,
     committeeName: h.committee_name,
     chamber: h.chamber,
     meetingDatetime: h.meeting_datetime,
+    location: h.location,
+    tvwUrl: h.tvw_url,
+    tvwEventId: h.tvw_event_id,
+    agendaItems,
+    csiAgendaItemId: first?.csiAgendaItemId,
+    billId: first?.billId,
   };
 }
 
@@ -349,14 +396,14 @@ export async function searchHearings(filters: HearingSearchFilters): Promise<Hea
   };
 }
 
-export async function loadHearingBundle(csiAgendaItemId: string): Promise<Bundle | null> {
-  const url = `${API_BASE}/api/v1/hearings/${encodeURIComponent(csiAgendaItemId)}`;
+export async function loadHearingBundle(hearingId: string | number): Promise<HearingBundleEntry | null> {
+  const url = `${API_BASE}/api/v1/hearings/${encodeURIComponent(String(hearingId))}`;
   const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadHearingBundle ${url} returned ${res.status}`);
   }
-  return (await res.json()) as Bundle;
+  return mapHearingItem((await res.json()) as hearingResponseItem);
 }
 
 const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" | "endpoints">> = [
@@ -663,6 +710,7 @@ type orgDetailResponse = orgListItem & {
     bill_prefix: string;
     bill_number: number;
     csi_agenda_item_id?: string;
+    hearing_id?: number;
     hearing_title: string;
     committee_name: string;
     meeting_datetime: string;
@@ -720,6 +768,7 @@ export async function loadOrganizationBundle(slug: string): Promise<Organization
       billPrefix: a.bill_prefix,
       billNumber: a.bill_number,
       csiAgendaItemId: a.csi_agenda_item_id,
+      hearingId: a.hearing_id,
       hearingTitle: a.hearing_title,
       committeeName: a.committee_name,
       meetingDatetime: a.meeting_datetime,

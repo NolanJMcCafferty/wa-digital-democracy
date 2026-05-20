@@ -95,9 +95,9 @@ export default async function OrganizationPage({
                       {a.position ? ` · ${a.position}` : ""}
                     </p>
                   </div>
-                  {a.csiAgendaItemId ? (
+                  {a.hearingId ? (
                     <Link
-                      href={`/hearings/${a.csiAgendaItemId}`}
+                      href={`/hearings/${a.hearingId}`}
                       className="text-sm text-blue-700 underline hover:text-blue-900"
                     >
                       Hearing page →

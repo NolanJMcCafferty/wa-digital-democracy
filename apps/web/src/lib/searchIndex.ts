@@ -48,9 +48,11 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
       withSearchText({
         type: "Hearing" as const,
         title: h.title,
-        subtitle: `${h.committeeName} · ${h.billId}`,
-        href: `/hearings/${h.csiAgendaItemId}`,
-        keywords: `${h.meetingDatetime} CSI ${h.csiAgendaItemId}`,
+        subtitle: `${h.committeeName} · ${h.agendaItems.length} agenda item${h.agendaItems.length === 1 ? "" : "s"}`,
+        href: `/hearings/${h.hearingId}`,
+        keywords: `${h.meetingDatetime} ${h.agendaItems
+          .map((a) => `${a.billId} ${a.agendaItemLabel} CSI ${a.csiAgendaItemId}`)
+          .join(" ")}`,
       })
     ),
     ...organizations.map((o) =>
