@@ -6,7 +6,7 @@
 -- assembler, future search-result deep-links) read back exactly what
 -- the segmenter wrote — no re-deriving in SQL with a different
 -- threshold. Replaces the in-SQL window query that previously lived
--- in `internal/render/firstpage/bundle.go`.
+-- in the page assemblers.
 --
 -- One window is one [start_ms, end_ms] span on the same TVW event
 -- where a particular bill is being discussed. Most agenda items have

@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { decideSpeakerReviewTask, loadSpeakerReviewTask, type SpeakerReviewSegment } from "@/lib/loadBundle";
+import { decideSpeakerReviewTask, loadSpeakerReviewTask, type SpeakerReviewSegment } from "@/lib/api";
 
 function fmtMS(ms: number): string {
   const total = Math.floor(ms / 1000);

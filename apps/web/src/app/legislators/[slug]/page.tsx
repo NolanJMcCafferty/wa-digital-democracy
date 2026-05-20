@@ -3,7 +3,7 @@ import {
   listLegislators,
   loadLegislatorPage,
   searchBills,
-} from "@/lib/loadBundle";
+} from "@/lib/api";
 import {
   BillSearchResults,
   parseBillFilters,

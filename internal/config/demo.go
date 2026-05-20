@@ -1,15 +1,11 @@
-// Package config loads operator-edited YAML configs that drive Phase 4.
+// Package config holds shared ingestion configuration types.
 package config
 
-import (
-	"fmt"
-	"os"
+import "fmt"
 
-	"gopkg.in/yaml.v3"
-)
-
-// SelectedDemo mirrors config/selected_demo.yml. The operator picks a
-// candidate from `wa-dd find-candidates` and pastes its IDs here.
+// SelectedDemo identifies a bill + agenda item selected from normalized DB
+// state. It is reconstructed from Postgres for routine ingestion and page
+// assembly; there is no operator-edited selected-demo YAML path anymore.
 type SelectedDemo struct {
 	Biennium   string `yaml:"biennium"`
 	BillPrefix string `yaml:"bill_prefix"`
@@ -44,58 +40,4 @@ func (d SelectedDemo) BillID() string {
 		return ""
 	}
 	return fmt.Sprintf("%s %d", d.BillPrefix, d.BillNumber)
-}
-
-// LoadSelectedDemo reads and validates a selected_demo.yml.
-func LoadSelectedDemo(path string) (*SelectedDemo, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read demo config: %w", err)
-	}
-	var d SelectedDemo
-	if err := yaml.Unmarshal(body, &d); err != nil {
-		return nil, fmt.Errorf("parse demo config: %w", err)
-	}
-	if err := d.Validate(); err != nil {
-		return nil, err
-	}
-	return &d, nil
-}
-
-// Validate checks that required fields are present.
-func (d SelectedDemo) Validate() error {
-	var missing []string
-	if d.Biennium == "" {
-		missing = append(missing, "biennium")
-	}
-	if d.BillPrefix == "" {
-		missing = append(missing, "bill_prefix")
-	}
-	if d.BillNumber == 0 {
-		missing = append(missing, "bill_number")
-	}
-	if d.Chamber == "" {
-		missing = append(missing, "chamber")
-	}
-	if d.Agenda.CSIAgendaItemID == "" {
-		missing = append(missing, "agenda.csi_agenda_item_id")
-	}
-	if d.Agenda.CSIMeetingFamilyID == "" {
-		missing = append(missing, "agenda.csi_meeting_family_id")
-	}
-	if d.Agenda.Label == "" {
-		missing = append(missing, "agenda.label")
-	}
-	// committee.csi_id is required for re-fetching meetings/agenda IDs from CSI.
-	if d.Committee.CSIID == "" {
-		missing = append(missing, "committee.csi_id")
-	}
-	// tvw.event_id is the join key for video/transcript ingestion.
-	if d.TVW.EventID == "" {
-		missing = append(missing, "tvw.event_id")
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("selected_demo.yml missing required fields: %v", missing)
-	}
-	return nil
 }

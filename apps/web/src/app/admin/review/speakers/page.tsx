@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listSpeakerReviewTasks, type SpeakerReviewTask } from "@/lib/loadBundle";
+import { listSpeakerReviewTasks, type SpeakerReviewTask } from "@/lib/api";
 
 function fmtMS(ms: number): string {
   const total = Math.floor(ms / 1000);

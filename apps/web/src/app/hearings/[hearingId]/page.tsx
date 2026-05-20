@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadHearingPage, listHearings, type HearingAgendaItemEntry } from "@/lib/loadBundle";
+import { loadHearingPage, listHearings, type HearingAgendaItemEntry } from "@/lib/api";
 import type { Position, Testifier } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 import { DiarizedTranscriptSection } from "./_sections/DiarizedTranscriptSection";

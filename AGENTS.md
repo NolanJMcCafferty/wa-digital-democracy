@@ -22,14 +22,14 @@ nightly cron: make daily
 
 Every public fact traces back to a `source_record` row (raw bytes on disk under `data/raw/<system>/`, deduped by `(system, endpoint, url, content_hash, transform_version)`). The `httpx.RawSink` is wired into the HTTP client so every connector fetch records provenance with no per-step boilerplate.
 
-The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `testifier` / `tvw_event` / `transcript_segment` / `organization` tables are all upsertable on stable keys — re-running passes is safe. **Exception:** `testifier` and `transcript_segment` are insert-only with no dedupe; `ingest-hearings` filters to agenda items without testifier rows so the routine path doesn't hit this, but one-off `build-bundle` re-runs against an already-ingested bill currently create duplicates.
+The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `tvw_event` / `organization` tables are upsertable on stable keys — re-running passes is safe. **Exception:** `testifier` and `transcript_segment` are insert-only with no dedupe; `ingest-hearings` filters to agenda items without testifier rows so the routine path doesn't hit this.
 
 ## Layout
 
 ```
 cmd/
-  wa-dd/        operator CLI (find-candidates, build-bundle, ingest-session,
-                discover-hearings, ingest-hearings)
+  wa-dd/        operator CLI (find-candidates, ingest-session,
+                discover-hearings, ingest-hearings, entity/backfill jobs)
   wa-dd-api/    read-only HTTP API the Next.js frontend reads from (:8080)
 internal/
   sources/{lws,csi,committeeschedules,tvw,pdc,socrata,...}/
@@ -42,9 +42,8 @@ internal/
   storage/db/   pgx wrapper, hand-written Pool.Query methods on *Store,
                 source_record helpers, RawSink
   storage/objectstore/  filesystem object store for raw API responses
-  render/firstpage/  Page-object assemblers plus legacy first-page snapshot
-                builder (firstpage.Build) + DB→SelectedDemo lookups
-  config/       YAML loaders (selected_demo.yml)
+  render/firstpage/  Page-object assemblers + DB→SelectedDemo lookups
+  config/       shared ingestion configuration structs
 db/migrations/  goose-style SQL; project-pinned via tools/goose
 db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
                 Pool.Query methods on *Store, not codegen. Don't add to this
@@ -53,10 +52,9 @@ apps/web/       Next.js 16 + React 19 + TS + Tailwind 4. Server Components
                 fetch the Go API by absolute URL (process.env.WADD_API_URL)
                 because they don't go through next.config.ts rewrites.
                 Client components use the rewrite (/api/v1/* → :8080).
-config/         operator-edited YAML (issue_keywords.yml, selected_demo.yml,
-                selected_demo.yml)
+config/         operator-edited YAML (issue_keywords.yml)
 data/raw/       immutable raw API responses (gitignored)
-data/processed/ Legacy demo JSON snapshots + run-summary JSONs (gitignored)
+data/processed/ run-summary JSONs and derived artifacts (gitignored)
 docs/           ingestion.md is the canonical implementation doc.
                 phase0-spike-report.md is the frozen Phase 0 findings.
 ```
@@ -83,8 +81,6 @@ go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
 go run ./cmd/wa-dd discover-hearings --biennium 2025-26 --limit 47
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
-# One-off curated legacy snapshot (Phase 2 demo path; not in daily chain)
-INVINTUS_EMBEDDER_KEY=… make build-demo
 ```
 
 `make help` lists every Makefile target with a one-line description.
@@ -95,9 +91,9 @@ INVINTUS_EMBEDDER_KEY=… make build-demo
 - **Bill prefixes.** LWS reports `BillID` in the *current* substituted/engrossed form (`SSB 6054`, `2SHB 1859`). `internal/sources/lws/normalize.go:baseBillPrefix` strips `E`/`N`/`S` chrome down to the bare prefix (`HB`/`SB`/`HJR`/etc.) so a single bill doesn't fork into multiple rows as it moves through the legislature.
 - **`IngestBill` two-mode behavior.** When `Demo.Chamber` is set (curated path), it stores one chamber-matched hearing. When empty (`ingest-session` path), it stores every hearing LWS reports so `discover-hearings` has rows to enrich.
 - **Rate limit default 10 req/sec** per upstream host. The User-Agent identifies the project so state-agency operators can contact us. Retries on 429/5xx with exponential backoff.
-- **Pipeline orchestration** lives in `internal/jobs/jobs.go`. `Pipeline.Run` runs all 6 steps; `Pipeline.RunMetadataOnly` runs only `IngestBill`. The CLI commands wire steps into `buildOne` (curated/single-bill) or the discovery/ingest-hearings drivers.
+- **Pipeline orchestration** lives in `internal/jobs/jobs.go`. `Pipeline.Run` runs all 6 hearing-ingestion steps; `Pipeline.RunMetadataOnly` runs only `IngestBill`. The CLI commands wire steps into the discovery/ingest-hearings drivers.
 - **Page response shapes.** Public API routes should return explicit page/list objects (`BillPage`, `HearingPage`, `OrganizationPage`, etc.), not generic bundles. Keep collection fields initialized to `[]` rather than `nil` so frontend code can treat them as arrays.
-- **Legacy snapshots.** `firstpage.Build` / `wa-dd build-bundle` remain for one-off curated demo JSON snapshots only; do not make new live frontend routes depend on that legacy shape.
+- **No generated page snapshots.** The old generated snapshot path has been removed. Public/frontend page data should come from route-specific API objects assembled from Postgres.
 - **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `billPageHandler` and `searchTranscriptsHandler` for examples.
 - **Frontend fetch path.** Server Components fetch by absolute URL (`process.env.WADD_API_URL ?? "http://localhost:8080"`) because they don't traverse `next.config.ts` rewrites. Client components use the rewrite path `/api/v1/...` so requests stay same-origin.
 

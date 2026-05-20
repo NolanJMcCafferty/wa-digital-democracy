@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { OrganizationListEntry } from "@/lib/loadBundle";
+import type { OrganizationListEntry } from "@/lib/api";
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 

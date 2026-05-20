@@ -17,9 +17,7 @@ import (
 var ErrBillNotFound = errors.New("firstpage: bill not ingested")
 
 // LookupSelectedDemo reconstructs a SelectedDemo for a bill by joining
-// against the agenda_item + hearing tables Phase 4's ingest pipeline
-// populated. The API path reads it from Postgres directly; the singular
-// `wa-dd build-bundle` reads it from config/selected_demo.yml.
+// against the agenda_item + hearing tables the ingestion pipeline populated.
 //
 // When a bill has multiple hearings (e.g. House referral and Senate
 // referral), the most recent hearing wins. That's the v1 default; if a
@@ -132,9 +130,8 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 }
 
 // LookupSelectedDemoByAgendaItem reconstructs a SelectedDemo by pivoting
-// on the CSI agenda item ID. The hearing-detail API endpoint
-// (/api/v1/hearings/{id}) needs this so it can call firstpage.Build
-// without first knowing the bill identifiers.
+// on the CSI agenda item ID. Hearing ingestion and the hearing-detail API use
+// this to build per-agenda-item sections without first knowing bill IDs.
 func LookupSelectedDemoByAgendaItem(
 	ctx context.Context,
 	store *db.Store,
@@ -153,10 +150,10 @@ SELECT b.biennium, b.prefix, b.number,
  WHERE a.csi_agenda_item_id = $1
  LIMIT 1;`
 	var (
-		biennium, prefix                                          string
-		number                                                    int
+		biennium, prefix                                              string
+		number                                                        int
 		gotCSIAgendaItemID, csiMeetingFamilyID, csiAgendaItemFamilyID string
-		label, tvwEventID, committeeAcronym, chamber              string
+		label, tvwEventID, committeeAcronym, chamber                  string
 	)
 	err := store.Pool.QueryRow(ctx, q, csiAgendaItemID).Scan(
 		&biennium, &prefix, &number,

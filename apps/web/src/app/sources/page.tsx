@@ -1,4 +1,4 @@
-import { listSourceSummaries } from "@/lib/loadBundle";
+import { listSourceSummaries } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 
 const STATUS_STYLE = {

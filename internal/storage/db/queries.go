@@ -536,8 +536,8 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8::speaker_confidence,$9,$10);`
 
 // AgendaItemWindow is one detected bill-discussion span on a TVW event.
 // SegmentTranscript writes these atomically with the corresponding
-// transcript_segment.agenda_item_id assignments; the bundle assembler
-// reads them back literally so window boundaries are stable across
+// transcript_segment.agenda_item_id assignments; page assemblers
+// read them back literally so window boundaries are stable across
 // re-renders and aren't re-derived in SQL with a different threshold.
 type AgendaItemWindow struct {
 	StartMS  int
@@ -601,7 +601,7 @@ VALUES ($1, $2, $3, $4);`
 }
 
 // ListAgendaItemWindowsByAgendaItem returns the persisted windows for a
-// CSI agenda-item ID, ordered by start_ms. Used by the bundle assembler.
+// CSI agenda-item ID, ordered by start_ms. Used by page assemblers.
 func (s *Store) ListAgendaItemWindowsByAgendaItem(ctx context.Context, csiAgendaItemID string) ([]AgendaItemWindow, error) {
 	const q = `
 SELECT w.start_ms, w.end_ms, w.mentions

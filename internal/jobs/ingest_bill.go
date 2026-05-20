@@ -11,7 +11,7 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// IngestBill fetches the LWS bill bundle for the demo bill, persists raw
+// IngestBill fetches the LWS bill metadata package for the selected bill, persists raw
 // XML via the RawSink, and upserts bill / bill_sponsor /
 // bill_status_change. Legislator rows are owned by ingest-legislators;
 // sponsor joins resolve against that roster and skip missing members.

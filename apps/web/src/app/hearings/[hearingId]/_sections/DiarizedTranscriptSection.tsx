@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { DiarizedTranscript } from "@/lib/loadBundle";
+import type { DiarizedTranscript } from "@/lib/api";
 import { formatMS, tvwDeepLink } from "@/lib/format";
 
 export function DiarizedTranscriptSection({

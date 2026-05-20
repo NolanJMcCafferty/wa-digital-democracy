@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listLegislators, type LegislatorListEntry } from "@/lib/loadBundle";
+import { listLegislators, type LegislatorListEntry } from "@/lib/api";
 
 const PARTY_LABEL: Record<string, string> = {
   D: "Democrat",

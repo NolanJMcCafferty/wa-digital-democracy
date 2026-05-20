@@ -15,7 +15,7 @@ Per `~/Documents/v1/wiki/politics/Washington Digital Democracy - Recommended Tec
 - **Database:** Postgres (+ PostGIS later) with JSONB and `pg_trgm`.
 - **Raw storage:** local filesystem under `data/raw/` for prototype; S3/R2 in production.
 
-The page architecture is "Go assembles route-specific JSON page objects from Postgres; Next.js renders those page objects." Legacy one-off demo tooling can still write first-page bundle snapshots.
+The page architecture is "Go assembles route-specific JSON page objects from Postgres; Next.js renders those page objects." Postgres is the source of truth; the frontend no longer reads generated snapshot files.
 
 ## Local dev
 
@@ -23,7 +23,6 @@ The page architecture is "Go assembles route-specific JSON page objects from Pos
 cp .env.example .env.local  # fill in local-only secrets; .env.local is gitignored
 make up                     # start Postgres in Docker
 make migrate-up             # apply schema with project-pinned Goose
-make build-demo             # build the selected legacy first-page JSON bundle
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
 make psql                   # open a shell against the local DB
@@ -31,9 +30,6 @@ make db-docs                # generate SchemaSpy HTML docs for the local schema
 make analytics              # start optional Metabase analytics UI on :3001
 make api                    # run the HTTP API the Next.js frontend reads from (:8080)
 ```
-
-`make build-demo` loads `.env.local` by default. Set `ENV_FILE=/path/to/file`
-to use a different local environment file.
 
 `INVINTUS_EMBEDDER_KEY` is required for TVW/Invintus caption ingestion.
 `SOCRATA_APP_TOKEN` is optional for data.wa.gov/PDC reads; leave it blank
@@ -83,7 +79,7 @@ idempotent and safe to re-run:
    LWS `GetLegislationByYear` and stores metadata + sponsors + status
    timeline + hearing references. Hearings/testimony/video are **not**
    touched here — just the LWS-side claims about each bill. ~5,000
-   bills at 10 req/sec, runtime ~35-40 minutes. Summary:
+   bills at the default rate/concurrency, runtime depends on upstream latency. Summary:
    `data/processed/_session.json`.
 
 2. **`make ingest-hearings`** — first discovers CSI agenda IDs + TVW
@@ -107,13 +103,13 @@ For nightly cron, one line is enough:
 Re-running is cheap in DB writes — `source_record` dedups on
 `(system, endpoint, url, content_hash, transform_version)` and just
 bumps `fetched_at` for unchanged content — but every run still re-hits
-every upstream API at the configured rate (10 req/sec default).
+every upstream API at the configured rate.
 
 ## Layout
 
 ```
 cmd/
-  wa-dd/                  # operator CLI (find-candidates, ingest-*, build-bundle)
+  wa-dd/                  # operator CLI (find-candidates, ingest-*, daily pipeline)
   wa-dd-api/              # read-only HTTP API for the Next.js frontend
 internal/
   sources/{lws,csi,committeeschedules,tvw,pdc}/
@@ -125,12 +121,11 @@ db/
   migrations/             # goose-style SQL migrations
 config/
   issue_keywords.yml
-  selected_demo.yml       # operator-edited; pins the bill/hearing rendered
 infra/
   docker-compose.yml
 data/
   raw/                    # immutable raw API responses (gitignored)
-  processed/              # Legacy demo snapshots + run summaries (gitignored)
+  processed/              # run summaries and derived artifacts (gitignored)
 docs/
   phase0-spike-report.md          # preserved feasibility findings
   written-testimony-source-note.md # pending written-testimony access note

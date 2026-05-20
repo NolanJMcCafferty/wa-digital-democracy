@@ -1,17 +1,15 @@
-// Package jobs implements the eight build-pipeline steps from the Blueprint
-// (lines 551–712). Each step is idempotent and uses idempotent upserts so
-// re-running build-bundle for the same demo converges to the same DB state.
+// Package jobs implements the ingestion pipeline steps. Each step is designed
+// around idempotent upserts where the underlying source data has stable keys.
 //
 // Steps:
 //
-//  1. IngestBill            LWS bundle → bill, bill_sponsor, status timeline
+//  1. IngestBill            LWS metadata → bill, bill_sponsor, status timeline
 //  2. EnrichSchedules       (skipped at runtime when operator provides TVW event ID)
 //  3. IngestCSI              CSI agenda + testifiers → hearing, agenda_item, testifier
 //  4. IngestTVW              Invintus event detail + VTT → tvw_event, transcript_segment
 //  5. SegmentTranscript      bill open/close detection → assign agenda_item_id to segments
 //  6. MatchSpeakers          CSI testifier order around bill segment → speaker labels
 //  7. PopulateOrganizations  CSI organization strings → organization + testifier links
-//  8. BuildBundle            (in render/firstpage)
 package jobs
 
 import (
@@ -46,8 +44,8 @@ type Pipeline struct {
 }
 
 // IDs is the running set of database IDs the pipeline accumulates as it
-// progresses. Each step both reads and writes to this struct, so Step 8 can
-// reach all rows it needs to render the bundle.
+// progresses. Each step both reads and writes to this struct so later pipeline steps can
+// use database IDs found or created by earlier steps.
 type IDs struct {
 	BillID           int64
 	HearingID        int64

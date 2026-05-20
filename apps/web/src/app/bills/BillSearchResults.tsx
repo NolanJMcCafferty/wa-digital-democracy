@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { classifyBillStage, type BillStage } from "@/lib/billStatus";
-import type { BillSearchFilters, BillListEntry } from "@/lib/loadBundle";
+import type { BillSearchFilters, BillListEntry } from "@/lib/api";
 
 export const STATUS_LABEL: Record<string, string> = {
   in_progress: "In progress",

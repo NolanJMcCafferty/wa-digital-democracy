@@ -1,4 +1,4 @@
-import { searchBills, type BillSearchResult } from "@/lib/loadBundle";
+import { searchBills, type BillSearchResult } from "@/lib/api";
 import {
   BillSearchResults,
   parseBillFilters,

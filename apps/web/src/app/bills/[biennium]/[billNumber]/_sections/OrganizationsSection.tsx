@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Organization } from "@/lib/pageTypes";
 import { confidenceLabel } from "@/lib/format";
-import { slugify } from "@/lib/loadBundle";
+import { slugify } from "@/lib/api";
 
 export function OrganizationsSection({
   organizations,

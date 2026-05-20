@@ -6,7 +6,7 @@ import {
   slugify,
   type BillPage,
   type OrganizationListEntry,
-} from "@/lib/loadBundle";
+} from "@/lib/api";
 import type { Position } from "@/lib/pageTypes";
 import {
   BillSearchResults,

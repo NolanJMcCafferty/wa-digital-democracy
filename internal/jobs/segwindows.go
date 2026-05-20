@@ -4,7 +4,7 @@ package jobs
 // segmenter can be unit-tested without a database. The single source
 // of truth for "this cue mentions bill X" is DetectBillDiscussionWindows
 // + the regex it uses (billDiscussionMentionPattern below). Downstream
-// consumers — the bundle assembler, search-result deep-links, future
+// consumers — page assemblers, search-result deep-links, future
 // transcript-highlighting UI — should:
 //
 //   1. Read agenda_item_window rows that SegmentTranscript persisted, or
@@ -14,7 +14,7 @@ package jobs
 // Two implementations of "matches the bill" inevitably drift, and
 // rendered windows that disagree with the segmenter's persisted windows
 // have already bitten this codebase once (the old in-SQL window-detect
-// query in bundle.go used a 120s gap threshold, while the segmenter
+// old page-assembly query used a 120s gap threshold, while the segmenter
 // used 180s — bills with mention gaps in that band rendered with a
 // different window count than they were tagged with). Don't repeat it.
 

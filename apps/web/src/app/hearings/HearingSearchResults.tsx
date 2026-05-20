@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { formatDate } from "@/lib/format";
-import type { HearingPage, HearingSearchFilters } from "@/lib/loadBundle";
+import type { HearingPage, HearingSearchFilters } from "@/lib/api";
 import { ISSUE_PAGE_CONFIGS } from "../issues/_shared/config";
 
 export type RawHearingSearchParams = Record<string, string | string[] | undefined>;

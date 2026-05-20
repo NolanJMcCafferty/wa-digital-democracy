@@ -7,7 +7,7 @@ import {
   countHearings,
   listLegislators,
   listOrganizations,
-} from "@/lib/loadBundle";
+} from "@/lib/api";
 // Issue tiles. Live issues link to /issues/{slug}; "coming soon"
 // placeholders read as a roadmap. Pattern mirrors CalMatters' "California
 // Agenda" issue row. To promote a placeholder, update its href + status

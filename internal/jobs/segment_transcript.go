@@ -12,7 +12,7 @@ import (
 // win, but the automatic path supports multiple windows for the same
 // bill in one TVW event instead of a single first-mention-to-last-
 // mention span. Windows are persisted to agenda_item_window so the
-// bundle assembler reads them back literally.
+// page assemblers read them back literally.
 func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	if ids.AgendaItemID == 0 {
 		return fmt.Errorf("segment-transcript: AgendaItemID not set; ingest-csi must run first")
@@ -47,7 +47,7 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	}
 	windows := DetectBillDiscussionWindows(jobCues, p.Demo.BillPrefix, p.Demo.BillNumber)
 	if len(windows) == 0 {
-		fmt.Fprintf(stderrSink, "  no transcript mentions of %s %d; bill segment unset (set transcript_override in selected_demo.yml to override)\n",
+		fmt.Fprintf(stderrSink, "  no transcript mentions of %s %d; bill segment unset (set TranscriptOverride on the selected demo to override)\n",
 			p.Demo.BillPrefix, p.Demo.BillNumber)
 		// Empty input still clears any stale assignments + windows
 		// from a prior run that found mentions and now doesn't.

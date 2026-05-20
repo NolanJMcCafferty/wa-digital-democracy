@@ -8,7 +8,6 @@
 //	wa-dd ingest-csi       --chamber House --committee-id <id> --meeting-family-id <id>
 //	wa-dd ingest-tvw       --event-id <event_id>
 //	wa-dd match-hearing    --bill HB1234 --event-id <event_id>
-//	wa-dd build-bundle     --config config/selected_demo.yml
 //
 // Phase 3 ships find-candidates; the rest are stubs until Phase 4.
 package main
@@ -64,11 +63,10 @@ USAGE:
 SUBCOMMANDS:
   find-candidates    Score candidate bill/hearing pairs for a given issue
   inspect-candidate  Print joined source state for a single candidate
-  ingest-bill        Pull LWS bill bundle into Postgres
+  ingest-bill        Pull LWS bill metadata into Postgres
   ingest-csi         Pull CSI testifier list for an agenda item
   ingest-tvw         Pull TVW/Invintus event detail + VTT
   match-hearing      Compute meeting<->TVW match for a candidate
-  build-bundle       Assemble the JSON bundle for a selected demo
   ingest-legislators Pull the full House+Senate roster for a biennium from LWS
   ingest-session     Ingest LWS metadata for every bill in a biennium (no hearings)
   discover-hearings  Auto-fill CSI/TVW IDs on every LWS hearing in a biennium
@@ -126,8 +124,6 @@ func main() {
 		os.Exit(runFindCandidates(args))
 	case "inspect-candidate":
 		runStub(cmd, args, "phase 3")
-	case "build-bundle":
-		os.Exit(runBuildBundle(args))
 	case "ingest-legislators":
 		os.Exit(runIngestLegislators(args))
 	case "ingest-session":
@@ -173,9 +169,9 @@ func main() {
 	case "extract-speaker-evidence":
 		os.Exit(runExtractSpeakerEvidence(args))
 	case "ingest-bill", "ingest-csi", "match-hearing":
-		// All four are implemented as steps inside `build-bundle`. Direct
-		// per-step invocation isn't shipped in v1.
-		fmt.Fprintf(os.Stderr, "wa-dd %s: run via 'wa-dd build-bundle' (per-step CLI not yet exposed)\n", cmd)
+		// These remain internal pipeline steps. The routine operator path is
+		// ingest-session -> discover-hearings -> ingest-hearings.
+		fmt.Fprintf(os.Stderr, "wa-dd %s: direct per-step CLI not exposed; use ingest-session/discover-hearings/ingest-hearings\n", cmd)
 		os.Exit(64)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -288,7 +284,7 @@ func printTop(cs []candidate.Candidate, n int) {
 			c.TestifierCount, c.ProCount, c.ConCount, c.OtherCount,
 			c.UniqueOrganizations, c.AgendaItemID)
 	}
-	fmt.Fprintln(os.Stderr, "\nPick one and copy its IDs into config/selected_demo.yml.")
+	fmt.Fprintln(os.Stderr, "\nUse discover-hearings and ingest-hearings to enrich selected agenda items from the database.")
 }
 
 func env(key, def string) string {
@@ -312,58 +308,8 @@ func writeJSON(path string, v any) error {
 	return enc.Encode(v)
 }
 
-// runBuildBundle implements `wa-dd build-bundle`.
-//
-// Steps:
-//  1. Load selected_demo.yml.
-//  2. Open Postgres + the filesystem object store and wire them into the
-//     shared httpx.RawSink so every fetch records provenance.
-//  3. Run the eight pipeline jobs (Blueprint Steps 1–8 minus the optional
-//     Committee Schedules enrichment, which the operator covered by
-//     pasting tvw.event_id into the demo config).
-//  4. Assemble the JSON bundle and write to data/processed/bundles/.
-func runBuildBundle(args []string) int {
-	fs := flag.NewFlagSet("build-bundle", flag.ContinueOnError)
-	var (
-		cfgPath   = fs.String("config", "config/selected_demo.yml", "path to selected_demo.yml")
-		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		outDir    = fs.String("out-dir", "data/processed/bundles", "where the JSON bundle is written")
-		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for legislative APIs")
-	)
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	demo, err := config.LoadSelectedDemo(*cfgPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
-		return 1
-	}
-
-	deps, cleanup, err := newBuildDeps(ctx, *dsn, *rawDir, *rateLimit)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
-		return 1
-	}
-	defer cleanup()
-
-	logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
-	logf(fmt.Sprintf("==> demo: %s (%s, agenda %s)",
-		demo.BillID(), demo.Biennium, demo.Agenda.CSIAgendaItemID))
-
-	if _, err := buildOne(ctx, deps, demo, *outDir, logf); err != nil {
-		fmt.Fprintf(os.Stderr, "build-bundle: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
-// buildDeps groups the long-lived process-wide dependencies that build-bundle
-// and ingest-hearings share. Construct once per process via newBuildDeps.
+// buildDeps groups the long-lived process-wide dependencies that ingest-hearings needs.
+// Construct once per process via newBuildDeps.
 type buildDeps struct {
 	store      *db.Store
 	httpClient *httpx.Client
@@ -459,11 +405,10 @@ func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64)
 	}, cleanup, nil
 }
 
-// buildOne runs the full ingest+bundle pipeline for a single bill and writes
-// the bundle JSON to outDir. Returns the absolute path of the written bundle.
-// All errors are wrapped with the bill identifier so callers can log per-bill
-// status without re-decoding.
-func buildOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, outDir string, logf func(string)) (string, error) {
+// ingestOne runs the full hearing-ingestion pipeline for one agenda item.
+// Page JSON is assembled on demand by wa-dd-api; this routine only writes
+// normalized source-linked records to Postgres.
+func ingestOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, logf func(string)) error {
 	pipeline := &jobs.Pipeline{
 		Store: deps.store,
 		LWS:   deps.lwsClient,
@@ -473,31 +418,7 @@ func buildOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, o
 		Demo:  demo,
 	}
 	ids := jobs.NewIDs()
-	if err := pipeline.Run(ctx, logf, ids); err != nil {
-		return "", err
-	}
-
-	logf("==> assembling bundle")
-	bundle, err := firstpage.Build(ctx, deps.store, demo)
-	if err != nil {
-		return "", err
-	}
-	outName := fmt.Sprintf("wa_%s_%s%d.json", demo.Biennium, demo.BillPrefix, demo.BillNumber)
-	outPath := filepath.Join(outDir, outName)
-	if err := writeJSON(outPath, bundle); err != nil {
-		return "", fmt.Errorf("write: %w", err)
-	}
-	logf(fmt.Sprintf("wrote %s", outPath))
-	logf(fmt.Sprintf("  testifiers=%d  segments=%d  organizations=%d  sources=%d",
-		len(bundle.Testifiers), len(bundle.Transcript.Segments),
-		len(bundle.Organizations), len(bundle.Sources)))
-	if len(bundle.KnownLimitations) > 0 {
-		logf("  known limitations:")
-		for _, l := range bundle.KnownLimitations {
-			logf("    - " + l)
-		}
-	}
-	return outPath, nil
+	return pipeline.Run(ctx, logf, ids)
 }
 
 func runIngestTVW(args []string) int {
@@ -1056,7 +977,7 @@ func runIngestHearings(args []string) int {
 		biennium  = fs.String("biennium", "2025-26", "Biennium to scan, e.g. 2025-26")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
-		outDir    = fs.String("out-dir", "data/processed/bundles", "where bundle JSON is written")
+		outDir    = fs.String("out-dir", "data/processed", "where _ingest.json is written")
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per legislative host")
 		limit     = fs.Int("limit", 0, "stop after N agenda items (0 = no limit). For smoke tests.")
 	)
@@ -1089,7 +1010,6 @@ func runIngestHearings(args []string) int {
 		CSIAgendaItemID string `json:"csi_agenda_item_id"`
 		Status          string `json:"status"`
 		DurationMS      int64  `json:"duration_ms"`
-		BundlePath      string `json:"bundle_path,omitempty"`
 		Error           string `json:"error,omitempty"`
 	}
 	results := make([]result, 0, len(rows))
@@ -1112,7 +1032,7 @@ func runIngestHearings(args []string) int {
 		fmt.Fprintf(os.Stderr, "==> %s starting (agenda=%s)\n", prefix, r.CSIAgendaItemID)
 		t0 := time.Now()
 		logf := func(s string) { fmt.Fprintf(os.Stderr, "    %s\n", s) }
-		bundlePath, err := buildOne(ctx, deps, demo, *outDir, logf)
+		err = ingestOne(ctx, deps, demo, logf)
 		dur := time.Since(t0)
 		if err != nil {
 			failures++
@@ -1131,7 +1051,6 @@ func runIngestHearings(args []string) int {
 		results = append(results, result{
 			Bill: demo.BillID(), CSIAgendaItemID: r.CSIAgendaItemID,
 			Status: "ok", DurationMS: dur.Milliseconds(),
-			BundlePath: filepath.Base(bundlePath),
 		})
 	}
 
@@ -1149,7 +1068,7 @@ func runIngestHearings(args []string) int {
 		Succeeded: len(results) - failures, Failed: failures,
 		Results: results,
 	}
-	if err := writeJSON(filepath.Join(*outDir, "..", "_ingest.json"), summary); err != nil {
+	if err := writeJSON(filepath.Join(*outDir, "_ingest.json"), summary); err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-hearings: write _ingest.json: %v\n", err)
 		if failures == 0 {
 			return 1

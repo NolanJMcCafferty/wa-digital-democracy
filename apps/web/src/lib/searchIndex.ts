@@ -7,7 +7,7 @@ import {
   listOrganizations,
   loadBillPage,
   type BillPage,
-} from "./loadBundle";
+} from "./api";
 
 export type SearchResult = {
   // The "Transcript" variant is populated dynamically in SearchBox via

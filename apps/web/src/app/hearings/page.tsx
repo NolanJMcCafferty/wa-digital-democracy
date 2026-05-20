@@ -1,4 +1,4 @@
-import { searchHearings, type HearingSearchResult } from "@/lib/loadBundle";
+import { searchHearings, type HearingSearchResult } from "@/lib/api";
 import {
   HearingSearchResults,
   hearingFiltersToSearch,

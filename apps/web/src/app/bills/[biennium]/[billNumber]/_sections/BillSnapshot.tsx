@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Bill, Sponsor } from "@/lib/pageTypes";
-import { legislatorSlug } from "@/lib/loadBundle";
+import { legislatorSlug } from "@/lib/api";
 
 export function BillSnapshot({ bill }: { bill: Bill }) {
   const sponsors = bill.sponsors ?? [];

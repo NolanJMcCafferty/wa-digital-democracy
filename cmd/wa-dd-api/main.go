@@ -1,7 +1,5 @@
 // Command wa-dd-api is the read-only HTTP API that the Next.js frontend
-// reads to render page-specific JSON objects from Postgres. The legacy
-// wa-dd build-bundle command still writes curated demo snapshots to disk,
-// but live frontend routes should use explicit page/list response shapes.
+// reads to render page-specific JSON objects from Postgres.
 package main
 
 import (
@@ -1212,7 +1210,7 @@ func listSourcesHandler(store *db.Store) http.HandlerFunc {
 	}
 }
 
-// slugify mirrors apps/web/src/lib/loadBundle.ts:slugify exactly:
+// slugify mirrors apps/web/src/lib/api.ts:slugify exactly:
 //
 //	s.toLowerCase()
 //	  .replace(/&/g, " and ")

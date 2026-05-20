@@ -82,8 +82,8 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 		return err
 	}
 
-	// Bind the TVW event ID + URL onto the demo's hearing so the bundle's
-	// hearing→tvw_event join works. ingest-bill picks the hearing row
+	// Bind the TVW event ID + URL onto the selected hearing so page
+	// assemblers can join hearing→tvw_event. ingest-bill picks the hearing row
 	// before ingest-tvw runs, so we update it here.
 	if ids.HearingID != 0 {
 		const updQ = `

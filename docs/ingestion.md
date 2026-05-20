@@ -1,6 +1,6 @@
 # Data ingestion
 
-Last updated: 2026-05-18.
+Last updated: 2026-05-19.
 
 This document describes how data flows from the official Washington
 state sources (LWS, CSI, TVW/Invintus, PDC, DataWA) into Postgres and out to
@@ -14,7 +14,7 @@ where things land, and how to debug a stuck or misbehaving run.
         ┌──────────────────┬────────────────────────────────────┐
         │                  │                                    │
    ingest-session                 ingest-hearings
-   (~70 min)                discovery + full ingest (variable)
+   (concurrent)              discovery + full ingest (variable)
         │                  │                                    │
    LWS metadata         CSI agenda IDs + TVW event IDs, then
    for ~5,000 bills     CSI testifiers, TVW captions, transcript
@@ -29,7 +29,7 @@ where things land, and how to debug a stuck or misbehaving run.
                        Next.js frontend at :3000
 ```
 
-The public API now returns route-specific page objects assembled from Postgres. Legacy one-off demo tooling still uses the `firstpage.Build` Bundle shape for snapshot files.
+The public API returns route-specific page objects assembled from Postgres. The old generated JSON snapshot path has been removed; Postgres plus `wa-dd-api` is the only supported page-data flow.
 
 ## Legislative daily passes
 
@@ -82,8 +82,10 @@ path); when it's empty, it stores every hearing LWS reports
 - A summary at `data/processed/_session.json` with per-bill durations
   and any failures.
 
-**Cost:** ~5,000 bills × 4 LWS calls = 20,000 calls. At 10 req/sec to
-`wslwebservices.leg.wa.gov`, that's ~35-40 minutes.
+**Cost:** ~5,000 bills × 4 LWS calls = 20,000 calls. The default driver
+uses concurrent workers while the shared HTTP client enforces the LWS
+host rate limit, so runtime depends on upstream latency and the selected
+`--workers` / `--rate` values.
 
 **Code:** `cmd/wa-dd/main.go` (`runIngestSession`), `internal/jobs/jobs.go`
 (`Pipeline.RunMetadataOnly`), `internal/jobs/ingest_bill.go`
@@ -195,9 +197,9 @@ fetch the actual testimony, video captions, and downstream derivatives.
   via `Store.ListDiscoveredAgendaItems`.
 - For each row, calls `firstpage.LookupSelectedDemoByAgendaItem` to
   rebuild a `*config.SelectedDemo` from the DB (no YAML parsing).
-- Calls `buildOne` (the same function `build-bundle` uses for one-offs)
-  which runs `Pipeline.Run`'s 6 steps and writes the bundle JSON
-  snapshot.
+- Calls `ingestOne`, which runs `Pipeline.Run`'s 6 ingestion steps.
+  Page JSON is assembled later on demand by `wa-dd-api`; this pass no
+  longer writes generated page snapshots.
 
 The 6 pipeline steps (`internal/jobs/jobs.go`):
 
@@ -228,7 +230,6 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
 
 - Per agenda item: 1 hearing row updated, ~1–500 testifier rows,
   ~10–1000 transcript segments, and source-backed organization links where CSI org strings are present.
-- Legacy demo snapshot at `data/processed/bundles/wa_<biennium>_<prefix><n>.json`.
 - A summary at `data/processed/_ingest.json` with per-bill durations
   and any failures.
 
@@ -240,18 +241,7 @@ hearings → tens of minutes.
 **Code:** `cmd/wa-dd/main.go` (`runIngestHearings`),
 `internal/jobs/ingest_csi.go`, `internal/jobs/ingest_tvw.go`,
 `internal/jobs/segment_transcript.go`,
-`internal/jobs/match_speakers.go`, `internal/jobs/pdc_context.go`.
-
-### One-off: `wa-dd build-bundle` (singular)
-
-Not part of the daily chain. Runs the full 6-step pipeline for a
-single bill pinned by `config/selected_demo.yml`. Phase 2's EHB 1501
-verification used this; it's still the cleanest way to force-reingest
-a specific bill on demand (e.g. to regression-test a parser fix).
-
-`wa-dd find-candidates --issue housing` is the companion tool — it
-writes `data/processed/candidates.json` with copy-paste-ready IDs the
-operator pastes into `selected_demo.yml`.
+`internal/jobs/match_speakers.go`, and `internal/jobs/populate_organizations.go`.
 
 ## Postgres tables
 
@@ -358,9 +348,8 @@ All daily stages are safe to re-run. What changes:
 - `testifier`, `transcript_segment` — these are insert-only with no
   dedupe. Re-running creates duplicates today.
   `ingest-hearings` filters to agenda items without testifier rows, so
-  the routine nightly path doesn't hit this; one-off `build-bundle`
-  re-runs against an already-ingested bill will. Worth fixing
-  eventually, but not blocking.
+  the routine nightly path doesn't hit this. Worth fixing eventually, but
+  not blocking.
 - `source_record` — UPSERT on `(system, endpoint, url, content_hash,
   transform_version)`. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new

@@ -17,7 +17,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build build-demo vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -81,9 +81,6 @@ build:        ## Build all binaries into ./bin
 	mkdir -p bin
 	$(GO) build -o bin/ ./cmd/...
 
-build-demo: build ## Build the selected first-page demo bundle using $(ENV_FILE)
-	@test -n "$$INVINTUS_EMBEDDER_KEY" || { echo "INVINTUS_EMBEDDER_KEY is required; copy .env.example to .env.local and fill it in."; exit 1; }
-	./bin/wa-dd build-bundle --config config/selected_demo.yml
 
 vet:
 	$(GO) vet ./...

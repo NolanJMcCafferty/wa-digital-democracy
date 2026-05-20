@@ -1,4 +1,4 @@
-import { listOrganizations } from "@/lib/loadBundle";
+import { listOrganizations } from "@/lib/api";
 import {
   OrganizationSearchResults,
   parseOrganizationFilters,

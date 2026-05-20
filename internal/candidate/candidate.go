@@ -45,7 +45,7 @@ type Candidate struct {
 	MeetingDateTime        time.Time `json:"meeting_datetime,omitempty"`
 	MeetingLabel           string    `json:"meeting_label"`
 
-	// Agenda item identifiers — these are what selected_demo.yml needs.
+	// Agenda item identifiers used by discovery and ingest-hearings.
 	AgendaItemFamilyID     string    `json:"csi_agenda_item_family_id"`
 	AgendaItemID           string    `json:"csi_agenda_item_id"`
 	AgendaItemLabel        string    `json:"agenda_item_label"`
@@ -58,7 +58,7 @@ type Candidate struct {
 	OtherCount             int       `json:"other_count"`
 	SampleOrganizations    []string  `json:"sample_organizations,omitempty"`
 
-	// Source URLs the operator can paste into selected_demo.yml.
+	// Source URLs for operator inspection/debugging.
 	OfficialBillURL        string    `json:"official_bill_url,omitempty"`
 
 	// Diagnostics — empty on success.

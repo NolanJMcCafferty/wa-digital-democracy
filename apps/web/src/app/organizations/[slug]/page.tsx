@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { listOrganizations, loadOrganizationPage } from "@/lib/loadBundle";
+import { listOrganizations, loadOrganizationPage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { Position } from "@/lib/pageTypes";
 
