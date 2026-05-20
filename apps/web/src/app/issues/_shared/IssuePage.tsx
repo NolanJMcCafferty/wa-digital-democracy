@@ -177,11 +177,3 @@ function normalizePosition(position?: string): Position {
   return "Unknown";
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-stone-300 bg-stone-50 p-3">
-      <div className="text-xs uppercase tracking-wider text-stone-500">{label}</div>
-      <div className="mt-1 font-semibold text-stone-900">{value}</div>
-    </div>
-  );
-}
