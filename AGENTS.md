@@ -22,7 +22,7 @@ nightly cron: make daily
 
 Every public fact traces back to a `source_record` row (raw bytes on disk under `data/raw/<system>/`, deduped by `(system, endpoint, url, content_hash, transform_version)`). The `httpx.RawSink` is wired into the HTTP client so every connector fetch records provenance with no per-step boilerplate.
 
-The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `testifier` / `tvw_event` / `transcript_segment` / `organization` / `org_context_record` tables are all upsertable on stable keys — re-running passes is safe. **Exception:** `testifier`, `transcript_segment`, and `org_context_record` are insert-only with no dedupe; `ingest-hearings` filters to agenda items without testifier rows so the routine path doesn't hit this, but one-off `build-bundle` re-runs against an already-ingested bill currently create duplicates.
+The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `testifier` / `tvw_event` / `transcript_segment` / `organization` tables are all upsertable on stable keys — re-running passes is safe. **Exception:** `testifier` and `transcript_segment` are insert-only with no dedupe; `ingest-hearings` filters to agenda items without testifier rows so the routine path doesn't hit this, but one-off `build-bundle` re-runs against an already-ingested bill currently create duplicates.
 
 ## Layout
 

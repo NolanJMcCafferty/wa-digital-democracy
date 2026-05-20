@@ -58,7 +58,6 @@ func (c *dbCleanup) run() {
 		`DELETE FROM datawa_contract WHERE source_record_id = ANY($1)`,
 		`DELETE FROM bill_status_change WHERE source_record_id = ANY($1)`,
 		`DELETE FROM transcript_segment WHERE source_record_id = ANY($1)`,
-		`DELETE FROM org_context_record WHERE source_record_id = ANY($1)`,
 		`DELETE FROM testifier WHERE source_record_id = ANY($1)`,
 		`DELETE FROM agenda_item WHERE source_record_id = ANY($1)`,
 		`DELETE FROM hearing WHERE source_record_id = ANY($1)`,

@@ -61,8 +61,6 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
         title: o.canonicalName,
         subtitle: `${o.testifierCount.toLocaleString()} linked testifier${
           o.testifierCount === 1 ? "" : "s"
-        } · ${o.contextCount.toLocaleString()} context record${
-          o.contextCount === 1 ? "" : "s"
         }`,
         href: `/organizations/${o.slug}`,
         keywords: `${o.aliases.join(" ")} ${o.matchNotes ?? ""}`,

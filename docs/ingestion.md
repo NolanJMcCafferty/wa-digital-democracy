@@ -356,8 +356,8 @@ All daily stages are safe to re-run. What changes:
 - `bill`, `legislator`, `bill_sponsor`, `bill_status_change`,
   `hearing`, `agenda_item`, `tvw_event`, `organization` — UPSERT, so
   re-running just refreshes timestamps and any changed fields.
-- `testifier`, `transcript_segment`, `org_context_record` — these are
-  insert-only with no dedupe. Re-running creates duplicates today.
+- `testifier`, `transcript_segment` — these are insert-only with no
+  dedupe. Re-running creates duplicates today.
   `ingest-hearings` filters to agenda items without testifier rows, so
   the routine nightly path doesn't hit this; one-off `build-bundle`
   re-runs against an already-ingested bill will. Worth fixing

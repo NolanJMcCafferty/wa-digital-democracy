@@ -60,9 +60,6 @@ go run ./cmd/wa-dd find-candidates --issue housing
 [edit config/selected_demo.yml]
 INVINTUS_EMBEDDER_KEY=… go run ./cmd/wa-dd build-bundle
   └─ 6 ingestion-run rows in Postgres, 7 source_record provenance rows, 47KB JSON bundle
-[edit config/reviewed_matches.yml — link WSCAI to PDC employer_id 16346]
-INVINTUS_EMBEDDER_KEY=… go run ./cmd/wa-dd build-bundle  (idempotent re-run)
-  └─ adds 18 PDC lobbying records to org_context_record
 cd apps/web && pnpm dev
   └─ /bills/2025-26/HB1501 renders all 7 sections from the bundle
 ```

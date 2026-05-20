@@ -20,9 +20,8 @@ export default async function OrganizationsPage({
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight text-stone-900">Organizations</h1>
         <p className="max-w-3xl text-stone-600">
-          Reviewed organization/entity matches from public testimony sign-ins,
-          connected to official lobbying and campaign-finance context where we
-          have confident source-linked matches.
+          Verified organization/entity matches from public testimony sign-ins,
+          connected to authoritative source records where available.
         </p>
       </div>
 

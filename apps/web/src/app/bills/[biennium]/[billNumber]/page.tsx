@@ -28,24 +28,41 @@ export default async function BillHearingPage({
   const bundle = await loadBundle(biennium, parsed.prefix, parsed.number);
   if (!bundle) notFound();
 
-  const hearing = bundle.hearing;
+  // Prefer the per-hearing list returned by the API; fall back to the
+  // legacy single-hearing fields for older bundles.
+  const sections =
+    bundle.hearings && bundle.hearings.length > 0
+      ? bundle.hearings
+      : bundle.hearing
+        ? [
+            {
+              hearing: bundle.hearing,
+              testifiers: bundle.testifiers,
+              transcript: bundle.transcript,
+              organizations: bundle.organizations,
+            },
+          ]
+        : [];
   return (
     <article className="space-y-12">
       <BillSnapshot bill={bundle.bill} />
 
       <StatusTimeline status={bundle.status} />
 
-      {hearing ? (
-        <>
-          <HearingCard hearing={hearing} />
-          <TestifierTable testifiers={bundle.testifiers} />
+      {sections.map((s) => (
+        <section
+          key={s.hearing.csi_agenda_item_id ?? s.hearing.meeting_datetime}
+          className="space-y-12"
+        >
+          <HearingCard hearing={s.hearing} />
+          <TestifierTable testifiers={s.testifiers} />
           <TranscriptSection
-            transcript={bundle.transcript ?? {}}
-            tvwEventId={hearing.tvw_event_id ?? ""}
+            transcript={s.transcript ?? {}}
+            tvwEventId={s.hearing.tvw_event_id ?? ""}
           />
-          <OrganizationsSection organizations={bundle.organizations} />
-        </>
-      ) : null}
+          <OrganizationsSection organizations={s.organizations} />
+        </section>
+      ))}
     </article>
   );
 }

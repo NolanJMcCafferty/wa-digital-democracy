@@ -3,27 +3,8 @@ import type { OrganizationBundleEntry } from "@/lib/loadBundle";
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
-const CONFIDENCE_ORDER = ["confirmed", "probable", "possible", "unmatched"] as const;
-type Confidence = (typeof CONFIDENCE_ORDER)[number];
-
-const CONFIDENCE_LABEL: Record<Confidence, string> = {
-  confirmed: "Confirmed",
-  probable: "Probable",
-  possible: "Possible",
-  unmatched: "Unmatched",
-};
-
-const CONFIDENCE_CLASSES: Record<Confidence, string> = {
-  confirmed: "border-emerald-300 bg-emerald-50 text-emerald-800",
-  probable: "border-sky-300 bg-sky-50 text-sky-800",
-  possible: "border-amber-300 bg-amber-50 text-amber-800",
-  unmatched: "border-stone-300 bg-stone-50 text-stone-700",
-};
-
 export type OrganizationPageFilters = {
   q?: string;
-  confidence?: Confidence;
-  includeUnverified: boolean;
   page: number;
   limit: number;
 };
@@ -44,13 +25,8 @@ export function parseOrganizationFilters(
 ): OrganizationPageFilters {
   const page = Math.max(1, parseInt(pickString(raw[paramName("page", paramPrefix)]) || "1", 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(pickString(raw[paramName("limit", paramPrefix)]) || "50", 10) || 50));
-  const conf = pickString(raw[paramName("confidence", paramPrefix)]);
-  const includeUnverified =
-    pickString(raw[paramName("includeUnverified", paramPrefix)]) === "1";
   return {
     q: pickString(raw[paramName("q", paramPrefix)]).trim() || undefined,
-    confidence: (CONFIDENCE_ORDER as readonly string[]).includes(conf) ? (conf as Confidence) : undefined,
-    includeUnverified,
     page,
     limit,
   };
@@ -64,8 +40,6 @@ function buildQueryString(
   const merged = { ...filters, ...overrides };
   const params = new URLSearchParams();
   if (merged.q) params.set(paramName("q", paramPrefix), merged.q);
-  if (merged.confidence) params.set(paramName("confidence", paramPrefix), merged.confidence);
-  if (merged.includeUnverified) params.set(paramName("includeUnverified", paramPrefix), "1");
   if (merged.page > 1) params.set(paramName("page", paramPrefix), String(merged.page));
   if (merged.limit !== 50) params.set(paramName("limit", paramPrefix), String(merged.limit));
   const qs = params.toString();
@@ -78,8 +52,7 @@ function applyFilters(
 ): OrganizationBundleEntry[] {
   const q = filters.q?.toLowerCase();
   return organizations.filter((o) => {
-    if (filters.confidence && o.matchConfidence !== filters.confidence) return false;
-    if (!filters.includeUnverified && !filters.confidence && o.matchConfidence !== "confirmed") {
+    if (o.matchConfidence !== "confirmed") {
       return false;
     }
     if (q) {
@@ -109,19 +82,9 @@ export function OrganizationSearchResults({
   const startIndex = total === 0 ? 0 : offset + 1;
   const endIndex = Math.min(offset + visible.length, total);
 
-  const confidenceFacets = CONFIDENCE_ORDER.filter((c) =>
-    organizations.some((o) => o.matchConfidence === c),
-  );
-
-  type ActiveFilter = { label: string; key: "q" | "confidence" | "includeUnverified" };
+  type ActiveFilter = { label: string; key: "q" };
   const activeFilters: ActiveFilter[] = [];
   if (filters.q) activeFilters.push({ label: `“${filters.q}”`, key: "q" });
-  if (filters.confidence) {
-    activeFilters.push({ label: CONFIDENCE_LABEL[filters.confidence], key: "confidence" });
-  }
-  if (filters.includeUnverified && !filters.confidence) {
-    activeFilters.push({ label: "Including unverified", key: "includeUnverified" });
-  }
 
   const href = (overrides: Partial<OrganizationPageFilters> = {}) =>
     `${basePath}${buildQueryString(filters, overrides, paramPrefix)}`;
@@ -161,56 +124,6 @@ export function OrganizationSearchResults({
               className="w-full rounded border border-stone-300 px-3 py-1.5 text-sm focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500"
             />
           </div>
-
-          <div className="space-y-1.5">
-            <label className="flex items-start gap-2 text-sm text-stone-700">
-              <input
-                type="checkbox"
-                name={paramName("includeUnverified", paramPrefix)}
-                value="1"
-                defaultChecked={filters.includeUnverified}
-                className="mt-0.5 text-stone-900 focus:ring-stone-500"
-              />
-              <span>
-                <span className="block">Include unverified</span>
-                <span className="block text-xs text-stone-500">
-                  Show organizations not yet matched against IRS BMF or PDC.
-                </span>
-              </span>
-            </label>
-          </div>
-
-          {confidenceFacets.length > 0 ? (
-            <fieldset className="space-y-1.5">
-              <legend className="text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Match confidence
-              </legend>
-              <div className="space-y-1">
-                <label className="flex items-center gap-2 text-sm text-stone-700">
-                  <input
-                    type="radio"
-                    name={paramName("confidence", paramPrefix)}
-                    value=""
-                    defaultChecked={!filters.confidence}
-                    className="text-stone-900 focus:ring-stone-500"
-                  />
-                  <span>Any</span>
-                </label>
-                {confidenceFacets.map((c) => (
-                  <label key={c} className="flex items-center gap-2 text-sm text-stone-700">
-                    <input
-                      type="radio"
-                      name={paramName("confidence", paramPrefix)}
-                      value={c}
-                      defaultChecked={filters.confidence === c}
-                      className="text-stone-900 focus:ring-stone-500"
-                    />
-                    <span>{CONFIDENCE_LABEL[c]}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-          ) : null}
 
           <div className="flex gap-2 pt-2">
             <button
@@ -272,9 +185,7 @@ export function OrganizationSearchResults({
               <thead className="border-b border-stone-300 bg-stone-50 text-left text-xs uppercase tracking-wider text-stone-600">
                 <tr>
                   <th className="px-4 py-2.5 font-semibold">Name</th>
-                  <th className="w-32 px-4 py-2.5 font-semibold">Confidence</th>
                   <th className="w-28 px-4 py-2.5 text-right font-semibold">Testifiers</th>
-                  <th className="w-28 px-4 py-2.5 text-right font-semibold">Contexts</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-200">
@@ -293,14 +204,8 @@ export function OrganizationSearchResults({
                         </div>
                       ) : null}
                     </td>
-                    <td className="w-32 px-4 py-2.5 align-top">
-                      <ConfidencePill confidence={o.matchConfidence} />
-                    </td>
                     <td className="w-28 px-4 py-2.5 text-right align-top tabular-nums text-stone-700">
                       {o.testifierCount.toLocaleString()}
-                    </td>
-                    <td className="w-28 px-4 py-2.5 text-right align-top tabular-nums text-stone-700">
-                      {o.contextCount.toLocaleString()}
                     </td>
                   </tr>
                 ))}
@@ -320,23 +225,6 @@ export function OrganizationSearchResults({
         ) : null}
       </div>
     </div>
-  );
-}
-
-function ConfidencePill({ confidence }: { confidence: string }) {
-  const known = (CONFIDENCE_ORDER as readonly string[]).includes(confidence)
-    ? (confidence as Confidence)
-    : null;
-  const cls = known
-    ? CONFIDENCE_CLASSES[known]
-    : "border-stone-300 bg-stone-50 text-stone-700";
-  const label = known ? CONFIDENCE_LABEL[known] : confidence;
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}
-    >
-      {label}
-    </span>
   );
 }
 

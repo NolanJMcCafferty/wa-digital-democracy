@@ -24,15 +24,31 @@ import (
 // produces bills without any agenda_item rows. The frontend hides those
 // sections when absent.
 type Bundle struct {
-	GeneratedAt      time.Time      `json:"generated_at"`
-	Bill             Bill           `json:"bill"`
-	Status           Status         `json:"status"`
-	Hearing          *Hearing       `json:"hearing,omitempty"`
-	Testifiers       []Testifier    `json:"testifiers"`
-	Transcript       *Transcript    `json:"transcript,omitempty"`
-	Organizations    []Organization `json:"organizations"`
-	Sources          []Source       `json:"sources"`
-	KnownLimitations []string       `json:"known_limitations,omitempty"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Bill        Bill      `json:"bill"`
+	Status      Status    `json:"status"`
+	// Hearing/Testifiers/Transcript/Organizations mirror the most recent
+	// hearing for back-compat with the hearings/{id} bundle response and
+	// older clients. The full list of hearings on the bill lives in
+	// Hearings; the bill-detail page renders one section per entry.
+	Hearing          *Hearing         `json:"hearing,omitempty"`
+	Testifiers       []Testifier      `json:"testifiers"`
+	Transcript       *Transcript      `json:"transcript,omitempty"`
+	Organizations    []Organization   `json:"organizations"`
+	Hearings         []HearingSection `json:"hearings,omitempty"`
+	Sources          []Source         `json:"sources"`
+	KnownLimitations []string         `json:"known_limitations,omitempty"`
+}
+
+// HearingSection bundles everything tied to a single agenda_item: the
+// hearing metadata plus the testifiers, transcript, and organizations
+// scoped to it. The bill-detail page uses one of these per hearing on
+// the bill.
+type HearingSection struct {
+	Hearing       Hearing        `json:"hearing"`
+	Testifiers    []Testifier    `json:"testifiers"`
+	Transcript    *Transcript    `json:"transcript,omitempty"`
+	Organizations []Organization `json:"organizations"`
 }
 
 type Bill struct {
@@ -108,21 +124,12 @@ type TranscriptSegment struct {
 }
 
 type Organization struct {
-	CanonicalName     string       `json:"canonical_name"`
-	Aliases           []string     `json:"aliases,omitempty"`
-	MatchConfidence   string       `json:"match_confidence"`
-	MatchNotes        string       `json:"match_notes,omitempty"`
-	Context           []OrgContext `json:"context,omitempty"`
-	TestifierPosition string       `json:"testifier_position,omitempty"`
-	TestifierCount    int          `json:"testifier_count,omitempty"`
-}
-
-type OrgContext struct {
-	ContextType     string         `json:"context_type"`
-	SourceDatasetID string         `json:"source_dataset_id"`
-	SummaryFields   map[string]any `json:"summary_fields"`
-	SourceURL       string         `json:"source_url,omitempty"`
-	MatchConfidence string         `json:"match_confidence"`
+	CanonicalName     string   `json:"canonical_name"`
+	Aliases           []string `json:"aliases,omitempty"`
+	MatchConfidence   string   `json:"match_confidence"`
+	MatchNotes        string   `json:"match_notes,omitempty"`
+	TestifierPosition string   `json:"testifier_position,omitempty"`
+	TestifierCount    int      `json:"testifier_count,omitempty"`
 }
 
 type Source struct {
@@ -202,34 +209,68 @@ func BuildByBill(
 		return nil, fmt.Errorf("bill: %w", err)
 	}
 
-	hearingDemo, err := LookupSelectedDemo(ctx, store, biennium, prefix, number)
+	demos, err := LookupAllSelectedDemos(ctx, store, biennium, prefix, number)
 	if err != nil {
-		if !errors.Is(err, ErrBillNotFound) {
-			return nil, fmt.Errorf("hearing lookup: %w", err)
-		}
+		return nil, fmt.Errorf("hearing lookup: %w", err)
+	}
+	if len(demos) == 0 {
 		// No hearing yet — leave hearing/testifiers/transcript/orgs empty.
 		b.KnownLimitations = computeLimitations(b)
 		return b, nil
 	}
 
-	if err := loadHearingAndAgenda(ctx, store, hearingDemo, b); err != nil {
-		return nil, fmt.Errorf("hearing: %w", err)
+	for _, demo := range demos {
+		section, err := buildHearingSection(ctx, store, demo)
+		if err != nil {
+			return nil, err
+		}
+		b.Hearings = append(b.Hearings, *section)
 	}
-	if err := loadTestifiers(ctx, store, hearingDemo, b); err != nil {
-		return nil, fmt.Errorf("testifiers: %w", err)
-	}
-	if err := loadTranscript(ctx, store, hearingDemo, b); err != nil {
-		return nil, fmt.Errorf("transcript: %w", err)
-	}
-	if err := loadOrganizations(ctx, store, hearingDemo, b); err != nil {
-		return nil, fmt.Errorf("organizations: %w", err)
-	}
+
+	// Mirror the most-recent hearing into the back-compat top-level fields.
+	first := b.Hearings[0]
+	hearingCopy := first.Hearing
+	b.Hearing = &hearingCopy
+	b.Testifiers = first.Testifiers
+	b.Transcript = first.Transcript
+	b.Organizations = first.Organizations
+
 	if err := loadSources(ctx, store, b); err != nil {
 		return nil, fmt.Errorf("sources: %w", err)
 	}
 
 	b.KnownLimitations = computeLimitations(b)
 	return b, nil
+}
+
+// buildHearingSection runs the per-hearing loaders against a scratch
+// Bundle and pulls the resulting fields into a HearingSection.
+func buildHearingSection(ctx context.Context, store *db.Store, demo *config.SelectedDemo) (*HearingSection, error) {
+	scratch := &Bundle{
+		Testifiers:    []Testifier{},
+		Organizations: []Organization{},
+	}
+	if err := loadHearingAndAgenda(ctx, store, demo, scratch); err != nil {
+		return nil, fmt.Errorf("hearing: %w", err)
+	}
+	if err := loadTestifiers(ctx, store, demo, scratch); err != nil {
+		return nil, fmt.Errorf("testifiers: %w", err)
+	}
+	if err := loadTranscript(ctx, store, demo, scratch); err != nil {
+		return nil, fmt.Errorf("transcript: %w", err)
+	}
+	if err := loadOrganizations(ctx, store, demo, scratch); err != nil {
+		return nil, fmt.Errorf("organizations: %w", err)
+	}
+	section := &HearingSection{
+		Testifiers:    scratch.Testifiers,
+		Transcript:    scratch.Transcript,
+		Organizations: scratch.Organizations,
+	}
+	if scratch.Hearing != nil {
+		section.Hearing = *scratch.Hearing
+	}
+	return section, nil
 }
 
 func loadBill(ctx context.Context, store *db.Store, demo *config.SelectedDemo, b *Bundle) error {
@@ -485,11 +526,6 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
 		return err
 	}
 	defer rows.Close()
-	type orgRow struct {
-		Org Organization
-		ID  int64
-	}
-	var staged []orgRow
 	for rows.Next() {
 		var (
 			o     Organization
@@ -504,79 +540,48 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
 		o.MatchNotes = deref(notes)
 		o.TestifierPosition = deref(pos)
 		o.TestifierCount = nTest
-		staged = append(staged, orgRow{Org: o, ID: id})
+		b.Organizations = append(b.Organizations, o)
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	for i := range staged {
-		ctxRows, err := loadOrgContext(ctx, store, staged[i].ID)
-		if err != nil {
-			return err
-		}
-		staged[i].Org.Context = ctxRows
-		b.Organizations = append(b.Organizations, staged[i].Org)
-	}
-	return nil
-}
-
-func loadOrgContext(ctx context.Context, store *db.Store, orgID int64) ([]OrgContext, error) {
-	const q = `
-SELECT context_type, source_dataset_id, summary_fields, source_url, match_confidence::text
-  FROM org_context_record
- WHERE organization_id = $1
- ORDER BY id ASC;`
-	rows, err := store.Pool.Query(ctx, q, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []OrgContext
-	for rows.Next() {
-		var (
-			c   OrgContext
-			url *string
-		)
-		if err := rows.Scan(&c.ContextType, &c.SourceDatasetID, &c.SummaryFields, &url, &c.MatchConfidence); err != nil {
-			return nil, err
-		}
-		c.SourceURL = deref(url)
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return rows.Err()
 }
 
 // loadSources surfaces every distinct source_record we touched while
 // building this page (joined via the ids attached to bill, hearing,
-// agenda_item, testifier, tvw_event, transcript_segment, org_context).
+// agenda_item, testifier, tvw_event, and transcript_segment).
 //
 // Per the wiki: "every public fact needs provenance" — the source panel
 // is part of the product, not engineering metadata.
 func loadSources(ctx context.Context, store *db.Store, b *Bundle) error {
-	if b.Hearing == nil || b.Hearing.CSIAgendaItemID == "" {
+	// Collect every CSI agenda item id we're rendering on this page so the
+	// source panel reflects provenance for all hearings, not just the most
+	// recent one.
+	var csiIDs []string
+	if len(b.Hearings) > 0 {
+		for _, h := range b.Hearings {
+			if h.Hearing.CSIAgendaItemID != "" {
+				csiIDs = append(csiIDs, h.Hearing.CSIAgendaItemID)
+			}
+		}
+	} else if b.Hearing != nil && b.Hearing.CSIAgendaItemID != "" {
+		csiIDs = append(csiIDs, b.Hearing.CSIAgendaItemID)
+	}
+	if len(csiIDs) == 0 {
 		return nil
 	}
 	const q = `
 SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_at
   FROM source_record sr
  WHERE sr.id IN (
-   SELECT source_record_id FROM bill                WHERE id = (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = $1)
-   UNION SELECT source_record_id FROM hearing       WHERE id = (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = $1)
-   UNION SELECT source_record_id FROM agenda_item   WHERE csi_agenda_item_id = $1
-   UNION SELECT source_record_id FROM testifier     WHERE agenda_item_id = (SELECT id FROM agenda_item WHERE csi_agenda_item_id = $1)
-   UNION SELECT source_record_id FROM tvw_event     WHERE tvw_event_id = (SELECT tvw_event_id FROM hearing WHERE id = (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = $1))
-   UNION SELECT source_record_id FROM transcript_segment WHERE tvw_event_id = (SELECT tvw_event_id FROM hearing WHERE id = (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = $1))
-   UNION SELECT source_record_id FROM bill_status_change WHERE bill_id = (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = $1)
-   UNION SELECT source_record_id FROM org_context_record
-     WHERE organization_id IN (
-       SELECT DISTINCT t.normalized_org_id FROM testifier t
-        WHERE t.agenda_item_id = (SELECT id FROM agenda_item WHERE csi_agenda_item_id = $1)
-          AND t.normalized_org_id IS NOT NULL
-     )
+   SELECT source_record_id FROM bill                WHERE id IN (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
+   UNION SELECT source_record_id FROM hearing       WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
+   UNION SELECT source_record_id FROM agenda_item   WHERE csi_agenda_item_id = ANY($1)
+   UNION SELECT source_record_id FROM testifier     WHERE agenda_item_id IN (SELECT id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
+   UNION SELECT source_record_id FROM tvw_event     WHERE tvw_event_id IN (SELECT tvw_event_id FROM hearing WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1)))
+   UNION SELECT source_record_id FROM transcript_segment WHERE tvw_event_id IN (SELECT tvw_event_id FROM hearing WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1)))
+   UNION SELECT source_record_id FROM bill_status_change WHERE bill_id IN (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
  )
  ORDER BY sr.fetched_at DESC;`
-	rows, err := store.Pool.Query(ctx, q, b.Hearing.CSIAgendaItemID)
+	rows, err := store.Pool.Query(ctx, q, csiIDs)
 	if err != nil {
 		return err
 	}

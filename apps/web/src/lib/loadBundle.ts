@@ -1,5 +1,5 @@
 import "server-only";
-import type { Bundle, OrgContext, Organization, Position, Sponsor } from "./bundle";
+import type { Bundle, Organization, Position, Sponsor } from "./bundle";
 
 // The Next.js bill-detail page is a Server Component, so its fetch runs
 // in the Node runtime and does NOT pass through next.config.ts rewrites.
@@ -178,8 +178,6 @@ export type OrganizationBundleEntry = {
   matchNotes?: string;
   testifierCount: number;
   positions: Record<Position, number>;
-  contextCount: number;
-  contexts: OrgContext[];
   appearances: Array<{
     biennium: string;
     billId: string;
@@ -440,7 +438,7 @@ const SOURCE_DEFINITIONS: Array<Omit<SourceSummary, "calls" | "latestFetchedAt" 
     system: "pdc_socrata",
     label: "PDC / data.wa.gov",
     status: "active",
-    usedFor: "Lobbying and campaign-finance context for reviewed organization matches.",
+    usedFor: "PDC lobbyist-employer records used to verify organization matches.",
     limitations: "Socrata app token is optional; leave blank unless broader ingestion hits throttling.",
     officialUrl: "https://data.wa.gov/",
   },
@@ -700,7 +698,6 @@ type orgListItem = {
   match_notes?: string;
   testifier_count: number;
   positions: Record<Position, number>;
-  context_count: number;
 };
 
 type orgDetailResponse = orgListItem & {
@@ -735,11 +732,6 @@ export async function listOrganizationBundles(): Promise<OrganizationBundleEntry
     matchNotes: o.match_notes,
     testifierCount: o.testifier_count,
     positions: o.positions,
-    contextCount: o.context_count,
-    // The aggregate list endpoint omits per-record contexts and
-    // appearances — those need a detail fetch. Index pages only show
-    // counts, so empty arrays here are fine.
-    contexts: [],
     appearances: [],
   }));
 }
@@ -760,8 +752,6 @@ export async function loadOrganizationBundle(slug: string): Promise<Organization
     matchNotes: detail.match_notes,
     testifierCount: detail.testifier_count,
     positions: detail.positions,
-    contextCount: detail.context_count,
-    contexts: [], // detail endpoint doesn't return per-record contexts at this stage
     appearances: detail.appearances.map((a) => ({
       biennium: a.biennium,
       billId: a.bill_id,

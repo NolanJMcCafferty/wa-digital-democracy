@@ -9,6 +9,7 @@ export function BillSnapshot({ bill }: { bill: Bill }) {
 
   return (
     <section aria-labelledby="bill-heading" className="space-y-4">
+      <p className="text-sm uppercase tracking-wider text-stone-500">Bill</p>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
         <h1
           id="bill-heading"

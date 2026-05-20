@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { listOrganizationBundles, loadOrganizationBundle } from "@/lib/loadBundle";
-import { confidenceLabel, formatDateTime } from "@/lib/format";
-import type { OrgContext, Position } from "@/lib/bundle";
+import { formatDateTime } from "@/lib/format";
+import type { Position } from "@/lib/bundle";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
@@ -19,13 +19,6 @@ export default async function OrganizationPage({
   const { slug } = await params;
   const org = await loadOrganizationBundle(slug);
   if (!org) notFound();
-
-  const byContextType = new Map<string, OrgContext[]>();
-  for (const c of org.contexts) {
-    const list = byContextType.get(c.context_type) ?? [];
-    list.push(c);
-    byContextType.set(c.context_type, list);
-  }
 
   return (
     <article className="space-y-10">
@@ -48,11 +41,9 @@ export default async function OrganizationPage({
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <Metric label="Match" value={confidenceLabel(org.matchConfidence)} />
+      <section className="grid grid-cols-2 gap-3 text-sm">
         <Metric label="Linked testifiers" value={org.testifierCount.toLocaleString()} />
         <Metric label="Appearances" value={org.appearances.length.toLocaleString()} />
-        <Metric label="PDC records" value={org.contextCount.toLocaleString()} />
       </section>
 
       <section aria-labelledby="positions-heading" className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
@@ -110,55 +101,6 @@ export default async function OrganizationPage({
         </ul>
       </section>
 
-      <section aria-labelledby="context-heading" className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
-        <h2 id="context-heading" className="text-xl font-semibold text-stone-900">
-          Lobbying and public-record context
-        </h2>
-        {org.contexts.length === 0 ? (
-          <p className="text-sm text-stone-600">No PDC context records loaded.</p>
-        ) : (
-          <div className="space-y-3">
-            {Array.from(byContextType.entries()).map(([type, rows]) => (
-              <details key={type} open className="rounded border border-stone-200 bg-stone-50 p-3">
-                <summary className="cursor-pointer text-sm font-medium text-stone-800">
-                  {type.replaceAll("_", " ")} · {rows.length.toLocaleString()} record
-                  {rows.length === 1 ? "" : "s"}
-                </summary>
-                <ul className="mt-3 space-y-2 text-sm">
-                  {rows.map((r, i) => (
-                    <li key={i} className="rounded bg-white p-3 ring-1 ring-stone-200">
-                      <SummaryFields fields={r.summary_fields} />
-                      <div className="mt-2 flex flex-wrap items-baseline gap-2 text-xs text-stone-500">
-                        <span>Dataset: {r.source_dataset_id}</span>
-                        <span>·</span>
-                        <span>{confidenceLabel(r.match_confidence)}</span>
-                        {r.source_url ? (
-                          <>
-                            <span>·</span>
-                            <a
-                              href={r.source_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-700 underline hover:text-blue-900"
-                            >
-                              Source row →
-                            </a>
-                          </>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ))}
-          </div>
-        )}
-        <p className="text-xs text-stone-500">
-          This page shows context, not causation. Lobbying and campaign-finance
-          records are public background and should not be read as proof that an
-          organization caused a bill outcome.
-        </p>
-      </section>
     </article>
   );
 }
@@ -169,22 +111,5 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-xs uppercase tracking-wider text-stone-500">{label}</div>
       <div className="mt-1 font-semibold text-stone-900">{value}</div>
     </div>
-  );
-}
-
-function SummaryFields({ fields }: { fields: Record<string, unknown> }) {
-  const entries = Object.entries(fields).filter(
-    ([, v]) => v !== null && v !== ""
-  );
-  if (entries.length === 0) return null;
-  return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
-      {entries.map(([k, v]) => (
-        <span key={k} className="contents">
-          <dt className="text-stone-500">{k.replaceAll("_", " ")}</dt>
-          <dd className="break-words text-stone-800">{String(v)}</dd>
-        </span>
-      ))}
-    </dl>
   );
 }

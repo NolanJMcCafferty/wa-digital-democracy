@@ -73,6 +73,64 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 	return demo, nil
 }
 
+// LookupAllSelectedDemos returns one SelectedDemo per agenda_item attached
+// to the bill, ordered most-recent-first. The bill-detail page uses this
+// to render every hearing (House referral, Senate referral, work session,
+// etc.) instead of just the latest one.
+func LookupAllSelectedDemos(
+	ctx context.Context,
+	store *db.Store,
+	biennium, prefix string,
+	number int,
+) ([]*config.SelectedDemo, error) {
+	const q = `
+SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
+       a.csi_agenda_item_family_id, a.label,
+       COALESCE(h.tvw_event_id, ''),
+       COALESCE(h.committee_acronym, ''),
+       h.chamber
+  FROM bill b
+  JOIN agenda_item a ON a.bill_id = b.id
+  JOIN hearing     h ON h.id = a.hearing_id
+ WHERE b.biennium = $1 AND b.prefix = $2 AND b.number = $3
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := store.Pool.Query(ctx, q, biennium, prefix, number)
+	if err != nil {
+		return nil, fmt.Errorf("lookup all demos: %w", err)
+	}
+	defer rows.Close()
+	var out []*config.SelectedDemo
+	for rows.Next() {
+		var (
+			csiAgendaItemID, csiMeetingFamilyID, csiAgendaItemFamilyID string
+			label, tvwEventID, committeeAcronym, chamber               string
+		)
+		if err := rows.Scan(
+			&csiAgendaItemID, &csiMeetingFamilyID, &csiAgendaItemFamilyID,
+			&label, &tvwEventID, &committeeAcronym, &chamber,
+		); err != nil {
+			return nil, fmt.Errorf("scan demo: %w", err)
+		}
+		demo := &config.SelectedDemo{
+			Biennium:   biennium,
+			BillPrefix: prefix,
+			BillNumber: number,
+			Chamber:    chamber,
+		}
+		demo.Committee.Acronym = committeeAcronym
+		demo.Agenda.CSIAgendaItemID = csiAgendaItemID
+		demo.Agenda.CSIMeetingFamilyID = csiMeetingFamilyID
+		demo.Agenda.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
+		demo.Agenda.Label = label
+		demo.TVW.EventID = tvwEventID
+		out = append(out, demo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LookupSelectedDemoByAgendaItem reconstructs a SelectedDemo by pivoting
 // on the CSI agenda item ID. The hearing-detail API endpoint
 // (/api/v1/hearings/{id}) needs this so it can call firstpage.Build

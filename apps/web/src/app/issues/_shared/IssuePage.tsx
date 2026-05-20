@@ -174,8 +174,8 @@ export async function IssuePage({
               paramPrefix="org"
             />
             <p className="text-xs text-stone-500">
-              Showing context, not causation. Organization matches come from
-              reviewed aliases and official PDC/data.wa.gov records.
+              Organization matches come from testimony sign-ins and verified
+              cross-source records where available.
             </p>
           </section>
         </>
@@ -211,8 +211,6 @@ function issueOrganizations(bundles: Bundle[]): OrganizationBundleEntry[] {
         matchNotes: existing?.matchNotes ?? org.match_notes,
         testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
         positions,
-        contextCount: (existing?.contextCount ?? 0) + (org.context?.length ?? 0),
-        contexts: [],
         appearances: [],
       });
     }

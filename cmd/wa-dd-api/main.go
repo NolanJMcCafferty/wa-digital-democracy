@@ -884,7 +884,6 @@ func listOrganizationsHandler(store *db.Store) http.HandlerFunc {
 		MatchNotes      string         `json:"match_notes,omitempty"`
 		TestifierCount  int            `json:"testifier_count"`
 		Positions       map[string]int `json:"positions"`
-		ContextCount    int            `json:"context_count"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		orgs, err := store.ListOrganizations(req.Context())
@@ -911,7 +910,6 @@ func listOrganizationsHandler(store *db.Store) http.HandlerFunc {
 					"Other":   o.OtherCount,
 					"Unknown": o.UnknownCount,
 				},
-				ContextCount: o.ContextCount,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -940,7 +938,6 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		MatchNotes      string         `json:"match_notes,omitempty"`
 		TestifierCount  int            `json:"testifier_count"`
 		Positions       map[string]int `json:"positions"`
-		ContextCount    int            `json:"context_count"`
 		Appearances     []appearance   `json:"appearances"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -995,8 +992,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				"Pro": match.ProCount, "Con": match.ConCount,
 				"Other": match.OtherCount, "Unknown": match.UnknownCount,
 			},
-			ContextCount: match.ContextCount,
-			Appearances:  apps,
+			Appearances: apps,
 		})
 	}
 }

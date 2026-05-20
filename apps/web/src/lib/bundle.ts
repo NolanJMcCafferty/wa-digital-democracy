@@ -12,8 +12,19 @@ export type Bundle = {
   testifiers: Testifier[];
   transcript?: Transcript;
   organizations: Organization[];
+  // Per-hearing sections. The bill-detail page renders one block per
+  // entry; the legacy top-level hearing/testifiers/transcript/organizations
+  // fields mirror hearings[0] for back-compat.
+  hearings?: HearingSection[];
   sources: Source[];
   known_limitations?: string[];
+};
+
+export type HearingSection = {
+  hearing: Hearing;
+  testifiers: Testifier[];
+  transcript?: Transcript;
+  organizations: Organization[];
 };
 
 export type Bill = {
@@ -102,17 +113,8 @@ export type Organization = {
   aliases?: string[];
   match_confidence: "confirmed" | "probable" | "possible" | "unmatched";
   match_notes?: string;
-  context?: OrgContext[];
   testifier_position?: string;
   testifier_count?: number;
-};
-
-export type OrgContext = {
-  context_type: string;
-  source_dataset_id: string;
-  summary_fields: Record<string, unknown>;
-  source_url?: string;
-  match_confidence: string;
 };
 
 export type Source = {

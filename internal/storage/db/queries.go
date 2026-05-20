@@ -695,7 +695,7 @@ func billMentionPattern(prefix string, number int) string {
 }
 
 // ---------------------------------------------------------------------------
-// organization + org_context_record
+// organization
 // ---------------------------------------------------------------------------
 
 type UpsertOrganizationParams struct {
@@ -733,43 +733,6 @@ RETURNING id;`
 		return 0, fmt.Errorf("upsert organization: %w", err)
 	}
 	return id, nil
-}
-
-type InsertOrgContextParams struct {
-	OrganizationID  int64
-	ContextType     string // see schema CHECK
-	SourceDatasetID string
-	SourceRowID     string
-	SummaryFields   map[string]any
-	SourceURL       string
-	MatchConfidence string
-	SourceRecordID  int64
-}
-
-func (s *Store) ReplaceOrgContextForOrganization(ctx context.Context, orgID int64, rows []InsertOrgContextParams) error {
-	tx, err := s.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DELETE FROM org_context_record WHERE organization_id = $1`, orgID); err != nil {
-		return fmt.Errorf("delete org_context: %w", err)
-	}
-	const insQ = `
-INSERT INTO org_context_record (organization_id, context_type, source_dataset_id,
-                                source_row_id, summary_fields, source_url,
-                                match_confidence, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7::org_match_confidence,$8);`
-	for _, r := range rows {
-		if _, err := tx.Exec(ctx, insQ,
-			r.OrganizationID, r.ContextType, r.SourceDatasetID,
-			strOrNull(r.SourceRowID), r.SummaryFields, r.SourceURL,
-			defaultStr(r.MatchConfidence, "possible"), r.SourceRecordID,
-		); err != nil {
-			return fmt.Errorf("insert org_context: %w", err)
-		}
-	}
-	return tx.Commit(ctx)
 }
 
 // LinkTestifiersToOrg sets normalized_org_id on testifier rows whose
@@ -1377,11 +1340,10 @@ type OrganizationAggregate struct {
 	ConCount        int
 	OtherCount      int
 	UnknownCount    int
-	ContextCount    int
 }
 
 // ListOrganizations returns every organization with aggregated testifier
-// position counts and PDC context-record count.
+// position counts.
 func (s *Store) ListOrganizations(ctx context.Context) ([]OrganizationAggregate, error) {
 	const q = `
 SELECT o.id, o.canonical_name, o.aliases,
@@ -1390,11 +1352,9 @@ SELECT o.id, o.canonical_name, o.aliases,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Pro')   AS pro_count,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Con')   AS con_count,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Other') AS other_count,
-       COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Unknown') AS unknown_count,
-       COUNT(DISTINCT ocr.id) AS context_count
+       COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Unknown') AS unknown_count
   FROM organization o
-  LEFT JOIN testifier          t   ON t.normalized_org_id = o.id
-  LEFT JOIN org_context_record ocr ON ocr.organization_id = o.id
+  LEFT JOIN testifier t ON t.normalized_org_id = o.id
  GROUP BY o.id
  ORDER BY o.canonical_name;`
 	rows, err := s.Pool.Query(ctx, q)
@@ -1408,7 +1368,7 @@ SELECT o.id, o.canonical_name, o.aliases,
 		if err := rows.Scan(&o.ID, &o.CanonicalName, &o.Aliases,
 			&o.MatchConfidence, &o.MatchNotes,
 			&o.TestifierCount, &o.ProCount, &o.ConCount,
-			&o.OtherCount, &o.UnknownCount, &o.ContextCount); err != nil {
+			&o.OtherCount, &o.UnknownCount); err != nil {
 			return nil, fmt.Errorf("scan organization: %w", err)
 		}
 		out = append(out, o)
@@ -3566,7 +3526,7 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 		if orgID == 0 {
 			orgID, err = s.UpsertOrganization(ctx, UpsertOrganizationParams{
 				CanonicalName:   sourceName,
-				Aliases:         []string{sourceName},
+				Aliases:         []string{},
 				MatchConfidence: "possible",
 				MatchNotes:      "Seeded from CSI testimony organization string; source-local identity only.",
 			})
@@ -3802,28 +3762,28 @@ var junkExactOrgNames = map[string]bool{
 // ---------------------------------------------------------------------------
 
 type UpsertIRSBMFParams struct {
-	EIN              string
-	Name             string
-	NormalizedName   string
-	SortName         string
-	Street           string
-	City             string
-	State            string
-	Zip              string
-	SubsectionCode   string
-	Classification   string
+	EIN               string
+	Name              string
+	NormalizedName    string
+	SortName          string
+	Street            string
+	City              string
+	State             string
+	Zip               string
+	SubsectionCode    string
+	Classification    string
 	DeductibilityCode string
-	ActivityCodes    string
-	FoundationCode   string
-	OrganizationCode string
-	StatusCode       string
-	RulingDate       string
-	NTEECode         string
-	IncomeAmount     int64
-	RevenueAmount    int64
-	AssetAmount      int64
-	Raw              map[string]string
-	SourceRecordID   int64
+	ActivityCodes     string
+	FoundationCode    string
+	OrganizationCode  string
+	StatusCode        string
+	RulingDate        string
+	NTEECode          string
+	IncomeAmount      int64
+	RevenueAmount     int64
+	AssetAmount       int64
+	Raw               map[string]string
+	SourceRecordID    int64
 }
 
 func (s *Store) UpsertIRSBMFOrganization(ctx context.Context, p UpsertIRSBMFParams) error {
