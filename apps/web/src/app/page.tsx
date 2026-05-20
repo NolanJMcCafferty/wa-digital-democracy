@@ -5,9 +5,7 @@ import { buildSearchIndex } from "@/lib/searchIndex";
 import {
   countBills,
   countHearings,
-  listHearingBundles,
   listLegislators,
-  listLocalBundles,
   listOrganizations,
 } from "@/lib/loadBundle";
 // Issue tiles. Live issues link to /issues/{slug}; "coming soon"
@@ -33,8 +31,6 @@ export default async function HomePage() {
   const [billCount, hearingCount, organizations, legislators, searchResults] = await Promise.all([
     countBills(),
     countHearings(),
-    listLocalBundles(),
-    listHearingBundles(),
     listOrganizations(),
     listLegislators(),
     buildSearchIndex(),
@@ -255,7 +251,8 @@ function legislatorRenderKey(l: Awaited<ReturnType<typeof listLegislators>>[numb
   ].join("|");
 }
 
-function legislatorInitials(displayName: string): string {
+function legislatorInitials(displayName: string | undefined): string {
+  if (!displayName) return "";
   return displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -263,4 +260,3 @@ function legislatorInitials(displayName: string): string {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 }
-
