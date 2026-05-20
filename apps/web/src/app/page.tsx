@@ -3,6 +3,8 @@ import { FindLegislators } from "./FindLegislators";
 import { SearchBox } from "./SearchBox";
 import { buildSearchIndex } from "@/lib/searchIndex";
 import {
+  countBills,
+  countHearings,
   listHearingBundles,
   listLegislators,
   listLocalBundles,
@@ -28,7 +30,9 @@ const ISSUE_TILES: Array<{
 ];
 
 export default async function HomePage() {
-  const [bundles, hearings, organizations, legislators, searchResults] = await Promise.all([
+  const [billCount, hearingCount, organizations, legislators, searchResults] = await Promise.all([
+    countBills(),
+    countHearings(),
     listLocalBundles(),
     listHearingBundles(),
     listOrganizations(),
@@ -111,13 +115,13 @@ export default async function HomePage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <SectionCard
             title="Bills"
-            count={bundles.length}
+            count={billCount}
             href="/bills"
             description="Every bill in the active biennium with sponsors, status timeline, and — where data exists — hearing video, testimony, and transcripts."
           />
           <SectionCard
             title="Hearings"
-            count={hearings.length}
+            count={hearingCount}
             href="/hearings"
             description="Committee hearings with testifier sign-ins, video, and transcript excerpts mapped to the bill on the agenda."
           />

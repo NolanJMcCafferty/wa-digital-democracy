@@ -230,6 +230,20 @@ export async function listLocalBundles(): Promise<BundleListEntry[]> {
   return body.bills.map(mapBillItem);
 }
 
+// countBills hits the bills list endpoint with limit=1 to read the
+// `total` field — the home page needs the true total, which the
+// limit=100 listLocalBundles call silently truncates.
+export async function countBills(): Promise<number> {
+  const res = await fetch(`${API_BASE}/api/v1/bills?limit=1`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`countBills: ${API_BASE}/api/v1/bills returned ${res.status}`);
+  }
+  const body = (await res.json()) as billsResponse;
+  return body.total;
+}
+
 // searchBills is the paginated, filtered fetch that backs the /bills
 // page. Returns the page of matching rows + total count + facet
 // summary; the caller renders pagination from total/limit/offset.
@@ -376,6 +390,17 @@ export async function listHearingBundles(): Promise<HearingBundleEntry[]> {
   }
   const body = (await res.json()) as hearingsResponse;
   return (body.hearings ?? []).map(mapHearingItem);
+}
+
+export async function countHearings(): Promise<number> {
+  const res = await fetch(`${API_BASE}/api/v1/hearings?limit=1`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`countHearings: ${API_BASE}/api/v1/hearings returned ${res.status}`);
+  }
+  const body = (await res.json()) as hearingsResponse;
+  return body.total;
 }
 
 export async function searchHearings(filters: HearingSearchFilters): Promise<HearingSearchResult> {
