@@ -24,6 +24,10 @@ Health check:
 /healthz
 ```
 
+`/healthz` is a container liveness check and does not require Postgres to be
+ready. Use `/readyz` when you specifically want to verify database
+connectivity.
+
 ## Web
 
 The web service uses root directory `apps/web`, config path

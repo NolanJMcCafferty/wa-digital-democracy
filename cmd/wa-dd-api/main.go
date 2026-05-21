@@ -37,7 +37,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	store, err := db.Open(ctx, *dsn)
+	store, err := db.OpenLazy(ctx, *dsn)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
 	}
@@ -50,7 +50,8 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 
-	r.Get("/healthz", healthHandler(store))
+	r.Get("/healthz", healthHandler())
+	r.Get("/readyz", readinessHandler(store))
 	r.Get("/api/v1/addresses/suggest", suggestAddressesHandler())
 	r.Get("/api/v1/bills", listBillsHandler(store))
 	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
@@ -100,7 +101,13 @@ func main() {
 	}
 }
 
-func healthHandler(store *db.Store) http.HandlerFunc {
+func healthHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+func readinessHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if err := store.Pool.Ping(req.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy", "error": err.Error()})

@@ -167,6 +167,7 @@ After the first apply:
 
 ```sh
 curl -fsS "$(terraform output -raw api_public_url)/healthz"
+curl -fsS "$(terraform output -raw api_public_url)/readyz"
 ```
 
 4. Verify the web service:
@@ -188,7 +189,9 @@ curl -fsS "$(terraform output -raw web_public_url)" >/dev/null
 
 The workflow uses Cloudflare R2 as the Terraform remote state backend. Create
 the Terraform state bucket manually before enabling the workflow. Terraform
-creates the app raw archive bucket.
+creates the app raw archive bucket. The workflow runs Terraform with
+`-parallelism=1` because the Railway provider redeploys services after variable
+writes, and Railway can rate-limit bursts of variable-triggered redeploys.
 
 Required GitHub repository secrets:
 
@@ -349,6 +352,7 @@ After Railway deploy:
 
 ```sh
 curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw api_public_url)/healthz"
+curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw api_public_url)/readyz"
 curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw api_public_url)/api/v1/bills?limit=1"
 curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw web_public_url)" >/dev/null
 ```

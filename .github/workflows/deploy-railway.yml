@@ -226,9 +226,9 @@ jobs:
 
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -out=railway.tfplan
+        run: terraform plan -parallelism=1 -out=railway.tfplan
 
       - name: Terraform apply
         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -auto-approve railway.tfplan
+        run: terraform apply -parallelism=1 -auto-approve railway.tfplan

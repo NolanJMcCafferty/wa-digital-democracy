@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,26 @@ import (
 
 	"github.com/go-chi/chi/v5"
 )
+
+func TestHealthHandler_IsLivenessOnly(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/healthz", healthHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("status body = %q, want ok", body["status"])
+	}
+}
 
 // TestBillPageHandler_BadSlug exercises the slug-parse path without
 // touching Postgres — the regex check happens before any DB call, so a

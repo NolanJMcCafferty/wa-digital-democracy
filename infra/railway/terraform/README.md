@@ -57,7 +57,8 @@ terraform apply
 After the first apply:
 
 1. Run the `migrate` service manually in Railway.
-2. Verify the API health check.
+2. Verify the API liveness check at `/healthz` and database readiness at
+   `/readyz`.
 3. Verify the web service can reach the API.
 4. Verify the first scheduled `daily` run writes raw artifacts to R2.
 
@@ -114,3 +115,6 @@ then plans and applies on pushes to `main`.
 
 Set the GitHub repository secrets and variables listed in
 `infra/railway/README.md` before merging the workflow to `main`.
+
+The workflow uses `terraform plan/apply -parallelism=1` to avoid Railway
+service deployment rate limits while variables are created.
