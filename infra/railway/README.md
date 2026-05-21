@@ -74,6 +74,7 @@ Environment: production
     root directory: apps/web
     config path: /apps/web/railway.json
     public domain: yes
+    health check: /healthz
     command: pnpm start
 
   migrate
