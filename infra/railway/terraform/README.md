@@ -7,7 +7,8 @@ It creates:
 
 - Cloudflare R2 bucket for raw artifacts.
 - Railway project and production environment.
-- Railway `postgis` service from `postgis/postgis` with a mounted volume and
+- Railway `postgis` service from `infra/railway/postgis/Dockerfile`, based on
+  `postgis/postgis`, with a mounted volume and
   `PGDATA=/var/lib/postgresql/data/pgdata`.
 - Railway `api`, `web`, `migrate`, and `daily` services from GitHub.
 - Railway service variables.

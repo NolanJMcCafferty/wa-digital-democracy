@@ -27,12 +27,6 @@ variable "github_branch" {
   default     = "main"
 }
 
-variable "postgis_image" {
-  description = "PostGIS Docker image for the Railway database service."
-  type        = string
-  default     = "postgis/postgis:16-3.5-alpine"
-}
-
 variable "postgis_user" {
   description = "Postgres user for the PostGIS service."
   type        = string

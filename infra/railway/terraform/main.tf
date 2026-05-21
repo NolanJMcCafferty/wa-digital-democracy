@@ -51,12 +51,14 @@ locals {
 }
 
 resource "railway_service" "postgis" {
-  name         = "postgis"
-  project_id   = railway_project.wadd.id
-  source_image = var.postgis_image
+  name               = "postgis"
+  project_id         = railway_project.wadd.id
+  source_repo        = var.github_repo
+  source_repo_branch = var.github_branch
+  config_path        = "/infra/railway/config/postgis.railway.json"
 
   volume = {
-    name       = "postgis-data"
+    name       = "postgis-data-v2"
     mount_path = "/var/lib/postgresql/data"
   }
 }

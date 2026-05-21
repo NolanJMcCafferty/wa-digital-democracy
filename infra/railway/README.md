@@ -32,7 +32,8 @@ infra/railway/config/daily.railway.json
 Terraform creates:
 
 - Railway project and production environment.
-- Railway `postgis` service from `postgis/postgis:16-3.5-alpine`.
+- Railway `postgis` service from `infra/railway/postgis/Dockerfile`, based on
+  `postgis/postgis:16-3.5-alpine`.
 - Railway `api` service from the GitHub repo root.
 - Railway `web` service from GitHub root directory `apps/web`.
 - Railway `migrate` service from the GitHub repo root.
@@ -56,8 +57,8 @@ Railway project: wa-digital-democracy
 Environment: production
 
   postgis
-    source image: postgis/postgis:16-3.5-alpine
-    volume: postgis-data mounted at /var/lib/postgresql/data
+    config: /infra/railway/config/postgis.railway.json
+    volume: postgis-data-v2 mounted at /var/lib/postgresql/data
     PGDATA: /var/lib/postgresql/data/pgdata
     public domain: no
 
@@ -317,12 +318,16 @@ The migration `db/migrations/0022_enable_postgis_and_job_locks.sql` runs:
 CREATE EXTENSION IF NOT EXISTS postgis;
 ```
 
-The Terraform-managed database uses `postgis/postgis:16-3.5-alpine` so the
-extension is available. The volume is mounted at `/var/lib/postgresql/data`,
-but `PGDATA` is set to `/var/lib/postgresql/data/pgdata`; mounting directly at
-`PGDATA` can leave filesystem metadata such as `lost+found` in the data
-directory and make `initdb` fail. Migration `0001_initial.sql` also enables
-`pg_trgm` and `unaccent`.
+The Terraform-managed database uses `infra/railway/postgis/Dockerfile`, a tiny
+wrapper around `postgis/postgis:16-3.5-alpine`, so the extension is available.
+The wrapper fails fast if Railway has not injected `POSTGRES_USER`,
+`POSTGRES_PASSWORD`, and `POSTGRES_DB`; this prevents a fresh volume from being
+initialized with credentials that do not match Terraform. The volume is mounted
+at `/var/lib/postgresql/data`, but `PGDATA` is set to
+`/var/lib/postgresql/data/pgdata`; mounting directly at `PGDATA` can leave
+filesystem metadata such as `lost+found` in the data directory and make
+`initdb` fail. Migration `0001_initial.sql` also enables `pg_trgm` and
+`unaccent`.
 
 After running `migrate`, verify:
 

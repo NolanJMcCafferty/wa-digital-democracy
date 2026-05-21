@@ -9,6 +9,8 @@ on:
       - ".github/workflows/deploy-railway.yml"
       - "railway.json"
       - "Dockerfile"
+      - "infra/railway/config/postgis.railway.json"
+      - "infra/railway/postgis/**"
       - "apps/web/**"
       - "cmd/**"
       - "internal/**"
