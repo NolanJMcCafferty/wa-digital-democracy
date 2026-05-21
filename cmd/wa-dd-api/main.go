@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,11 +38,8 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	store, err := db.OpenLazy(ctx, *dsn)
-	if err != nil {
-		log.Fatalf("db open: %v", err)
-	}
-	defer store.Close()
+	stores := newStoreProvider(*dsn)
+	defer stores.Close()
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -51,34 +49,40 @@ func main() {
 	r.Use(middleware.Timeout(30 * time.Second))
 
 	r.Get("/healthz", healthHandler())
-	r.Get("/readyz", readinessHandler(store))
+	r.Get("/readyz", readinessHandler(stores))
 	r.Get("/api/v1/addresses/suggest", suggestAddressesHandler())
-	r.Get("/api/v1/bills", listBillsHandler(store))
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
+	r.Get("/api/v1/bills", withStore(stores, listBillsHandler))
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", withStore(stores, billPageHandler))
 	// Back-compat alias for older frontend/code paths. Returns the same
 	// page-level shape as /page; despite the historical name, this is no
 	// longer a generic legacy snapshot endpoint.
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", billPageHandler(store))
-	r.Get("/api/v1/legislators", listLegislatorsHandler(store))
-	r.Get("/api/v1/legislators/lookup", lookupLegislatorsByAddressHandler(store))
-	r.Get("/api/v1/legislators/{slug}", getLegislatorHandler(store))
-	r.Get("/api/v1/organizations", listOrganizationsHandler(store))
-	r.Get("/api/v1/organizations/{slug}", getOrganizationHandler(store))
-	r.Get("/api/v1/hearings", listHearingsHandler(store))
-	r.Get("/api/v1/hearings/{hearingId}", getHearingHandler(store))
-	r.Get("/api/v1/sources", listSourcesHandler(store))
-	r.Get("/api/v1/search/transcripts", searchTranscriptsHandler(store))
-	r.Get("/api/v1/admin/review/speakers", adminListSpeakerReviewTasksHandler(store))
-	r.Get("/api/v1/admin/review/speakers/events", adminListSpeakerReviewEventsHandler(store))
-	r.Get("/api/v1/admin/review/speakers/events/{tvwEventId}", adminGetSpeakerReviewEventHandler(store))
-	r.Get("/api/v1/admin/review/speakers/clusters/{clusterId}", adminGetSpeakerClusterReviewHandler(store))
-	r.Post("/api/v1/admin/review/speakers/clusters/{clusterId}/assign", adminManualAssignSpeakerClusterHandler(store))
-	r.Get("/api/v1/admin/review/speakers/{taskId}", adminGetSpeakerReviewTaskHandler(store))
-	r.Post("/api/v1/admin/review/speakers/{taskId}/accept", adminSpeakerReviewDecisionHandler(store, "accept"))
-	r.Post("/api/v1/admin/review/speakers/{taskId}/reject", adminSpeakerReviewDecisionHandler(store, "reject"))
-	r.Post("/api/v1/admin/review/speakers/{taskId}/needs-more-evidence", adminSpeakerReviewDecisionHandler(store, "needs_more_evidence"))
-	r.Get("/api/v1/admin/review/entities/candidates", adminListEntityMatchCandidatesHandler(store))
-	r.Post("/api/v1/admin/review/entities/candidates/{candidateId}/decide", adminDecideEntityMatchHandler(store))
+	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", withStore(stores, billPageHandler))
+	r.Get("/api/v1/legislators", withStore(stores, listLegislatorsHandler))
+	r.Get("/api/v1/legislators/lookup", withStore(stores, lookupLegislatorsByAddressHandler))
+	r.Get("/api/v1/legislators/{slug}", withStore(stores, getLegislatorHandler))
+	r.Get("/api/v1/organizations", withStore(stores, listOrganizationsHandler))
+	r.Get("/api/v1/organizations/{slug}", withStore(stores, getOrganizationHandler))
+	r.Get("/api/v1/hearings", withStore(stores, listHearingsHandler))
+	r.Get("/api/v1/hearings/{hearingId}", withStore(stores, getHearingHandler))
+	r.Get("/api/v1/sources", withStore(stores, listSourcesHandler))
+	r.Get("/api/v1/search/transcripts", withStore(stores, searchTranscriptsHandler))
+	r.Get("/api/v1/admin/review/speakers", withStore(stores, adminListSpeakerReviewTasksHandler))
+	r.Get("/api/v1/admin/review/speakers/events", withStore(stores, adminListSpeakerReviewEventsHandler))
+	r.Get("/api/v1/admin/review/speakers/events/{tvwEventId}", withStore(stores, adminGetSpeakerReviewEventHandler))
+	r.Get("/api/v1/admin/review/speakers/clusters/{clusterId}", withStore(stores, adminGetSpeakerClusterReviewHandler))
+	r.Post("/api/v1/admin/review/speakers/clusters/{clusterId}/assign", withStore(stores, adminManualAssignSpeakerClusterHandler))
+	r.Get("/api/v1/admin/review/speakers/{taskId}", withStore(stores, adminGetSpeakerReviewTaskHandler))
+	r.Post("/api/v1/admin/review/speakers/{taskId}/accept", withStore(stores, func(store *db.Store) http.HandlerFunc {
+		return adminSpeakerReviewDecisionHandler(store, "accept")
+	}))
+	r.Post("/api/v1/admin/review/speakers/{taskId}/reject", withStore(stores, func(store *db.Store) http.HandlerFunc {
+		return adminSpeakerReviewDecisionHandler(store, "reject")
+	}))
+	r.Post("/api/v1/admin/review/speakers/{taskId}/needs-more-evidence", withStore(stores, func(store *db.Store) http.HandlerFunc {
+		return adminSpeakerReviewDecisionHandler(store, "needs_more_evidence")
+	}))
+	r.Get("/api/v1/admin/review/entities/candidates", withStore(stores, adminListEntityMatchCandidatesHandler))
+	r.Post("/api/v1/admin/review/entities/candidates/{candidateId}/decide", withStore(stores, adminDecideEntityMatchHandler))
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -107,8 +111,64 @@ func healthHandler() http.HandlerFunc {
 	}
 }
 
-func readinessHandler(store *db.Store) http.HandlerFunc {
+type storeProvider struct {
+	dsn   string
+	mu    sync.RWMutex
+	store *db.Store
+}
+
+func newStoreProvider(dsn string) *storeProvider {
+	return &storeProvider{dsn: dsn}
+}
+
+func (p *storeProvider) Get(ctx context.Context) (*db.Store, error) {
+	p.mu.RLock()
+	store := p.store
+	p.mu.RUnlock()
+	if store != nil {
+		return store, nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.store != nil {
+		return p.store, nil
+	}
+
+	store, err := db.Open(ctx, p.dsn)
+	if err != nil {
+		return nil, err
+	}
+	p.store = store
+	return store, nil
+}
+
+func (p *storeProvider) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.store != nil {
+		p.store.Close()
+	}
+}
+
+func withStore(provider *storeProvider, next func(*db.Store) http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		store, err := provider.Get(req.Context())
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
+		}
+		next(store)(w, req)
+	}
+}
+
+func readinessHandler(provider *storeProvider) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		store, err := provider.Get(req.Context())
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy", "error": err.Error()})
+			return
+		}
 		if err := store.Pool.Ping(req.Context()); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy", "error": err.Error()})
 			return

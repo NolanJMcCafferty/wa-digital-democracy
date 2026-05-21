@@ -266,7 +266,6 @@ Terraform assigns variables by service.
 api
   APP_ENV
   LOG_LEVEL
-  PORT
   DATABASE_URL
   SOURCE_USER_AGENT
 

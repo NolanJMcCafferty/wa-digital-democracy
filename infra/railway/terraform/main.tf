@@ -140,7 +140,6 @@ locals {
   api_vars = {
     APP_ENV           = "production"
     LOG_LEVEL         = "info"
-    PORT              = "8080"
     DATABASE_URL      = local.database_url
     SOURCE_USER_AGENT = var.source_user_agent
   }
