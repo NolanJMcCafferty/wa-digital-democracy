@@ -11,6 +11,7 @@ import { filterHearings } from "@/app/hearings/filterHearings";
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
 export async function generateStaticParams() {
+  if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
   const orgs = await listOrganizations();
   return orgs.map((o) => ({ slug: o.slug }));
 }

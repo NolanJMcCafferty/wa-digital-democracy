@@ -1,0 +1,9 @@
+.git
+.env
+.env.local
+bin
+data
+docs/db/schemaspy
+apps/web
+*.test
+*.out

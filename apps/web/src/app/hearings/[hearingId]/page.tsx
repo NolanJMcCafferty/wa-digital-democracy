@@ -24,6 +24,7 @@ const POSITION_BADGE_STYLE: Record<Position, string> = {
 type Params = { hearingId: string };
 
 export async function generateStaticParams() {
+  if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
   const hearings = await listHearings();
   return hearings.map((h) => ({ hearingId: String(h.hearingId) }));
 }

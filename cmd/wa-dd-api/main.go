@@ -29,7 +29,7 @@ import (
 
 func main() {
 	var (
-		addr = flag.String("addr", ":8080", "HTTP listen address")
+		addr = flag.String("addr", defaultAddr(), "HTTP listen address")
 		dsn  = flag.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres connection string")
 	)
 	flag.Parse()
@@ -273,7 +273,19 @@ func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+	if key == "WADD_DSN" {
+		if v := os.Getenv("DATABASE_URL"); v != "" {
+			return v
+		}
+	}
 	return def
+}
+
+func defaultAddr() string {
+	if port := os.Getenv("PORT"); port != "" {
+		return ":" + port
+	}
+	return ":8080"
 }
 
 // splitCSV parses a "HB1006,SB5001" query-string value into trimmed,

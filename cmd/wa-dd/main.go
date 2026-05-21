@@ -71,6 +71,7 @@ SUBCOMMANDS:
   ingest-session     Ingest LWS metadata for every bill in a biennium (no hearings)
   discover-hearings  Auto-fill CSI/TVW IDs on every LWS hearing in a biennium
   ingest-hearings    Run the full pipeline for every discovered agenda item
+  daily              Run the hosted nightly chain: roster, session, discovery, hearings
   ingest-contracts   Pull DataWA agency contract rows into Postgres
   ingest-master-contract-sales
                      Pull DataWA statewide/master-contract sales rows into Postgres
@@ -112,10 +113,10 @@ SUBCOMMANDS:
 Run 'wa-dd <subcommand> -h' for subcommand flags.
 `
 
-const userAgent = "wa-dd/0.0.1 (https://github.com/nolan-mccafferty/wa-digital-democracy; nolan-mccafferty)"
-
 // version is overridden via -ldflags="-X main.version=…" at release time.
 var version = "0.0.0-dev"
+
+var userAgent = env("SOURCE_USER_AGENT", "wa-dd/0.0.1 (https://github.com/nolan-mccafferty/wa-digital-democracy; nolan-mccafferty)")
 
 func main() {
 	if len(os.Args) < 2 {
@@ -139,6 +140,8 @@ func main() {
 		os.Exit(runDiscoverHearings(args))
 	case "ingest-hearings":
 		os.Exit(runIngestHearings(args))
+	case "daily":
+		os.Exit(runDaily(args))
 	case "ingest-tvw":
 		os.Exit(runIngestTVW(args))
 	case "ingest-contracts":
@@ -204,6 +207,102 @@ func runStub(cmd string, args []string, phase string) {
 	_ = fs.Parse(args)
 	fmt.Fprintf(os.Stderr, "wa-dd %s: not yet implemented (planned for %s)\n", cmd, phase)
 	os.Exit(64)
+}
+
+func runDaily(args []string) int {
+	fs := flag.NewFlagSet("daily", flag.ContinueOnError)
+	var (
+		biennium       = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
+		dsn            = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		rawDir         = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses when OBJECT_STORE=local")
+		outDir         = fs.String("out-dir", "data/processed", "where run summary JSON files are written")
+		rateLimit      = fs.Float64("rate", 10.0, "max requests/sec per legislative host for discovery/hearing steps")
+		sessionRate    = fs.Float64("session-rate", 25.0, "max requests/sec for LWS session metadata")
+		sessionWorkers = fs.Int("session-workers", 4, "number of ingest-session workers")
+		sessionLimit   = fs.Int("session-limit", 0, "stop ingest-session after N bills (0 = no limit)")
+		hearingLimit   = fs.Int("hearing-limit", 0, "stop discover/ingest-hearings after N rows (0 = no limit)")
+	)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	release, locked, err := acquireDailyLock(ctx, *dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daily: acquire lock: %v\n", err)
+		return 1
+	}
+	if !locked {
+		fmt.Fprintln(os.Stderr, "daily: another daily run is already active; exiting")
+		return 0
+	}
+	defer release()
+
+	base := []string{"--biennium", *biennium, "--dsn", *dsn, "--raw-dir", *rawDir, "--out-dir", *outDir}
+	steps := []struct {
+		name string
+		code func([]string) int
+		args []string
+	}{
+		{
+			name: "ingest-legislators",
+			code: runIngestLegislators,
+			args: append(append([]string{}, base...), "--rate", fmt.Sprintf("%g", *rateLimit)),
+		},
+		{
+			name: "ingest-session",
+			code: runIngestSession,
+			args: append(append([]string{}, base...),
+				"--rate", fmt.Sprintf("%g", *sessionRate),
+				"--workers", strconv.Itoa(*sessionWorkers),
+				"--limit", strconv.Itoa(*sessionLimit),
+			),
+		},
+		{
+			name: "discover-hearings",
+			code: runDiscoverHearings,
+			args: append(append([]string{}, base...),
+				"--rate", fmt.Sprintf("%g", *rateLimit),
+				"--limit", strconv.Itoa(*hearingLimit),
+			),
+		},
+		{
+			name: "ingest-hearings",
+			code: runIngestHearings,
+			args: append(append([]string{}, base...),
+				"--rate", fmt.Sprintf("%g", *rateLimit),
+				"--limit", strconv.Itoa(*hearingLimit),
+			),
+		},
+	}
+	for _, step := range steps {
+		fmt.Fprintf(os.Stderr, "==> daily: %s\n", step.name)
+		if code := step.code(step.args); code != 0 {
+			fmt.Fprintf(os.Stderr, "daily: %s failed with exit code %d\n", step.name, code)
+			return code
+		}
+	}
+	fmt.Fprintln(os.Stderr, "==> daily: complete")
+	return 0
+}
+
+func acquireDailyLock(ctx context.Context, dsn string) (func(), bool, error) {
+	store, err := db.Open(ctx, dsn)
+	if err != nil {
+		return nil, false, err
+	}
+	var locked bool
+	if err := store.Pool.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext('wa-dd:daily')::bigint)`).Scan(&locked); err != nil {
+		store.Close()
+		return nil, false, err
+	}
+	release := func() {
+		_, _ = store.Pool.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('wa-dd:daily')::bigint)`)
+		store.Close()
+	}
+	return release, locked, nil
 }
 
 // runFindCandidates implements `wa-dd find-candidates`.
@@ -306,6 +405,11 @@ func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+	if key == "WADD_DSN" {
+		if v := os.Getenv("DATABASE_URL"); v != "" {
+			return v
+		}
+	}
 	return def
 }
 
@@ -341,7 +445,7 @@ func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*
 	}
 	cleanup := func() { store.Close() }
 
-	objs, err := objectstore.NewFS(rawDir)
+	objs, err := objectstore.NewConfigured(ctx, rawDir)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("objectstore: %w", err)
@@ -395,7 +499,7 @@ func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64)
 	}
 	cleanup := func() { store.Close() }
 
-	objs, err := objectstore.NewFS(rawDir)
+	objs, err := objectstore.NewConfigured(ctx, rawDir)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("objectstore: %w", err)
@@ -774,7 +878,7 @@ func newDiscoveryDeps(ctx context.Context, dsn, rawDir string, rateLimit float64
 	}
 	cleanup := func() { store.Close() }
 
-	objs, err := objectstore.NewFS(rawDir)
+	objs, err := objectstore.NewConfigured(ctx, rawDir)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("objectstore: %w", err)
@@ -1124,7 +1228,7 @@ func runIngestContracts(args []string) int {
 	}
 	defer store.Close()
 
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-contracts: objectstore: %v\n", err)
 		return 1
@@ -1231,7 +1335,7 @@ func runIngestMasterContractSales(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-master-contract-sales: objectstore: %v\n", err)
 		return 1
@@ -1325,7 +1429,7 @@ func runIngestITContracts(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-it-contracts: objectstore: %v\n", err)
 		return 1
@@ -1448,7 +1552,7 @@ func runIngestWEBSVendors(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-webs-vendors: objectstore: %v\n", err)
 		return 1
@@ -1788,7 +1892,7 @@ func runIngestUSASpendingWAAwards(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: objectstore: %v\n", err)
 		return 1
@@ -1870,7 +1974,7 @@ func runIngestSeattleOperatingBudget(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-seattle-operating-budget: objectstore: %v\n", err)
 		return 1
@@ -1954,7 +2058,7 @@ func runIngestFiscalVendorPayments(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: objectstore: %v\n", err)
 		return 1
@@ -2266,17 +2370,20 @@ SELECT sr.id, sr.source_system, sr.source_endpoint, sr.source_url, sr.raw_path,
 		return err
 	}
 
-	fullPath := filepath.Join(rawDir, rawPath)
-	body, err := os.ReadFile(fullPath)
+	objs, err := objectstore.NewConfigured(ctx, rawDir)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", fullPath, err)
+		return fmt.Errorf("objectstore: %w", err)
+	}
+	body, err := objs.Get(ctx, rawPath)
+	if err != nil {
+		return fmt.Errorf("read raw object %s: %w", rawPath, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "==> stored TVW/Invintus response for event %s\n", eventID)
 	fmt.Fprintf(os.Stderr, "  source_record_id=%d system=%s endpoint=%s fetched_at=%s\n",
 		sourceRecordID, system, endpoint, fetchedAt.Format(time.RFC3339))
 	fmt.Fprintf(os.Stderr, "  source_url=%s\n", sourceURL)
-	fmt.Fprintf(os.Stderr, "  raw_path=%s content_type=%s bytes=%d\n", fullPath, contentType, len(body))
+	fmt.Fprintf(os.Stderr, "  raw_path=%s content_type=%s bytes=%d\n", rawPath, contentType, len(body))
 
 	printBody := body
 	truncated := false
@@ -3124,7 +3231,7 @@ func runIngestIRSBMFWA(args []string) int {
 	}
 	defer store.Close()
 
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: objectstore: %v\n", err)
 		return 1
@@ -3226,7 +3333,7 @@ func runIngestPDCEmployers(args []string) int {
 	}
 	defer store.Close()
 
-	objs, err := objectstore.NewFS(*rawDir)
+	objs, err := objectstore.NewConfigured(ctx, *rawDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-pdc-employers: objectstore: %v\n", err)
 		return 1

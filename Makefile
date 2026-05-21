@@ -17,7 +17,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build docker-build-api docker-build-cli docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -80,6 +80,15 @@ coverage:     ## Enforce unit test coverage threshold for core packages
 build:        ## Build all binaries into ./bin
 	mkdir -p bin
 	$(GO) build -o bin/ ./cmd/...
+
+docker-build-api: ## Build the production Go API container target
+	docker build --target api -t wa-dd-api:local .
+
+docker-build-cli: ## Build the production Go CLI/cron container target
+	docker build --target cli -t wa-dd-cli:local .
+
+docker-build-web: ## Build the production Next.js web container
+	docker build -t wa-dd-web:local apps/web
 
 
 vet:

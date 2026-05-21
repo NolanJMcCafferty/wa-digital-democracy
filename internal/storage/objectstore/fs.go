@@ -1,4 +1,4 @@
-// Package objectstore stores raw source-response bytes on disk.
+// Package objectstore stores raw source-response bytes.
 //
 // Layout: data/raw/<system>/<sha256>.<ext>
 //
@@ -7,9 +7,7 @@
 // Architectural Decision #2 (raw source records immutable), files are never
 // overwritten — if a file with the same hash already exists, Put is a no-op.
 //
-// In production this will be swapped for an S3/R2-backed implementation
-// (see Recommended Tech Stack §"Raw source storage"). The interface stays the
-// same.
+// Production deployments use the same interface with an S3/R2-backed store.
 package objectstore
 
 import (

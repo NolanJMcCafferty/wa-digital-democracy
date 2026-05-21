@@ -5,7 +5,11 @@ import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Sta
 // in the Node runtime and does NOT pass through next.config.ts rewrites.
 // We hit the Go API by absolute URL. The rewrite still proxies any
 // future client-side fetches under /api/v1/* through the same origin.
-const API_BASE = process.env.WADD_API_URL ?? "http://localhost:8080";
+const API_BASE =
+  process.env.WADD_API_URL ??
+  process.env.API_BASE_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8080";
 
 // Match daily-ingest cadence with margin. Override per-call by passing a
 // different `next` option if a section ever needs sub-minute freshness.

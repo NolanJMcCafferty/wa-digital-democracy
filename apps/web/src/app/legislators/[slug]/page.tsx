@@ -11,6 +11,7 @@ import {
 } from "../../bills/BillSearchResults";
 
 export async function generateStaticParams() {
+  if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
   const legislators = await listLegislators();
   return legislators.map((l) => ({ slug: l.slug }));
 }

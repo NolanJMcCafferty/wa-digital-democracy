@@ -47,6 +47,23 @@ Override the API URL the frontend hits with `WADD_API_URL` (default
 `http://localhost:8080`) — useful when running the API on a non-default
 port or against a remote dev DB.
 
+## Railway deployment
+
+Railway is the first hosted demo target. The deploy contract is:
+
+- `apps/web/Dockerfile` for the Next.js web service.
+- root `Dockerfile --target api` for `wa-dd-api`.
+- root `Dockerfile --target cli` for cron jobs, with start command
+  `daily --biennium 2025-26`.
+- root `Dockerfile --target migrate` for goose migrations.
+- Cloudflare R2 via `OBJECT_STORE=s3` and `S3_*` variables for raw source
+  artifacts.
+
+See `infra/railway/README.md` and `infra/railway/variables.example.env` for
+the service layout and required variables. Hosted code accepts `DATABASE_URL`
+as the production alias for local `WADD_DSN`; the API also honors Railway's
+`PORT`.
+
 ### Database docs
 
 Generate browsable SchemaSpy documentation for the local Postgres schema:
