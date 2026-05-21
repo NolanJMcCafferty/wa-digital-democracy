@@ -296,11 +296,16 @@ daily
   BIENNIUM
 ```
 
-`DATABASE_URL` uses Railway variable references to the `postgis` service:
+`DATABASE_URL` uses the Terraform-provided Postgres user/password/database with
+URL encoding, plus Railway's private-domain reference for the `postgis` service:
 
 ```txt
-postgres://${{postgis.POSTGRES_USER}}:${{postgis.POSTGRES_PASSWORD}}@${{postgis.RAILWAY_PRIVATE_DOMAIN}}:5432/${{postgis.POSTGRES_DB}}?sslmode=disable
+postgres://<urlencoded-user>:<urlencoded-password>@${{postgis.RAILWAY_PRIVATE_DOMAIN}}:5432/<urlencoded-db>?sslmode=disable
 ```
+
+Do not build this URL from raw Railway password references. Strong generated
+passwords can contain `@`, `:`, `/`, or other URL-reserved characters, and Go's
+Postgres parser rejects an unescaped password in the userinfo section.
 
 ## PostGIS
 
