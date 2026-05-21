@@ -59,6 +59,7 @@ resource "railway_service" "postgis" {
 
 resource "railway_variable" "postgis" {
   for_each = {
+    PGDATA            = "/var/lib/postgresql/data/pgdata"
     POSTGRES_USER     = var.postgis_user
     POSTGRES_DB       = var.postgis_db
     POSTGRES_PASSWORD = var.postgis_password

@@ -58,6 +58,7 @@ Environment: production
   postgis
     source image: postgis/postgis:16-3.5-alpine
     volume: postgis-data mounted at /var/lib/postgresql/data
+    PGDATA: /var/lib/postgresql/data/pgdata
     public domain: no
 
   api
@@ -307,8 +308,11 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 ```
 
 The Terraform-managed database uses `postgis/postgis:16-3.5-alpine` so the
-extension is available. Migration `0001_initial.sql` also enables `pg_trgm`
-and `unaccent`.
+extension is available. The volume is mounted at `/var/lib/postgresql/data`,
+but `PGDATA` is set to `/var/lib/postgresql/data/pgdata`; mounting directly at
+`PGDATA` can leave filesystem metadata such as `lost+found` in the data
+directory and make `initdb` fail. Migration `0001_initial.sql` also enables
+`pg_trgm` and `unaccent`.
 
 After running `migrate`, verify:
 
