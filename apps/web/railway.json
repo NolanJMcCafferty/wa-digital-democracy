@@ -9,7 +9,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "/bin/sh -c 'pnpm start -- -H 0.0.0.0 -p \"${PORT:-3000}\"'",
+    "startCommand": "/bin/sh -c './node_modules/.bin/next start -H 0.0.0.0 -p \"${PORT:-3000}\"'",
     "healthcheckPath": "/healthz",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",

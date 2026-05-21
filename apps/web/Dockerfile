@@ -22,4 +22,4 @@ ENV PORT=3000
 RUN corepack enable
 COPY --from=build /app ./
 EXPOSE 3000
-CMD ["sh", "-c", "pnpm start -- -H 0.0.0.0 -p ${PORT:-3000}"]
+CMD ["sh", "-c", "./node_modules/.bin/next start -H 0.0.0.0 -p ${PORT:-3000}"]
