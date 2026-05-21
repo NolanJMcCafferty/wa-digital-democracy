@@ -1,0 +1,211 @@
+resource "cloudflare_r2_bucket" "raw" {
+  account_id    = var.cloudflare_account_id
+  name          = var.r2_bucket_raw
+  location      = var.r2_bucket_location
+  jurisdiction  = var.r2_bucket_jurisdiction
+  storage_class = var.r2_bucket_storage_class
+}
+
+resource "railway_project" "wadd" {
+  name         = var.project_name
+  description  = "Washington Digital Democracy hosted demo"
+  private      = true
+  workspace_id = var.workspace_id
+
+  default_environment = {
+    name = var.environment_name
+  }
+}
+
+locals {
+  environment_id = railway_project.wadd.default_environment.id
+
+  database_url = "postgres://$${{postgis.POSTGRES_USER}}:$${{postgis.POSTGRES_PASSWORD}}@$${{postgis.RAILWAY_PRIVATE_DOMAIN}}:5432/$${{postgis.POSTGRES_DB}}?sslmode=disable"
+  r2_endpoint  = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
+
+  api_domain = (
+    var.api_custom_domain != null ? var.api_custom_domain :
+    var.api_railway_subdomain != null ? railway_service_domain.api[0].domain :
+    null
+  )
+  web_domain = (
+    var.web_custom_domain != null ? var.web_custom_domain :
+    var.web_railway_subdomain != null ? railway_service_domain.web[0].domain :
+    null
+  )
+
+  api_public_url = (
+    var.api_public_url_override != null ? var.api_public_url_override :
+    local.api_domain != null ? "https://${local.api_domain}" :
+    "https://replace-after-api-domain"
+  )
+  web_public_url = (
+    var.web_public_url_override != null ? var.web_public_url_override :
+    local.web_domain != null ? "https://${local.web_domain}" :
+    "https://replace-after-web-domain"
+  )
+}
+
+resource "railway_service" "postgis" {
+  name         = "postgis"
+  project_id   = railway_project.wadd.id
+  source_image = var.postgis_image
+
+  volume = {
+    name       = "postgis-data"
+    mount_path = "/var/lib/postgresql/data"
+  }
+}
+
+resource "railway_variable" "postgis" {
+  for_each = {
+    POSTGRES_USER     = var.postgis_user
+    POSTGRES_DB       = var.postgis_db
+    POSTGRES_PASSWORD = var.postgis_password
+  }
+
+  name           = each.key
+  value          = each.value
+  environment_id = local.environment_id
+  service_id     = railway_service.postgis.id
+}
+
+resource "railway_service" "api" {
+  name               = "api"
+  project_id         = railway_project.wadd.id
+  source_repo        = var.github_repo
+  source_repo_branch = var.github_branch
+}
+
+resource "railway_service" "web" {
+  name               = "web"
+  project_id         = railway_project.wadd.id
+  source_repo        = var.github_repo
+  source_repo_branch = var.github_branch
+  root_directory     = "apps/web"
+  config_path        = "/apps/web/railway.json"
+}
+
+resource "railway_service" "migrate" {
+  name               = "migrate"
+  project_id         = railway_project.wadd.id
+  source_repo        = var.github_repo
+  source_repo_branch = var.github_branch
+  config_path        = "/infra/railway/config/migrate.railway.json"
+}
+
+resource "railway_service" "daily" {
+  name               = "daily"
+  project_id         = railway_project.wadd.id
+  source_repo        = var.github_repo
+  source_repo_branch = var.github_branch
+  config_path        = "/infra/railway/config/daily.railway.json"
+  cron_schedule      = var.daily_cron
+}
+
+resource "railway_service_domain" "api" {
+  count = var.api_railway_subdomain == null ? 0 : 1
+
+  subdomain      = var.api_railway_subdomain
+  environment_id = local.environment_id
+  service_id     = railway_service.api.id
+}
+
+resource "railway_service_domain" "web" {
+  count = var.web_railway_subdomain == null ? 0 : 1
+
+  subdomain      = var.web_railway_subdomain
+  environment_id = local.environment_id
+  service_id     = railway_service.web.id
+}
+
+resource "railway_custom_domain" "api" {
+  count = var.api_custom_domain == null ? 0 : 1
+
+  domain         = var.api_custom_domain
+  environment_id = local.environment_id
+  service_id     = railway_service.api.id
+}
+
+resource "railway_custom_domain" "web" {
+  count = var.web_custom_domain == null ? 0 : 1
+
+  domain         = var.web_custom_domain
+  environment_id = local.environment_id
+  service_id     = railway_service.web.id
+}
+
+locals {
+  api_vars = {
+    APP_ENV           = "production"
+    LOG_LEVEL         = "info"
+    PORT              = "8080"
+    DATABASE_URL      = local.database_url
+    SOURCE_USER_AGENT = var.source_user_agent
+  }
+
+  web_vars = {
+    WADD_API_URL         = local.api_public_url
+    API_BASE_URL         = local.api_public_url
+    NEXT_PUBLIC_API_URL  = local.api_public_url
+    NEXT_PUBLIC_SITE_URL = local.web_public_url
+  }
+
+  migrate_vars = {
+    DATABASE_URL = local.database_url
+  }
+
+  daily_vars = {
+    APP_ENV               = "production"
+    LOG_LEVEL             = "info"
+    DATABASE_URL          = local.database_url
+    OBJECT_STORE          = "s3"
+    S3_ENDPOINT_URL       = local.r2_endpoint
+    S3_REGION             = "auto"
+    S3_BUCKET_RAW         = var.r2_bucket_raw
+    S3_ACCESS_KEY_ID      = var.r2_access_key_id
+    S3_SECRET_ACCESS_KEY  = var.r2_secret_access_key
+    S3_FORCE_PATH_STYLE   = "false"
+    S3_PREFIX             = "raw"
+    INVINTUS_EMBEDDER_KEY = var.invintus_embedder_key
+    SOCRATA_APP_TOKEN     = var.socrata_app_token
+    SOURCE_USER_AGENT     = var.source_user_agent
+    BIENNIUM              = var.daily_biennium
+  }
+}
+
+resource "railway_variable" "api" {
+  for_each = local.api_vars
+
+  name           = each.key
+  value          = each.value
+  environment_id = local.environment_id
+  service_id     = railway_service.api.id
+}
+
+resource "railway_variable" "web" {
+  for_each = local.web_vars
+
+  name           = each.key
+  value          = each.value
+  environment_id = local.environment_id
+  service_id     = railway_service.web.id
+}
+
+resource "railway_variable" "migrate" {
+  for_each = local.migrate_vars
+
+  name           = each.key
+  value          = each.value
+  environment_id = local.environment_id
+  service_id     = railway_service.migrate.id
+}
+
+resource "railway_variable" "daily" {
+  for_each = local.daily_vars
+
+  name           = each.key
+  value          = each.value
+  environment_id = local.environment_id
+  service_id     = railway_service.daily.id
+}

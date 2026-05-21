@@ -15,7 +15,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "/bin/sh -c 'wa-dd daily --biennium \"${BIENNIUM:-2025-26}\" ${DAILY_EXTRA_ARGS:-}'",
+    "startCommand": "/bin/sh -c 'wa-dd daily --biennium \"${BIENNIUM:-2025-26}\"'",
     "restartPolicyType": "NEVER"
   }
 }

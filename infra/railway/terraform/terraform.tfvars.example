@@ -1,0 +1,39 @@
+github_repo   = "nolan-mccafferty/wa-digital-democracy"
+github_branch = "main"
+
+# Required if your Railway token can see more than one workspace.
+workspace_id = null
+
+# Railway-hosted PostGIS container.
+postgis_password = "replace-with-a-long-random-password"
+
+# Railway public domains. Pick globally unique subdomains, or leave null and
+# set api_public_url_override/web_public_url_override after creating domains.
+api_railway_subdomain = "wa-dd-api"
+web_railway_subdomain = "wa-dd-web"
+
+# Optional custom domains. Leave null unless DNS is ready.
+api_custom_domain = null
+web_custom_domain = null
+
+# Optional URL overrides used for web service variables.
+api_public_url_override = null
+web_public_url_override = null
+
+# Cloudflare R2 raw archive bucket. Terraform creates/manages this bucket.
+cloudflare_account_id = "replace-with-cloudflare-account-id"
+r2_bucket_raw         = "wa-dd-raw-prod"
+r2_bucket_location    = null
+r2_bucket_jurisdiction = null
+
+# Generate these in the Cloudflare R2 dashboard. Terraform can create the
+# bucket, but Cloudflare requires R2 S3 access keys to be generated separately.
+r2_access_key_id     = "replace-with-r2-access-key-id"
+r2_secret_access_key = "replace-with-r2-secret-access-key"
+
+# Ingestion secrets.
+invintus_embedder_key = "replace-with-invintus-key"
+socrata_app_token     = ""
+
+daily_biennium   = "2025-26"
+daily_cron       = "30 3 * * *"

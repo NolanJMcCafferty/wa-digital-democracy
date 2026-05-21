@@ -51,6 +51,10 @@ port or against a remote dev DB.
 
 Railway is the first hosted demo target. The deploy contract is:
 
+- `infra/railway/terraform/` is the reproducible infra setup for Railway
+  services, variables, domains, cron, and the optional R2 bucket.
+- `.github/workflows/deploy-railway.yml` runs Terraform plan/apply from
+  GitHub Actions; pushes to `main` apply production infrastructure.
 - `apps/web/Dockerfile` for the Next.js web service.
 - root `Dockerfile` default Railway image for `wa-dd-api`, `wa-dd`, and
   `goose`.

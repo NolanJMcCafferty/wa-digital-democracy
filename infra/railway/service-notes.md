@@ -44,13 +44,7 @@ Use the default final image in the root `Dockerfile` and the start command in
 `infra/railway/config/daily.railway.json`:
 
 ```sh
-wa-dd daily --biennium "${BIENNIUM:-2025-26}" ${DAILY_EXTRA_ARGS:-}
-```
-
-For a smoke test, set this service variable temporarily:
-
-```txt
-DAILY_EXTRA_ARGS=--session-limit 25 --hearing-limit 5
+wa-dd daily --biennium "${BIENNIUM:-2025-26}"
 ```
 
 The `daily` command holds a Postgres advisory lock for the full chain, so an

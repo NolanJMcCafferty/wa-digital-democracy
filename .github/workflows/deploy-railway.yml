@@ -1,0 +1,232 @@
+name: Deploy Railway
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-railway.yml"
+      - "railway.json"
+      - "Dockerfile"
+      - "apps/web/**"
+      - "cmd/**"
+      - "internal/**"
+      - "db/migrations/**"
+      - "infra/railway/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+concurrency:
+  group: railway-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_CLI_ARGS: "-no-color"
+      TF_WORKING_DIR: infra/railway/terraform
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.4
+          terraform_wrapper: false
+
+      - name: Terraform init without backend
+        run: terraform -chdir="${TF_WORKING_DIR}" init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir="${TF_WORKING_DIR}" validate
+
+  deploy:
+    name: Apply Railway Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_CLI_ARGS: "-no-color"
+      TF_WORKING_DIR: infra/railway/terraform
+
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      TF_STATE_R2_BUCKET: ${{ secrets.TF_STATE_R2_BUCKET }}
+      TF_STATE_R2_KEY: ${{ secrets.TF_STATE_R2_KEY }}
+      TF_STATE_R2_ACCESS_KEY_ID: ${{ secrets.TF_STATE_R2_ACCESS_KEY_ID }}
+      TF_STATE_R2_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_R2_SECRET_ACCESS_KEY }}
+
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RAILWAY_WORKSPACE_ID: ${{ vars.RAILWAY_WORKSPACE_ID }}
+
+      POSTGIS_PASSWORD: ${{ secrets.POSTGIS_PASSWORD }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      INVINTUS_EMBEDDER_KEY: ${{ secrets.INVINTUS_EMBEDDER_KEY }}
+      SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+
+      R2_BUCKET_RAW: ${{ vars.R2_BUCKET_RAW }}
+      R2_BUCKET_LOCATION: ${{ vars.R2_BUCKET_LOCATION }}
+      R2_BUCKET_JURISDICTION: ${{ vars.R2_BUCKET_JURISDICTION }}
+      R2_BUCKET_STORAGE_CLASS: ${{ vars.R2_BUCKET_STORAGE_CLASS }}
+
+      API_RAILWAY_SUBDOMAIN: ${{ vars.API_RAILWAY_SUBDOMAIN }}
+      WEB_RAILWAY_SUBDOMAIN: ${{ vars.WEB_RAILWAY_SUBDOMAIN }}
+      API_CUSTOM_DOMAIN: ${{ vars.API_CUSTOM_DOMAIN }}
+      WEB_CUSTOM_DOMAIN: ${{ vars.WEB_CUSTOM_DOMAIN }}
+      API_PUBLIC_URL_OVERRIDE: ${{ vars.API_PUBLIC_URL_OVERRIDE }}
+      WEB_PUBLIC_URL_OVERRIDE: ${{ vars.WEB_PUBLIC_URL_OVERRIDE }}
+
+      DAILY_BIENNIUM: ${{ vars.DAILY_BIENNIUM }}
+      DAILY_CRON: ${{ vars.DAILY_CRON }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.4
+          terraform_wrapper: false
+
+      - name: Validate required deployment inputs
+        run: |
+          set -euo pipefail
+
+          required=(
+            RAILWAY_TOKEN
+            CLOUDFLARE_ACCOUNT_ID
+            TF_STATE_R2_BUCKET
+            TF_STATE_R2_ACCESS_KEY_ID
+            TF_STATE_R2_SECRET_ACCESS_KEY
+            POSTGIS_PASSWORD
+            R2_ACCESS_KEY_ID
+            R2_SECRET_ACCESS_KEY
+            INVINTUS_EMBEDDER_KEY
+          )
+
+          required+=(CLOUDFLARE_API_TOKEN)
+
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub secret or variable: ${name}" >&2
+              exit 1
+            fi
+          done
+
+          if [ -z "${API_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${API_CUSTOM_DOMAIN:-}" ] && [ -z "${API_PUBLIC_URL_OVERRIDE:-}" ]; then
+            echo "Set API_RAILWAY_SUBDOMAIN, API_CUSTOM_DOMAIN, or API_PUBLIC_URL_OVERRIDE." >&2
+            exit 1
+          fi
+
+          if [ -z "${WEB_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${WEB_CUSTOM_DOMAIN:-}" ] && [ -z "${WEB_PUBLIC_URL_OVERRIDE:-}" ]; then
+            echo "Set WEB_RAILWAY_SUBDOMAIN, WEB_CUSTOM_DOMAIN, or WEB_PUBLIC_URL_OVERRIDE." >&2
+            exit 1
+          fi
+
+      - name: Write Terraform backend config
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+
+          cat > backend.hcl <<EOF
+          bucket                      = "${TF_STATE_R2_BUCKET}"
+          key                         = "${TF_STATE_R2_KEY}"
+          region                      = "auto"
+          endpoints                   = { s3 = "https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" }
+          access_key                  = "${TF_STATE_R2_ACCESS_KEY_ID}"
+          secret_key                  = "${TF_STATE_R2_SECRET_ACCESS_KEY}"
+          skip_credentials_validation = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          skip_metadata_api_check     = true
+          skip_s3_checksum            = true
+          use_lockfile                = true
+          EOF
+
+      - name: Write Terraform variable config
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+
+          jq -n \
+            --arg github_repo "${GITHUB_REPOSITORY}" \
+            --arg github_branch "main" \
+            --arg workspace_id "${RAILWAY_WORKSPACE_ID:-}" \
+            --arg postgis_password "${POSTGIS_PASSWORD}" \
+            --arg cloudflare_account_id "${CLOUDFLARE_ACCOUNT_ID}" \
+            --arg r2_bucket_raw "${R2_BUCKET_RAW:-wa-dd-raw-prod}" \
+            --arg r2_bucket_location "${R2_BUCKET_LOCATION:-}" \
+            --arg r2_bucket_jurisdiction "${R2_BUCKET_JURISDICTION:-}" \
+            --arg r2_bucket_storage_class "${R2_BUCKET_STORAGE_CLASS:-Standard}" \
+            --arg r2_access_key_id "${R2_ACCESS_KEY_ID}" \
+            --arg r2_secret_access_key "${R2_SECRET_ACCESS_KEY}" \
+            --arg invintus_embedder_key "${INVINTUS_EMBEDDER_KEY}" \
+            --arg socrata_app_token "${SOCRATA_APP_TOKEN:-}" \
+            --arg api_railway_subdomain "${API_RAILWAY_SUBDOMAIN:-}" \
+            --arg web_railway_subdomain "${WEB_RAILWAY_SUBDOMAIN:-}" \
+            --arg api_custom_domain "${API_CUSTOM_DOMAIN:-}" \
+            --arg web_custom_domain "${WEB_CUSTOM_DOMAIN:-}" \
+            --arg api_public_url_override "${API_PUBLIC_URL_OVERRIDE:-}" \
+            --arg web_public_url_override "${WEB_PUBLIC_URL_OVERRIDE:-}" \
+            --arg daily_biennium "${DAILY_BIENNIUM:-2025-26}" \
+            --arg daily_cron "${DAILY_CRON:-30 3 * * *}" \
+            '
+            def empty_to_null: if . == "" then null else . end;
+            {
+              github_repo: $github_repo,
+              github_branch: $github_branch,
+              workspace_id: ($workspace_id | empty_to_null),
+              postgis_password: $postgis_password,
+              cloudflare_account_id: $cloudflare_account_id,
+              r2_bucket_raw: $r2_bucket_raw,
+              r2_bucket_location: ($r2_bucket_location | empty_to_null),
+              r2_bucket_jurisdiction: ($r2_bucket_jurisdiction | empty_to_null),
+              r2_bucket_storage_class: $r2_bucket_storage_class,
+              r2_access_key_id: $r2_access_key_id,
+              r2_secret_access_key: $r2_secret_access_key,
+              invintus_embedder_key: $invintus_embedder_key,
+              socrata_app_token: $socrata_app_token,
+              api_railway_subdomain: ($api_railway_subdomain | empty_to_null),
+              web_railway_subdomain: ($web_railway_subdomain | empty_to_null),
+              api_custom_domain: ($api_custom_domain | empty_to_null),
+              web_custom_domain: ($web_custom_domain | empty_to_null),
+              api_public_url_override: ($api_public_url_override | empty_to_null),
+              web_public_url_override: ($web_public_url_override | empty_to_null),
+              daily_biennium: $daily_biennium,
+              daily_cron: $daily_cron
+            }
+            ' > ci.auto.tfvars.json
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -out=railway.tfplan
+
+      - name: Terraform apply
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve railway.tfplan

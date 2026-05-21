@@ -1,25 +1,53 @@
 # Railway Deployment
 
-Railway is the first hosted-demo target, but only if it stays simple. The
-primary setup path is the Railway dashboard plus the config files committed in
-this repo. Terraform is included as an optional later path, not as the required
-way to get the demo online.
+Railway is the hosted-demo target. The deployment should be reproducible from
+this repository: Terraform creates the infrastructure, and Railway builds the
+app services from GitHub using the checked-in `railway.json` files.
 
-## Deployment Decision
+The dashboard should be used for inspection, logs, manual one-shot runs, and
+emergency fixes. It should not be the source of truth for normal setup.
 
-Use Railway if this happy path works:
+## Source Of Truth
 
-1. Create one Railway project.
-2. Add a PostGIS-capable database.
-3. Add `api` from the repository root. Railway reads `railway.json`.
-4. Add `web` from `apps/web` with config path `/apps/web/railway.json`.
-5. Add `migrate` from the repository root with a custom config path.
-6. Add `daily` from the repository root with a custom config path and cron.
-7. Store raw artifacts in Cloudflare R2, not Railway disk.
+```txt
+infra/railway/terraform/
+  Terraform for Railway services, variables, domains, cron, and optional R2
+  bucket creation.
 
-If Railway cannot deploy this layout without custom platform workarounds, use a
-different host for the demo. Render, Fly.io, or Cloud Run would be better than
-making Railway the hard part of the project.
+railway.json
+  API build/deploy config for the root service.
+
+apps/web/railway.json
+  Web build/deploy config for the apps/web service.
+
+infra/railway/config/migrate.railway.json
+  One-shot migration service config.
+
+infra/railway/config/daily.railway.json
+  Scheduled ingestion service config.
+```
+
+## What Terraform Creates
+
+Terraform creates:
+
+- Railway project and production environment.
+- Railway `postgis` service from `postgis/postgis:16-3.5-alpine`.
+- Railway `api` service from the GitHub repo root.
+- Railway `web` service from GitHub root directory `apps/web`.
+- Railway `migrate` service from the GitHub repo root.
+- Railway `daily` cron service from the GitHub repo root.
+- Railway service variables for database, API URLs, R2, and ingestion secrets.
+- Railway-provided public service domains when subdomains are configured.
+- Railway custom domain attachments when custom domains are configured.
+- Cloudflare R2 raw archive bucket.
+
+Terraform does not generate the R2 S3-compatible Access Key ID and Secret
+Access Key. Cloudflare requires those to be generated in the R2 dashboard, then
+passed into Terraform as sensitive variables.
+
+Terraform also does not run database migrations. It creates the `migrate`
+service; run that service manually in Railway after `terraform apply`.
 
 ## Target Topology
 
@@ -28,13 +56,14 @@ Railway project: wa-digital-democracy
 Environment: production
 
   postgis
-    type: Railway PostGIS template/marketplace service, preferred
-    purpose: durable application database
+    source image: postgis/postgis:16-3.5-alpine
+    volume: postgis-data mounted at /var/lib/postgresql/data
+    public domain: no
 
   api
     source: GitHub repo
     root directory: /
-    config file: railway.json, auto-detected
+    config file: railway.json
     public domain: yes
     health check: /healthz
     command: wa-dd-api
@@ -49,279 +78,184 @@ Environment: production
   migrate
     source: GitHub repo
     root directory: /
-    custom config path: /infra/railway/config/migrate.railway.json
+    config path: /infra/railway/config/migrate.railway.json
     public domain: no
     command: goose -dir /app/db/migrations postgres "$DATABASE_URL" up
-    schedule: manual run only
+    run mode: manual
 
   daily
     source: GitHub repo
     root directory: /
-    custom config path: /infra/railway/config/daily.railway.json
+    config path: /infra/railway/config/daily.railway.json
     public domain: no
-    command: wa-dd daily --biennium "${BIENNIUM:-2025-26}" ${DAILY_EXTRA_ARGS:-}
-    schedule: 30 3 * * * after smoke test
+    command: wa-dd daily --biennium "${BIENNIUM:-2025-26}"
+    schedule: 30 3 * * *
 
 Cloudflare R2
   bucket: wa-dd-raw-prod
   purpose: immutable raw upstream responses
 ```
 
-## Repo Files
+## One-Time Prerequisites
 
-```txt
-Dockerfile
-  Default image for Railway root services.
-  Contains wa-dd-api, wa-dd, goose, db/migrations/, and config/.
-
-railway.json
-  API service build/deploy config for a root-directory Railway service.
-
-apps/web/Dockerfile
-  Next.js production image.
-
-apps/web/railway.json
-  Web service build/deploy config for an apps/web root-directory service.
-  Set this as the service config path: /apps/web/railway.json.
-
-infra/railway/config/migrate.railway.json
-  One-shot migration service config.
-
-infra/railway/config/daily.railway.json
-  Cron ingestion service config.
-
-infra/railway/variables.example.env
-  Copy source for service variables.
-
-infra/railway/terraform/main.tf.example
-  Optional scaffold for later IaC. Not required for the first deployment.
-```
-
-The root `Dockerfile` also has named `api`, `cli`, and `migrate` targets for
-local verification. Railway should build the default final image for root
-services.
-
-## Required External Resources
-
-### Railway
-
-You need:
-
-- Railway account.
-- GitHub account connected to Railway.
-- Railway access to this repository.
-- Permission to create services, variables, domains, and cron jobs.
-
-You do not need Terraform for the first deployment.
-
-### Cloudflare R2
-
-Create one bucket for production raw artifacts:
-
-```txt
-wa-dd-raw-prod
-```
-
-Create an R2 API token with object read/write access to that bucket. Record:
-
-```txt
-S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
-S3_REGION=auto
-S3_BUCKET_RAW=wa-dd-raw-prod
-S3_ACCESS_KEY_ID=<r2 access key>
-S3_SECRET_ACCESS_KEY=<r2 secret key>
-S3_FORCE_PATH_STYLE=false
-S3_PREFIX=raw
-```
-
-Set `OBJECT_STORE=s3` on ingestion services. Do not use Railway service-local
-disk for hosted raw artifacts; it is not the durable source archive.
-
-### PostGIS-Capable Postgres
-
-The migration `db/migrations/0022_enable_postgis_and_job_locks.sql` runs:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS postgis;
-```
-
-Use a PostGIS-capable database:
-
-- Preferred first demo: Railway PostGIS template/marketplace service.
-- Fallback: deploy `postgis/postgis:16-3.5-alpine` with a persistent Railway
-  volume.
-- Not enough: plain Postgres unless `CREATE EXTENSION postgis` succeeds.
-
-Also verify `pg_trgm` and `unaccent`; migration `0001_initial.sql` enables
-both.
-
-## Manual Setup
-
-### 1. Create the Project
-
-1. Railway dashboard -> New Project.
-2. Choose Empty Project.
-3. Name it `wa-digital-democracy`.
-4. Use or create the `production` environment.
-
-### 2. Add PostGIS
-
-Preferred:
-
-1. Add a PostGIS-capable Railway database template/service.
-2. Wait for it to deploy.
-3. Copy its private/internal `DATABASE_URL`.
-4. Use that private URL for app services.
-
-Fallback container database:
-
-1. Add a service from Docker image `postgis/postgis:16-3.5-alpine`.
-2. Attach a persistent volume:
-
-```txt
-mount path: /var/lib/postgresql/data
-size: at least 10 GB for demo
-```
-
-3. Set:
-
-```txt
-POSTGRES_USER=wadd
-POSTGRES_DB=wa_dd
-POSTGRES_PASSWORD=<strong generated password>
-```
-
-4. Build the app-facing private URL:
-
-```txt
-postgres://wadd:<password>@<postgis-private-domain>:5432/wa_dd?sslmode=disable
-```
-
-### 3. Add the API Service
-
-1. New service -> GitHub Repo -> this repository.
-2. Service name: `api`.
-3. Root directory: leave blank, or `/`.
-4. Config path: leave blank. Railway should use root `railway.json`.
-5. Add variables:
-
-```txt
-APP_ENV=production
-LOG_LEVEL=info
-PORT=8080
-DATABASE_URL=<private PostGIS URL>
-SOURCE_USER_AGENT=wa-dd/0.0.1 (https://github.com/nolan-mccafferty/wa-digital-democracy; contact: nolan-mccafferty)
-```
-
-6. Deploy.
-7. Generate a public domain.
-8. Verify:
+Install Terraform and export provider credentials:
 
 ```sh
-curl -fsS https://<api-domain>/healthz
+export RAILWAY_TOKEN=<railway-account-or-workspace-token>
+export CLOUDFLARE_API_TOKEN=<cloudflare-token-with-r2-edit>
 ```
 
-`DATABASE_URL` is accepted anywhere local code previously expected `WADD_DSN`.
-The API also honors Railway's `PORT`.
+`CLOUDFLARE_API_TOKEN` is required because Terraform creates and manages the
+raw archive R2 bucket.
 
-### 4. Add the Web Service
+Generate an R2 S3-compatible token in Cloudflare:
 
-1. New service -> GitHub Repo -> this repository.
-2. Service name: `web`.
-3. Root directory: `apps/web`.
-4. Config path: `/apps/web/railway.json`.
-5. Add variables:
+1. Cloudflare dashboard -> R2.
+2. Manage R2 API tokens.
+3. Create a token scoped to the raw bucket with object read/write access.
+4. Record the Access Key ID and Secret Access Key.
 
-```txt
-WADD_API_URL=https://<api-domain>
-API_BASE_URL=https://<api-domain>
-NEXT_PUBLIC_API_URL=https://<api-domain>
-NEXT_PUBLIC_SITE_URL=https://<web-domain after generated>
-```
+The app needs those values as `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY`.
 
-6. Deploy.
-7. Generate a public domain.
-8. Update `NEXT_PUBLIC_SITE_URL` to the final web domain.
-9. Redeploy and verify:
+## Terraform Setup
 
 ```sh
-curl -fsS https://<web-domain> >/dev/null
+cd infra/railway/terraform
+cp terraform.tfvars.example terraform.tfvars
 ```
 
-### 5. Add the Migration Service
+Edit `terraform.tfvars`:
 
-1. New service -> GitHub Repo -> this repository.
-2. Service name: `migrate`.
-3. Root directory: leave blank, or `/`.
-4. Custom config path: `/infra/railway/config/migrate.railway.json`.
-5. Public domain: none.
-6. Add variables:
+```hcl
+github_repo   = "nolan-mccafferty/wa-digital-democracy"
+github_branch = "main"
 
-```txt
-DATABASE_URL=<private PostGIS URL>
+# Required if the Railway token can access multiple workspaces.
+workspace_id = null
+
+postgis_password = "<long random password>"
+
+# Pick globally unique Railway subdomains, or leave null and use URL overrides.
+api_railway_subdomain = "wa-dd-api"
+web_railway_subdomain = "wa-dd-web"
+
+cloudflare_account_id = "<account id>"
+r2_bucket_raw         = "wa-dd-raw-prod"
+r2_access_key_id      = "<r2 access key id>"
+r2_secret_access_key  = "<r2 secret access key>"
+
+invintus_embedder_key = "<invintus key>"
+socrata_app_token     = ""
 ```
 
-7. Deploy/run manually.
-8. Confirm logs show all migrations applied.
-
-The configured command is:
+Apply:
 
 ```sh
-goose -dir /app/db/migrations postgres "$DATABASE_URL" up
+terraform init
+terraform plan
+terraform apply
 ```
 
-### 6. Add the Daily Cron Service
+After the first apply:
 
-1. New service -> GitHub Repo -> this repository.
-2. Service name: `daily`.
-3. Root directory: leave blank, or `/`.
-4. Custom config path: `/infra/railway/config/daily.railway.json`.
-5. Public domain: none.
-6. Configure it as a cron/scheduled service.
-7. Keep the schedule disabled/manual during setup if the UI allows it.
-8. Add variables:
+1. Open Railway.
+2. Run the `migrate` service manually.
+3. Verify API health:
+
+```sh
+curl -fsS "$(terraform output -raw api_public_url)/healthz"
+```
+
+4. Verify the web service:
+
+```sh
+curl -fsS "$(terraform output -raw web_public_url)" >/dev/null
+```
+
+5. Confirm logs are clean and R2 has `raw/...` objects after the first
+   scheduled `daily` run.
+
+## GitHub Actions Deployment
+
+`.github/workflows/deploy-railway.yml` runs Terraform automatically:
+
+- `pull_request`: backend-free init and validate only.
+- `push` to `main`: init, validate, plan, and apply.
+- `workflow_dispatch` on `main`: manual deploy.
+
+The workflow uses Cloudflare R2 as the Terraform remote state backend. Create
+the Terraform state bucket manually before enabling the workflow. Terraform
+creates the app raw archive bucket.
+
+Required GitHub repository secrets:
 
 ```txt
-APP_ENV=production
-LOG_LEVEL=info
-DATABASE_URL=<private PostGIS URL>
-OBJECT_STORE=s3
-S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
-S3_REGION=auto
-S3_BUCKET_RAW=wa-dd-raw-prod
-S3_ACCESS_KEY_ID=<secret>
-S3_SECRET_ACCESS_KEY=<secret>
-S3_FORCE_PATH_STYLE=false
-S3_PREFIX=raw
-INVINTUS_EMBEDDER_KEY=<secret>
-SOCRATA_APP_TOKEN=<optional>
-SOURCE_USER_AGENT=wa-dd/0.0.1 (https://github.com/nolan-mccafferty/wa-digital-democracy; contact: nolan-mccafferty)
-BIENNIUM=2025-26
+RAILWAY_TOKEN
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+TF_STATE_R2_BUCKET
+TF_STATE_R2_KEY
+TF_STATE_R2_ACCESS_KEY_ID
+TF_STATE_R2_SECRET_ACCESS_KEY
+POSTGIS_PASSWORD
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+INVINTUS_EMBEDDER_KEY
 ```
 
-9. For first smoke, temporarily add:
+Optional GitHub repository secret:
 
 ```txt
-DAILY_EXTRA_ARGS=--session-limit 25 --hearing-limit 5
+SOCRATA_APP_TOKEN
 ```
 
-10. Run the service manually.
-11. Check logs and R2 for `raw/...` objects.
-12. Remove `DAILY_EXTRA_ARGS`.
-13. Set cron:
+Required GitHub repository variables:
 
-```cron
-30 3 * * *
+```txt
+API_RAILWAY_SUBDOMAIN, API_CUSTOM_DOMAIN, or API_PUBLIC_URL_OVERRIDE
+WEB_RAILWAY_SUBDOMAIN, WEB_CUSTOM_DOMAIN, or WEB_PUBLIC_URL_OVERRIDE
 ```
 
-`wa-dd daily` holds a Postgres advisory lock named `wa-dd:daily`. If a run
-overlaps another run, the second process exits successfully without duplicate
-ingestion.
+Recommended GitHub repository variables:
 
-## Variable Placement
+```txt
+RAILWAY_WORKSPACE_ID=<set when Railway token can access multiple workspaces>
+R2_BUCKET_RAW=wa-dd-raw-prod
+API_RAILWAY_SUBDOMAIN=<globally unique Railway subdomain>
+WEB_RAILWAY_SUBDOMAIN=<globally unique Railway subdomain>
+DAILY_BIENNIUM=2025-26
+DAILY_CRON=30 3 * * *
+```
 
-Use `infra/railway/variables.example.env` as the source checklist. The usual
-split is:
+## Domains
+
+For Railway-provided domains, set:
+
+```hcl
+api_railway_subdomain = "wa-dd-api"
+web_railway_subdomain = "wa-dd-web"
+```
+
+For custom domains, set:
+
+```hcl
+api_custom_domain = "api.example.org"
+web_custom_domain = "example.org"
+```
+
+Then run:
+
+```sh
+terraform output custom_domain_dns
+```
+
+Add the displayed DNS records in the DNS provider. Railway may require domain
+verification before the custom domains serve traffic.
+
+## Service Variables
+
+Terraform assigns variables by service.
 
 ```txt
 api
@@ -345,98 +279,54 @@ daily
   LOG_LEVEL
   DATABASE_URL
   OBJECT_STORE
-  S3_*
+  S3_ENDPOINT_URL
+  S3_REGION
+  S3_BUCKET_RAW
+  S3_ACCESS_KEY_ID
+  S3_SECRET_ACCESS_KEY
+  S3_FORCE_PATH_STYLE
+  S3_PREFIX
   INVINTUS_EMBEDDER_KEY
   SOCRATA_APP_TOKEN
   SOURCE_USER_AGENT
   BIENNIUM
-  DAILY_EXTRA_ARGS only during smoke tests
 ```
 
-Do not commit real secrets. If Terraform is later used, treat Terraform state
-as secret material because it will contain service variables.
-
-## Config-As-Code Details
-
-Service config files define the build and deploy behavior:
+`DATABASE_URL` uses Railway variable references to the `postgis` service:
 
 ```txt
-api     railway.json
-web     /apps/web/railway.json
-migrate /infra/railway/config/migrate.railway.json
-daily   /infra/railway/config/daily.railway.json
+postgres://${{postgis.POSTGRES_USER}}:${{postgis.POSTGRES_PASSWORD}}@${{postgis.RAILWAY_PRIVATE_DOMAIN}}:5432/${{postgis.POSTGRES_DB}}?sslmode=disable
 ```
 
-They define:
+## PostGIS
 
-- Dockerfile builder.
-- Dockerfile path.
-- Watch paths.
-- Start command.
-- Health checks for web/API.
-- Restart policy.
+The migration `db/migrations/0022_enable_postgis_and_job_locks.sql` runs:
 
-They intentionally do not store secrets.
-
-## Terraform Is Optional
-
-`infra/railway/terraform/main.tf.example` is an optional scaffold for later
-infrastructure-as-code. It is useful once the manual deployment proves Railway
-is worth keeping.
-
-Use it like this only after the simple path works:
-
-```sh
-cd infra/railway/terraform
-cp main.tf.example main.tf
-terraform init
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis;
 ```
 
-Create `terraform.tfvars` locally. Do not commit it:
+The Terraform-managed database uses `postgis/postgis:16-3.5-alpine` so the
+extension is available. Migration `0001_initial.sql` also enables `pg_trgm`
+and `unaccent`.
 
-```hcl
-github_repo           = "nolan-mccafferty/wa-digital-democracy"
-github_branch         = "main"
-postgis_password      = "<secret>"
-daily_biennium        = "2025-26"
-r2_endpoint_url       = "https://<account-id>.r2.cloudflarestorage.com"
-r2_bucket_raw         = "wa-dd-raw-prod"
-r2_access_key_id      = "<secret>"
-r2_secret_access_key  = "<secret>"
-invintus_embedder_key = "<secret>"
-socrata_app_token     = ""
+After running `migrate`, verify:
+
+```sql
+SELECT extname
+FROM pg_extension
+WHERE extname IN ('postgis', 'pg_trgm', 'unaccent')
+ORDER BY extname;
 ```
-
-Authenticate with Railway:
-
-```sh
-export RAILWAY_TOKEN=<workspace-or-account-token>
-terraform plan
-terraform apply
-```
-
-What the scaffold attempts to create:
-
-- Railway project.
-- Optional `postgis` service from `postgis/postgis:16-3.5-alpine` with volume.
-- `api`, `web`, `migrate`, and `daily` services.
-- Service variables.
-- Cron schedule for `daily`.
-
-Terraform caveats:
-
-- The provider is community-maintained.
-- Database templates may still be easier to create in the Railway dashboard.
-- Public domains and final URL variables may still need dashboard follow-up.
-- State contains secrets unless you deliberately externalize them.
-- Use a remote encrypted backend before treating Terraform as production
-  source of truth.
 
 ## Local Verification
 
 Run these before pushing deployment changes:
 
 ```sh
+jq empty railway.json apps/web/railway.json infra/railway/config/*.json
+terraform -chdir=infra/railway/terraform init -backend=false
+terraform -chdir=infra/railway/terraform validate
 go test ./...
 go vet ./...
 go build ./cmd/...
@@ -448,32 +338,17 @@ docker run --rm wa-dd-railway:local wa-dd version
 docker run --rm wa-dd-railway:local goose -version
 ```
 
-Validate JSON config:
-
-```sh
-jq empty railway.json apps/web/railway.json infra/railway/config/*.json
-```
-
 ## Hosted Verification
 
 After Railway deploy:
 
 ```sh
-curl -fsS https://<api-domain>/healthz
-curl -fsS https://<api-domain>/api/v1/bills?limit=1
-curl -fsS https://<web-domain> >/dev/null
+curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw api_public_url)/healthz"
+curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw api_public_url)/api/v1/bills?limit=1"
+curl -fsS "$(terraform -chdir=infra/railway/terraform output -raw web_public_url)" >/dev/null
 ```
 
-Check DB extensions:
-
-```sql
-SELECT extname
-FROM pg_extension
-WHERE extname IN ('postgis', 'pg_trgm', 'unaccent')
-ORDER BY extname;
-```
-
-Check ingestion smoke:
+Check ingestion:
 
 ```sql
 SELECT source_system, count(*)
@@ -492,30 +367,24 @@ raw/invintus/...
 raw/pdc_socrata/...
 ```
 
-## Backup And Restore
+## State And Secrets
 
-Before enabling full cron, prove backup and restore:
+`terraform.tfvars`, `.terraform/`, generated backend files, plan files, and
+local state are ignored by git. The provider lock file is committed for
+reproducible provider versions.
 
-```sh
-pg_dump --format=custom --no-owner --no-acl "$DATABASE_URL" > railway.dump
+GitHub Actions uses the R2-backed S3 Terraform backend. The state object key is
+set by the `TF_STATE_R2_KEY` secret, currently
+`wa-digital-democracy/railway/terraform.tfstate`, inside `TF_STATE_R2_BUCKET`.
+State contains sensitive Railway variables, including database and R2
+credentials.
 
-createdb wa_dd_restore
-pg_restore --clean --if-exists --no-owner --no-acl \
-  --dbname "postgres://wadd:wadd@localhost:5432/wa_dd_restore?sslmode=disable" \
-  railway.dump
-```
+## Dashboard Fallback
 
-Minimum restore checks:
-
-```sql
-SELECT count(*) FROM source_record;
-SELECT count(*) FROM bill;
-SELECT count(*) FROM hearing;
-SELECT extname
-FROM pg_extension
-WHERE extname IN ('postgis', 'pg_trgm', 'unaccent')
-ORDER BY extname;
-```
+If Terraform is blocked by a provider issue, create the same services manually
+in Railway using the topology above. Keep the config paths identical, and
+import the resources back into Terraform before treating the environment as
+stable.
 
 ## Rollback
 
@@ -531,15 +400,5 @@ For ingestion regressions:
 1. Disable `daily`.
 2. Inspect the latest logs.
 3. Inspect `source_record` rows by `fetched_at`.
-4. Patch and run a limited smoke with `DAILY_EXTRA_ARGS`.
+4. Patch and run `daily` manually after the fix.
 5. Re-enable cron.
-
-## Open Follow-Ups
-
-- Pick Railway marketplace PostGIS or the self-hosted PostGIS container after
-  the first successful deploy.
-- Add custom domains and DNS.
-- Add uptime checks for web and API.
-- Add recurring database backups.
-- Move Terraform state to a remote encrypted backend before using it as source
-  of truth.
