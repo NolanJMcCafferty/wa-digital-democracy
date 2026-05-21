@@ -2,7 +2,14 @@
 
 ## API
 
-The API container target is `api` in the root `Dockerfile`. It reads:
+The API service uses the default final image in the root `Dockerfile` and the
+root `railway.json` config:
+
+```sh
+wa-dd-api
+```
+
+It reads:
 
 ```txt
 PORT
@@ -19,8 +26,10 @@ Health check:
 
 ## Web
 
-The web service builds from `apps/web/Dockerfile`. Set the API URL in all three
-forms for now so both server-side fetches and rewrites behave predictably:
+The web service uses root directory `apps/web`, config path
+`/apps/web/railway.json`, and builds from `apps/web/Dockerfile`. Set the API
+URL in all three forms for now so both server-side fetches and rewrites behave
+predictably:
 
 ```txt
 WADD_API_URL
@@ -31,16 +40,17 @@ NEXT_PUBLIC_SITE_URL
 
 ## Cron
 
-Use the root `Dockerfile` target `cli` and start command:
+Use the default final image in the root `Dockerfile` and the start command in
+`infra/railway/config/daily.railway.json`:
 
 ```sh
-daily --biennium 2025-26
+wa-dd daily --biennium "${BIENNIUM:-2025-26}" ${DAILY_EXTRA_ARGS:-}
 ```
 
-For a smoke test:
+For a smoke test, set this service variable temporarily:
 
-```sh
-daily --biennium 2025-26 --session-limit 25 --hearing-limit 5
+```txt
+DAILY_EXTRA_ARGS=--session-limit 25 --hearing-limit 5
 ```
 
 The `daily` command holds a Postgres advisory lock for the full chain, so an
@@ -48,7 +58,8 @@ overlapping cron run exits successfully without doing duplicate work.
 
 ## Migrations
 
-Use the root `Dockerfile` target `migrate`. Its default command is:
+Use the default final image in the root `Dockerfile` and the start command in
+`infra/railway/config/migrate.railway.json`:
 
 ```sh
 goose -dir /app/db/migrations postgres "$DATABASE_URL" up

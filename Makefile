@@ -17,7 +17,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build docker-build-api docker-build-cli docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -86,6 +86,12 @@ docker-build-api: ## Build the production Go API container target
 
 docker-build-cli: ## Build the production Go CLI/cron container target
 	docker build --target cli -t wa-dd-cli:local .
+
+docker-build-migrate: ## Build the production migration container target
+	docker build --target migrate -t wa-dd-migrate:local .
+
+docker-build-railway: ## Build the default Railway root container
+	docker build -t wa-dd-railway:local .
 
 docker-build-web: ## Build the production Next.js web container
 	docker build -t wa-dd-web:local apps/web

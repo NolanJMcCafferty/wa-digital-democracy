@@ -52,10 +52,11 @@ port or against a remote dev DB.
 Railway is the first hosted demo target. The deploy contract is:
 
 - `apps/web/Dockerfile` for the Next.js web service.
-- root `Dockerfile --target api` for `wa-dd-api`.
-- root `Dockerfile --target cli` for cron jobs, with start command
-  `daily --biennium 2025-26`.
-- root `Dockerfile --target migrate` for goose migrations.
+- root `Dockerfile` default Railway image for `wa-dd-api`, `wa-dd`, and
+  `goose`.
+- cron jobs use the same root image, with start command
+  `wa-dd daily --biennium 2025-26`.
+- migrations use the same root image, with `goose -dir /app/db/migrations ...`.
 - Cloudflare R2 via `OBJECT_STORE=s3` and `S3_*` variables for raw source
   artifacts.
 

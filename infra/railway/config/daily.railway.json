@@ -1,0 +1,21 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile",
+    "watchPatterns": [
+      "/infra/railway/config/daily.railway.json",
+      "/Dockerfile",
+      "/go.mod",
+      "/go.sum",
+      "/cmd/wa-dd/**",
+      "/internal/**",
+      "/config/**",
+      "/db/migrations/**"
+    ]
+  },
+  "deploy": {
+    "startCommand": "/bin/sh -c 'wa-dd daily --biennium \"${BIENNIUM:-2025-26}\" ${DAILY_EXTRA_ARGS:-}'",
+    "restartPolicyType": "NEVER"
+  }
+}

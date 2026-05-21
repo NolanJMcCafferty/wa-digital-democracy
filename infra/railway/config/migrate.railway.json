@@ -1,0 +1,17 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile",
+    "watchPatterns": [
+      "/infra/railway/config/migrate.railway.json",
+      "/Dockerfile",
+      "/tools/goose/**",
+      "/db/migrations/**"
+    ]
+  },
+  "deploy": {
+    "startCommand": "/bin/sh -c 'goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up'",
+    "restartPolicyType": "NEVER"
+  }
+}

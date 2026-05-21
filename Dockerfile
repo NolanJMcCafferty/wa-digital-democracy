@@ -46,3 +46,18 @@ COPY db/migrations /app/db/migrations
 RUN useradd --system --uid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin nonroot
 USER nonroot
 CMD ["sh", "-c", "goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up"]
+
+FROM debian:bookworm-slim AS railway
+WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --uid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin nonroot
+COPY --from=go-build /out/wa-dd-api /usr/local/bin/wa-dd-api
+COPY --from=go-build /out/wa-dd /usr/local/bin/wa-dd
+COPY --from=goose-build /out/goose /usr/local/bin/goose
+COPY config /app/config
+COPY db/migrations /app/db/migrations
+EXPOSE 8080
+USER nonroot
+CMD ["wa-dd-api"]
