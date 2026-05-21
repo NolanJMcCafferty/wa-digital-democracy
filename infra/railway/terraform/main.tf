@@ -20,7 +20,11 @@ resource "railway_project" "wadd" {
 locals {
   environment_id = railway_project.wadd.default_environment.id
 
-  database_url = "postgres://${urlencode(var.postgis_user)}:${urlencode(var.postgis_password)}@$${{postgis.RAILWAY_PRIVATE_DOMAIN}}:5432/${urlencode(var.postgis_db)}?sslmode=disable"
+  postgis_user_url     = replace(urlencode(var.postgis_user), "+", "%20")
+  postgis_password_url = replace(urlencode(var.postgis_password), "+", "%20")
+  postgis_db_url       = replace(urlencode(var.postgis_db), "+", "%20")
+
+  database_url = "postgres://${local.postgis_user_url}:${local.postgis_password_url}@$${{postgis.RAILWAY_PRIVATE_DOMAIN}}:5432/${local.postgis_db_url}?sslmode=disable"
   r2_endpoint  = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
 
   api_domain = (

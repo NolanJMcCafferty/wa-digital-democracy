@@ -305,7 +305,9 @@ postgres://<urlencoded-user>:<urlencoded-password>@${{postgis.RAILWAY_PRIVATE_DO
 
 Do not build this URL from raw Railway password references. Strong generated
 passwords can contain `@`, `:`, `/`, or other URL-reserved characters, and Go's
-Postgres parser rejects an unescaped password in the userinfo section.
+Postgres parser rejects an unescaped password in the userinfo section. The
+Terraform config also rewrites `+` to `%20` after `urlencode(...)` because URL
+userinfo treats literal `+` as plus, not as a space.
 
 ## PostGIS
 
