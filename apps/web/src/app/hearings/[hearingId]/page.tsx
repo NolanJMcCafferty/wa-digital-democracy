@@ -5,6 +5,8 @@ import type { Position, Testifier } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 import { DiarizedTranscriptSection } from "./_sections/DiarizedTranscriptSection";
 
+export const dynamic = "force-dynamic";
+
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other"];
 
 const POSITION_STYLE: Record<Position, string> = {

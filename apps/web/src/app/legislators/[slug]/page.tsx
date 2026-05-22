@@ -10,6 +10,8 @@ import {
   type RawBillSearchParams,
 } from "../../bills/BillSearchResults";
 
+export const dynamic = "force-dynamic";
+
 export async function generateStaticParams() {
   if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
   const legislators = await listLegislators();

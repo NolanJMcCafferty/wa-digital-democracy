@@ -5,6 +5,8 @@ import {
   type RawBillSearchParams,
 } from "./BillSearchResults";
 
+export const dynamic = "force-dynamic";
+
 export default async function BillsPage({
   searchParams,
 }: {

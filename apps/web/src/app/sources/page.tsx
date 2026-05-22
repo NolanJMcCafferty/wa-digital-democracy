@@ -1,6 +1,8 @@
 import { listSourceSummaries } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 
+export const dynamic = "force-dynamic";
+
 const STATUS_STYLE = {
   active: "bg-emerald-100 text-emerald-800",
   partial: "bg-amber-100 text-amber-800",
