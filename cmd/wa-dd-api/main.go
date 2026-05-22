@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -50,39 +51,44 @@ func main() {
 
 	r.Get("/healthz", healthHandler())
 	r.Get("/readyz", readinessHandler(stores))
-	r.Get("/api/v1/addresses/suggest", suggestAddressesHandler())
-	r.Get("/api/v1/bills", withStore(stores, listBillsHandler))
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", withStore(stores, billPageHandler))
-	// Back-compat alias for older frontend/code paths. Returns the same
-	// page-level shape as /page; despite the historical name, this is no
-	// longer a generic legacy snapshot endpoint.
-	r.Get("/api/v1/bills/{biennium}/{billNumber}/first-page", withStore(stores, billPageHandler))
-	r.Get("/api/v1/legislators", withStore(stores, listLegislatorsHandler))
-	r.Get("/api/v1/legislators/lookup", withStore(stores, lookupLegislatorsByAddressHandler))
-	r.Get("/api/v1/legislators/{slug}", withStore(stores, getLegislatorHandler))
-	r.Get("/api/v1/organizations", withStore(stores, listOrganizationsHandler))
-	r.Get("/api/v1/organizations/{slug}", withStore(stores, getOrganizationHandler))
-	r.Get("/api/v1/hearings", withStore(stores, listHearingsHandler))
-	r.Get("/api/v1/hearings/{hearingId}", withStore(stores, getHearingHandler))
-	r.Get("/api/v1/sources", withStore(stores, listSourcesHandler))
-	r.Get("/api/v1/search/transcripts", withStore(stores, searchTranscriptsHandler))
-	r.Get("/api/v1/admin/review/speakers", withStore(stores, adminListSpeakerReviewTasksHandler))
-	r.Get("/api/v1/admin/review/speakers/events", withStore(stores, adminListSpeakerReviewEventsHandler))
-	r.Get("/api/v1/admin/review/speakers/events/{tvwEventId}", withStore(stores, adminGetSpeakerReviewEventHandler))
-	r.Get("/api/v1/admin/review/speakers/clusters/{clusterId}", withStore(stores, adminGetSpeakerClusterReviewHandler))
-	r.Post("/api/v1/admin/review/speakers/clusters/{clusterId}/assign", withStore(stores, adminManualAssignSpeakerClusterHandler))
-	r.Get("/api/v1/admin/review/speakers/{taskId}", withStore(stores, adminGetSpeakerReviewTaskHandler))
-	r.Post("/api/v1/admin/review/speakers/{taskId}/accept", withStore(stores, func(store *db.Store) http.HandlerFunc {
-		return adminSpeakerReviewDecisionHandler(store, "accept")
-	}))
-	r.Post("/api/v1/admin/review/speakers/{taskId}/reject", withStore(stores, func(store *db.Store) http.HandlerFunc {
-		return adminSpeakerReviewDecisionHandler(store, "reject")
-	}))
-	r.Post("/api/v1/admin/review/speakers/{taskId}/needs-more-evidence", withStore(stores, func(store *db.Store) http.HandlerFunc {
-		return adminSpeakerReviewDecisionHandler(store, "needs_more_evidence")
-	}))
-	r.Get("/api/v1/admin/review/entities/candidates", withStore(stores, adminListEntityMatchCandidatesHandler))
-	r.Post("/api/v1/admin/review/entities/candidates/{candidateId}/decide", withStore(stores, adminDecideEntityMatchHandler))
+
+	apiAuth := internalAPIAuthMiddleware(env("WADD_INTERNAL_API_TOKEN", ""))
+	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(apiAuth)
+		api.Get("/addresses/suggest", suggestAddressesHandler())
+		api.Get("/bills", withStore(stores, listBillsHandler))
+		api.Get("/bills/{biennium}/{billNumber}/page", withStore(stores, billPageHandler))
+		// Back-compat alias for older frontend/code paths. Returns the same
+		// page-level shape as /page; despite the historical name, this is no
+		// longer a generic legacy snapshot endpoint.
+		api.Get("/bills/{biennium}/{billNumber}/first-page", withStore(stores, billPageHandler))
+		api.Get("/legislators", withStore(stores, listLegislatorsHandler))
+		api.Get("/legislators/lookup", withStore(stores, lookupLegislatorsByAddressHandler))
+		api.Get("/legislators/{slug}", withStore(stores, getLegislatorHandler))
+		api.Get("/organizations", withStore(stores, listOrganizationsHandler))
+		api.Get("/organizations/{slug}", withStore(stores, getOrganizationHandler))
+		api.Get("/hearings", withStore(stores, listHearingsHandler))
+		api.Get("/hearings/{hearingId}", withStore(stores, getHearingHandler))
+		api.Get("/sources", withStore(stores, listSourcesHandler))
+		api.Get("/search/transcripts", withStore(stores, searchTranscriptsHandler))
+		api.Get("/admin/review/speakers", withStore(stores, adminListSpeakerReviewTasksHandler))
+		api.Get("/admin/review/speakers/events", withStore(stores, adminListSpeakerReviewEventsHandler))
+		api.Get("/admin/review/speakers/events/{tvwEventId}", withStore(stores, adminGetSpeakerReviewEventHandler))
+		api.Get("/admin/review/speakers/clusters/{clusterId}", withStore(stores, adminGetSpeakerClusterReviewHandler))
+		api.Post("/admin/review/speakers/clusters/{clusterId}/assign", withStore(stores, adminManualAssignSpeakerClusterHandler))
+		api.Get("/admin/review/speakers/{taskId}", withStore(stores, adminGetSpeakerReviewTaskHandler))
+		api.Post("/admin/review/speakers/{taskId}/accept", withStore(stores, func(store *db.Store) http.HandlerFunc {
+			return adminSpeakerReviewDecisionHandler(store, "accept")
+		}))
+		api.Post("/admin/review/speakers/{taskId}/reject", withStore(stores, func(store *db.Store) http.HandlerFunc {
+			return adminSpeakerReviewDecisionHandler(store, "reject")
+		}))
+		api.Post("/admin/review/speakers/{taskId}/needs-more-evidence", withStore(stores, func(store *db.Store) http.HandlerFunc {
+			return adminSpeakerReviewDecisionHandler(store, "needs_more_evidence")
+		}))
+		api.Get("/admin/review/entities/candidates", withStore(stores, adminListEntityMatchCandidatesHandler))
+		api.Post("/admin/review/entities/candidates/{candidateId}/decide", withStore(stores, adminDecideEntityMatchHandler))
+	})
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -103,6 +109,40 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+func internalAPIAuthMiddleware(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if token == "" {
+				log.Printf("api auth rejected path=%s reason=missing_config", req.URL.Path)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "api authentication is not configured"})
+				return
+			}
+			if !validBearerToken(req.Header.Get("Authorization"), token) {
+				log.Printf("api auth rejected path=%s reason=invalid_token", req.URL.Path)
+				w.Header().Set("WWW-Authenticate", `Bearer realm="wa-dd-api"`)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+func validBearerToken(header, token string) bool {
+	if token == "" {
+		return false
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	got := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 }
 
 func healthHandler() http.HandlerFunc {

@@ -117,6 +117,18 @@ variable "source_user_agent" {
   default     = "wa-dd/0.0.1 (https://github.com/nolan-mccafferty/wa-digital-democracy; contact: nolan-mccafferty)"
 }
 
+variable "internal_api_token" {
+  description = "Shared server-only bearer token used by the Next.js web service to call the Go /api/v1 API."
+  type        = string
+  sensitive   = true
+}
+
+variable "api_port" {
+  description = "Internal HTTP port the Go API listens on. Railway provides PORT at runtime; keep this in sync with the API service port for private web→API calls."
+  type        = number
+  default     = 8080
+}
+
 variable "api_railway_subdomain" {
   description = "Optional Railway-provided API subdomain. Leave null to skip Railway service-domain creation."
   type        = string

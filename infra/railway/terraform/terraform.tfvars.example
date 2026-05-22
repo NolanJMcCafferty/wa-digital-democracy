@@ -9,8 +9,10 @@ postgis_password = "replace-with-a-long-random-password"
 
 # Railway public domains. Pick globally unique subdomains, or leave null and
 # set api_public_url_override/web_public_url_override after creating domains.
+# Normal web→API traffic uses Railway private networking regardless.
 api_railway_subdomain = "wa-dd-api"
 web_railway_subdomain = "wa-dd-web"
+api_port              = 8080
 
 # Optional custom domains. Leave null unless DNS is ready.
 api_custom_domain = null
@@ -31,9 +33,10 @@ r2_bucket_jurisdiction = null
 r2_access_key_id     = "replace-with-r2-access-key-id"
 r2_secret_access_key = "replace-with-r2-secret-access-key"
 
-# Ingestion secrets.
+# Ingestion and internal service-auth secrets.
 invintus_embedder_key = "replace-with-invintus-key"
 socrata_app_token     = ""
+internal_api_token    = "replace-with-long-random-internal-api-token"
 
 daily_biennium   = "2025-26"
 daily_cron       = "30 3 * * *"

@@ -14,9 +14,13 @@ It reads:
 ```txt
 PORT
 DATABASE_URL
+WADD_INTERNAL_API_TOKEN
 ```
 
 `DATABASE_URL` is accepted anywhere the local code previously used `WADD_DSN`.
+`WADD_INTERNAL_API_TOKEN` is a shared server-only bearer token required by all
+Go `/api/v1/*` endpoints; set the same value on the web service so the Next.js
+server can call/proxy API requests.
 
 Health check:
 
@@ -31,16 +35,20 @@ connectivity.
 ## Web
 
 The web service uses root directory `apps/web`, config path
-`/apps/web/railway.json`, and builds from `apps/web/Dockerfile`. Set the API
-URL in all three forms for now so both server-side fetches and rewrites behave
-predictably:
+`/apps/web/railway.json`, and builds from `apps/web/Dockerfile`. Set the API URL and internal token for server-side API calls/proxying:
 
 ```txt
 WADD_API_URL
 API_BASE_URL
-NEXT_PUBLIC_API_URL
+WADD_INTERNAL_API_TOKEN
 NEXT_PUBLIC_SITE_URL
 ```
+
+Prefer Railway private networking for `WADD_API_URL` / `API_BASE_URL`, e.g.
+`http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8080`, so normal web→API traffic stays
+inside the project network. Do not set or use a `NEXT_PUBLIC_*` API token.
+Browser-originated `/api/v1/*` requests go through the Next.js route proxy,
+which injects the bearer token server-side.
 
 ## Cron
 

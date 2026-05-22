@@ -40,13 +40,21 @@ The frontend reads from the API, so a full local loop is:
 
 ```sh
 make up                                     # Postgres
+export WADD_INTERNAL_API_TOKEN=dev-change-me
 make api &                                  # Go API on :8080
-cd apps/web && pnpm dev                     # Next.js on :3000
+cd apps/web && WADD_INTERNAL_API_TOKEN=dev-change-me pnpm dev  # Next.js on :3000
 ```
 
 Override the API URL the frontend hits with `WADD_API_URL` (default
 `http://localhost:8080`) — useful when running the API on a non-default
 port or against a remote dev DB.
+
+All Go `/api/v1/*` endpoints require an internal bearer token. Set the same
+server-only `WADD_INTERNAL_API_TOKEN` value on both the Go API service and the
+Next.js web app. Server Components attach it directly; browser-originated
+`/api/v1/*` requests go through the Next.js route proxy so the token is never
+bundled into client-side JavaScript. `/healthz` and `/readyz` remain
+unauthenticated for platform health checks.
 
 ## Railway deployment
 
