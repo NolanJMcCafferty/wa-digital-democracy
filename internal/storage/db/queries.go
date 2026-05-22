@@ -2478,6 +2478,40 @@ type InsertVendorEntityMatchDecisionParams struct {
 	ReviewNotes    string
 }
 
+type AdminAuditLogParams struct {
+	ActorUserID   string
+	ActorEmail    string
+	ActorName     string
+	ActorRole     string
+	Route         string
+	Action        string
+	TargetType    string
+	TargetID      string
+	PreviousState []byte
+	NewState      []byte
+	ReviewerNotes string
+	RequestID     string
+	IPAddress     string
+	UserAgent     string
+}
+
+func (s *Store) InsertAdminAuditLog(ctx context.Context, p AdminAuditLogParams) (int64, error) {
+	const q = `
+INSERT INTO admin_audit_log (
+  actor_user_id, actor_email, actor_name, actor_role, route, action, target_type, target_id,
+  previous_state, new_state, reviewer_notes, request_id, ip_address, user_agent
+) VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,NULLIF($9,'')::jsonb,NULLIF($10,'')::jsonb,NULLIF($11,''),NULLIF($12,''),NULLIF($13,'')::inet,NULLIF($14,''))
+RETURNING id;`
+	var id int64
+	if err := s.Pool.QueryRow(ctx, q,
+		p.ActorUserID, p.ActorEmail, p.ActorName, p.ActorRole, p.Route, p.Action, p.TargetType, p.TargetID,
+		string(p.PreviousState), string(p.NewState), p.ReviewerNotes, p.RequestID, p.IPAddress, p.UserAgent,
+	).Scan(&id); err != nil {
+		return 0, fmt.Errorf("insert admin audit log: %w", err)
+	}
+	return id, nil
+}
+
 func (s *Store) UpsertVendorEntityMatchDecision(ctx context.Context, p InsertVendorEntityMatchDecisionParams) (int64, error) {
 	const q = `
 INSERT INTO vendor_entity_match_decision (
@@ -2504,6 +2538,31 @@ RETURNING id;`
 func (s *Store) ListVendorEntityMatchCandidates(ctx context.Context, sourceKind, decision string, limit int) ([]VendorEntityMatchCandidate, error) {
 	out, _, err := s.ListVendorEntityMatchCandidatesPage(ctx, sourceKind, decision, limit, 0)
 	return out, err
+}
+
+func (s *Store) GetVendorEntityMatchCandidate(ctx context.Context, id int64) (VendorEntityMatchCandidate, error) {
+	const q = `
+SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
+       COALESCE(c.source_dataset_id,''), COALESCE(c.source_row_id,''), c.source_name,
+       c.normalized_name, c.organization_id, o.canonical_name,
+       c.candidate_confidence::text, c.evidence, COALESCE(c.source_record_id,0),
+       COALESCE(d.decision::text, 'needs_review'), COALESCE(d.reviewed_confidence::text, '')
+  FROM vendor_entity_match_candidate c
+  JOIN organization o ON o.id = c.organization_id
+  LEFT JOIN vendor_entity_match_decision d ON d.candidate_id = c.id
+ WHERE c.id = $1;`
+	var c VendorEntityMatchCandidate
+	var evidence []byte
+	if err := s.Pool.QueryRow(ctx, q, id).Scan(&c.ID, &c.SourceKind, &c.SourceTable, &c.SourcePK,
+		&c.SourceDatasetID, &c.SourceRowID, &c.SourceName, &c.NormalizedName,
+		&c.OrganizationID, &c.CanonicalName, &c.CandidateConfidence,
+		&evidence, &c.SourceRecordID, &c.Decision, &c.ReviewedConfidence); err != nil {
+		return VendorEntityMatchCandidate{}, fmt.Errorf("get vendor entity match candidate: %w", err)
+	}
+	if len(evidence) > 0 {
+		_ = json.Unmarshal(evidence, &c.Evidence)
+	}
+	return c, nil
 }
 
 // ListVendorEntityMatchCandidatesPage returns a page of candidates plus the
@@ -2571,14 +2630,14 @@ type EntityMatchTranscriptSegment struct {
 }
 
 type EntityMatchTranscriptContext struct {
-	CandidateID        int64
-	TVWEventID         string
-	DiarizationJobID   int64
-	MentionStartMS     int
-	MentionEndMS       int
-	MentionText        string
-	MentionConfidence  float64
-	Surrounding        []EntityMatchTranscriptSegment
+	CandidateID       int64
+	TVWEventID        string
+	DiarizationJobID  int64
+	MentionStartMS    int
+	MentionEndMS      int
+	MentionText       string
+	MentionConfidence float64
+	Surrounding       []EntityMatchTranscriptSegment
 }
 
 // ListEntityMatchTranscriptContext returns deepgram-mention transcript context

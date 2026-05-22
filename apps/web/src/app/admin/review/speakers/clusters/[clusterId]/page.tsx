@@ -21,9 +21,8 @@ async function decide(formData: FormData) {
   const taskId = String(formData.get("taskId") ?? "");
   const clusterId = String(formData.get("clusterId") ?? "");
   const action = String(formData.get("action") ?? "accept") as "accept" | "reject" | "needs-more-evidence";
-  const reviewer = String(formData.get("reviewer") ?? "");
   const notes = String(formData.get("notes") ?? "");
-  await decideSpeakerReviewTask(taskId, action, reviewer, notes);
+  await decideSpeakerReviewTask(taskId, action, notes);
   redirect(`/admin/review/speakers/clusters/${clusterId}`);
 }
 
@@ -32,9 +31,8 @@ async function assignManual(formData: FormData) {
   const clusterId = String(formData.get("clusterId") ?? "");
   const kind = String(formData.get("kind") ?? "person");
   const label = String(formData.get("label") ?? "");
-  const reviewer = String(formData.get("reviewer") ?? "");
   const notes = String(formData.get("notes") ?? "");
-  await manuallyAssignSpeakerCluster(clusterId, kind, label, reviewer, notes);
+  await manuallyAssignSpeakerCluster(clusterId, kind, label, notes);
   redirect(`/admin/review/speakers/clusters/${clusterId}`);
 }
 
@@ -78,7 +76,6 @@ export default async function SpeakerClusterReviewPage({ params }: { params: Pro
                   </div>
                   {task.Status === "pending" ? (
                     <div className="flex flex-wrap gap-2">
-                      <input name="reviewer" defaultValue="nolan" className="hidden" />
                       <input name="notes" className="hidden" />
                       <button name="action" value="accept" className="rounded bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white">Accept</button>
                       <button name="action" value="reject" className="rounded bg-rose-700 px-3 py-1.5 text-sm font-medium text-white">Reject</button>
@@ -104,11 +101,8 @@ export default async function SpeakerClusterReviewPage({ params }: { params: Pro
               <option value="unknown">unknown</option>
             </select>
           </label>
-          <label className="text-sm font-medium text-stone-700 sm:col-span-2">Label
+          <label className="text-sm font-medium text-stone-700 sm:col-span-3">Label
             <input name="label" placeholder="Jane Smith" className="mt-1 w-full rounded border border-stone-300 px-3 py-2" />
-          </label>
-          <label className="text-sm font-medium text-stone-700">Reviewer
-            <input name="reviewer" defaultValue="nolan" className="mt-1 w-full rounded border border-stone-300 px-3 py-2" />
           </label>
         </div>
         <label className="block text-sm font-medium text-stone-700">Notes

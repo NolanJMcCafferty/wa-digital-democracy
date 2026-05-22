@@ -124,6 +124,7 @@ jobs:
             R2_SECRET_ACCESS_KEY
             INVINTUS_EMBEDDER_KEY
             WADD_INTERNAL_API_TOKEN
+            CLERK_SECRET_KEY
           )
 
           required+=(CLOUDFLARE_API_TOKEN)
@@ -186,6 +187,11 @@ jobs:
             --arg invintus_embedder_key "${INVINTUS_EMBEDDER_KEY}" \
             --arg socrata_app_token "${SOCRATA_APP_TOKEN:-}" \
             --arg internal_api_token "${WADD_INTERNAL_API_TOKEN}" \
+            --arg clerk_publishable_key "${CLERK_PUBLISHABLE_KEY:-}" \
+            --arg clerk_secret_key "${CLERK_SECRET_KEY}" \
+            --arg clerk_jwt_issuer "${CLERK_JWT_ISSUER:-}" \
+            --arg clerk_jwks_url "${CLERK_JWKS_URL:-}" \
+            --arg admin_jwt_audience "${WADD_ADMIN_JWT_AUDIENCE:-wa-dd-admin}" \
             --arg api_railway_subdomain "${API_RAILWAY_SUBDOMAIN:-}" \
             --arg web_railway_subdomain "${WEB_RAILWAY_SUBDOMAIN:-}" \
             --arg api_custom_domain "${API_CUSTOM_DOMAIN:-}" \
@@ -211,6 +217,11 @@ jobs:
               invintus_embedder_key: $invintus_embedder_key,
               socrata_app_token: $socrata_app_token,
               internal_api_token: $internal_api_token,
+              clerk_publishable_key: $clerk_publishable_key,
+              clerk_secret_key: $clerk_secret_key,
+              clerk_jwt_issuer: $clerk_jwt_issuer,
+              clerk_jwks_url: $clerk_jwks_url,
+              admin_jwt_audience: $admin_jwt_audience,
               api_railway_subdomain: ($api_railway_subdomain | empty_to_null),
               web_railway_subdomain: ($web_railway_subdomain | empty_to_null),
               api_custom_domain: ($api_custom_domain | empty_to_null),

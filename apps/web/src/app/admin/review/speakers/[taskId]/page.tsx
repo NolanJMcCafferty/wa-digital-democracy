@@ -13,9 +13,8 @@ async function decide(formData: FormData) {
   "use server";
   const taskId = String(formData.get("taskId") ?? "");
   const action = String(formData.get("action") ?? "accept") as "accept" | "reject" | "needs-more-evidence";
-  const reviewer = String(formData.get("reviewer") ?? "");
   const notes = String(formData.get("notes") ?? "");
-  await decideSpeakerReviewTask(taskId, action, reviewer, notes);
+  await decideSpeakerReviewTask(taskId, action, notes);
   redirect("/admin/review/speakers");
 }
 
@@ -59,14 +58,9 @@ export default async function SpeakerReviewDetail({ params }: { params: Promise<
 
       <form action={decide} className="space-y-4 rounded-lg border border-stone-300 bg-white p-5">
         <input type="hidden" name="taskId" value={task.ID} />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm font-medium text-stone-700">Reviewer
-            <input name="reviewer" defaultValue="nolan" className="mt-1 w-full rounded border border-stone-300 px-3 py-2" />
-          </label>
-          <label className="text-sm font-medium text-stone-700">Notes
-            <input name="notes" className="mt-1 w-full rounded border border-stone-300 px-3 py-2" />
-          </label>
-        </div>
+        <label className="block text-sm font-medium text-stone-700">Notes
+          <input name="notes" className="mt-1 w-full rounded border border-stone-300 px-3 py-2" />
+        </label>
         <div className="flex flex-wrap gap-2">
           <button name="action" value="accept" className="rounded bg-emerald-700 px-4 py-2 font-medium text-white">Accept assignment</button>
           <button name="action" value="reject" className="rounded bg-rose-700 px-4 py-2 font-medium text-white">Reject</button>

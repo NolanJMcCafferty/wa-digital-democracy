@@ -56,6 +56,16 @@ Next.js web app. Server Components attach it directly; browser-originated
 bundled into client-side JavaScript. `/healthz` and `/readyz` remain
 unauthenticated for platform health checks.
 
+Admin review pages and APIs also require Clerk user authentication. Configure
+Clerk for the web app with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+`CLERK_SECRET_KEY`, then create a Clerk JWT template named `wadd-admin` with
+audience `wa-dd-admin`. Include the authenticated user's email/name and one role
+claim named `role`, `admin_role`, or `wadd_role`; accepted roles are `viewer`,
+`reviewer`, and `admin`. Set `CLERK_JWT_ISSUER` (or `CLERK_JWKS_URL`) on the Go
+API so `/api/v1/admin/*` can validate Clerk tokens independently of the Next.js
+route guards. `viewer` can read review queues; `reviewer` and `admin` can mutate
+review decisions. Every admin mutation writes an `admin_audit_log` record.
+
 ## Railway deployment
 
 Railway is the first hosted demo target. The deploy contract is:

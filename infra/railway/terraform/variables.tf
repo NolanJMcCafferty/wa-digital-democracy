@@ -123,6 +123,34 @@ variable "internal_api_token" {
   sensitive   = true
 }
 
+variable "clerk_publishable_key" {
+  description = "Clerk publishable key for the Next.js web service."
+  type        = string
+}
+
+variable "clerk_secret_key" {
+  description = "Clerk secret key for the Next.js web service."
+  type        = string
+  sensitive   = true
+}
+
+variable "clerk_jwt_issuer" {
+  description = "Issuer for the Clerk wadd-admin JWT template, e.g. https://your-clerk-domain.clerk.accounts.dev."
+  type        = string
+}
+
+variable "clerk_jwks_url" {
+  description = "Optional explicit Clerk JWKS URL. Defaults in the API to <issuer>/.well-known/jwks.json when blank."
+  type        = string
+  default     = ""
+}
+
+variable "admin_jwt_audience" {
+  description = "Audience expected in Clerk wadd-admin JWTs."
+  type        = string
+  default     = "wa-dd-admin"
+}
+
 variable "api_port" {
   description = "Internal HTTP port the Go API listens on. Railway provides PORT at runtime; keep this in sync with the API service port for private web→API calls."
   type        = number

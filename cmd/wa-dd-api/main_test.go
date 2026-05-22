@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestHealthHandler_IsLivenessOnly(t *testing.T) {
@@ -231,5 +233,46 @@ func TestDiarizedSegmentPublicSpeakerLabel(t *testing.T) {
 				t.Fatalf("PublicSpeakerLabel() = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestAdminRoleMiddleware(t *testing.T) {
+	base := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "allowed"})
+	})
+
+	withUser := func(role adminRole) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/review/speakers/1/accept", nil)
+		req = req.WithContext(context.WithValue(req.Context(), adminUserContextKey{}, adminUser{ID: "user_1", Email: "nolan@example.com", Role: role}))
+		return req
+	}
+
+	viewerReq := withUser(adminRoleViewer)
+	viewerW := httptest.NewRecorder()
+	requireAdminRole(adminRoleReviewer)(base).ServeHTTP(viewerW, viewerReq)
+	if viewerW.Code != http.StatusForbidden {
+		t.Fatalf("viewer write status = %d, want 403", viewerW.Code)
+	}
+
+	reviewerReq := withUser(adminRoleReviewer)
+	reviewerW := httptest.NewRecorder()
+	requireAdminRole(adminRoleReviewer)(base).ServeHTTP(reviewerW, reviewerReq)
+	if reviewerW.Code != http.StatusOK {
+		t.Fatalf("reviewer write status = %d, want 200", reviewerW.Code)
+	}
+}
+
+func TestAdminAuthMiddleware_MissingTokenRejects(t *testing.T) {
+	protected := adminAuthMiddleware(adminAuthConfig{Issuer: "https://issuer.example", Audience: "wa-dd-admin"}, func(token *jwt.Token) (any, error) {
+		return []byte("unused"), nil
+	})(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "allowed"})
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/review/speakers", nil)
+	w := httptest.NewRecorder()
+	protected.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Code)
 	}
 }
