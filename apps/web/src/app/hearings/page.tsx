@@ -6,6 +6,8 @@ import {
   type RawHearingSearchParams,
 } from "./HearingSearchResults";
 
+export const dynamic = "force-dynamic";
+
 export default async function HearingsPage({
   searchParams,
 }: {

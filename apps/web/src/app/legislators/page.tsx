@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { listLegislators, type LegislatorListEntry } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 const PARTY_LABEL: Record<string, string> = {
   D: "Democrat",
   R: "Republican",

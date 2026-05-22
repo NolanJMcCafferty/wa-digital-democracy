@@ -8,6 +8,8 @@ import {
   listLegislators,
   listOrganizations,
 } from "@/lib/api";
+
+export const dynamic = "force-dynamic";
 // Issue tiles. Live issues link to /issues/{slug}; "coming soon"
 // placeholders read as a roadmap. Pattern mirrors CalMatters' "California
 // Agenda" issue row. To promote a placeholder, update its href + status

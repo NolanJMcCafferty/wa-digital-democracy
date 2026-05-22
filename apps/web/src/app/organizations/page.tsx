@@ -4,6 +4,8 @@ import {
   parseOrganizationFilters,
 } from "./OrganizationSearchResults";
 
+export const dynamic = "force-dynamic";
+
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
 export default async function OrganizationsPage({

@@ -2,6 +2,8 @@ import { IssuePage } from "../_shared/IssuePage";
 import { issuePageConfig } from "../_shared/config";
 import type { RawBillSearchParams } from "../../bills/BillSearchResults";
 
+export const dynamic = "force-dynamic";
+
 const config = issuePageConfig("housing");
 
 export default async function HousingIssuePage({

@@ -8,6 +8,8 @@ import {
 } from "@/app/hearings/HearingSearchResults";
 import { filterHearings } from "@/app/hearings/filterHearings";
 
+export const dynamic = "force-dynamic";
+
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
 export async function generateStaticParams() {

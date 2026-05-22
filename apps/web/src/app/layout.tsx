@@ -3,6 +3,8 @@ import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import { Nav } from "./Nav";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "WA Digital Democracy",
   description:

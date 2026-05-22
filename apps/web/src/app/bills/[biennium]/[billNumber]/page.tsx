@@ -10,6 +10,8 @@ import {
 } from "@/app/hearings/HearingSearchResults";
 import { filterHearings } from "@/app/hearings/filterHearings";
 
+export const dynamic = "force-dynamic";
+
 type Params = { biennium: string; billNumber: string };
 
 // Parses route's [billNumber] like "HB1501" into ("HB", 1501).
