@@ -14,10 +14,8 @@ export default clerkMiddleware(async (auth, req) => {
 });
 
 export const config = {
-  matcher: [
-    // Keep Railway/container health checks out of Clerk middleware so the app
-    // can report readiness even when auth env is absent or misconfigured.
-    "/((?!healthz|_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
+  // Only admin pages need Clerk. Public pages and health checks must remain
+  // independent of Clerk env so a missing/misconfigured key cannot take down
+  // the public site or Railway health checks.
+  matcher: ["/admin(.*)"],
 };
