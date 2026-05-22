@@ -1,19 +1,20 @@
 # wa-digital-democracy
 
-A source-linked public graph of Washington State government — bills, hearings,
-testimony, video, money, and lobbying — modeled on CalMatters Digital Democracy.
+A source-linked public graph of Washington State legislative activity — bills,
+hearings, testimony, video, transcripts, reviewed speakers, organizations, and
+public-record context — modeled on CalMatters Digital Democracy.
 
-This repo is the implementation of the MVP defined in
-`~/Documents/v1/wiki/politics/Washington Digital Democracy - First Page Implementation Blueprint.md`.
+This repo implements the public-beta legislative/testimony product tracked in
+`~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md`.
 
 ## Stack
 
-Per `~/Documents/v1/wiki/politics/Washington Digital Democracy - Recommended Tech Stack.md`:
+Current stack:
 
 - **Backend / ingestion:** Go (`net/http` + `chi`, `pgx`, `goose`).
 - **Frontend:** Next.js + React + TypeScript + Tailwind + shadcn-style components.
-- **Database:** Postgres (+ PostGIS later) with JSONB and `pg_trgm`.
-- **Raw storage:** local filesystem under `data/raw/` for prototype; S3/R2 in production.
+- **Database:** Postgres with JSONB, `pg_trgm`, source records, and project-pinned Goose migrations.
+- **Raw storage:** local filesystem under `data/raw/` for immutable source responses.
 
 The page architecture is "Go assembles route-specific JSON page objects from Postgres; Next.js renders those page objects." Postgres is the source of truth; the frontend no longer reads generated snapshot files.
 
@@ -106,10 +107,11 @@ idempotent and safe to re-run:
 
 2. **`make ingest-hearings`** — first discovers CSI agenda IDs + TVW
    event IDs for LWS-reported hearings, then runs the full pipeline for
-   every discovered agenda item (CSI testifiers + TVW captions +
-   transcript segmentation + speaker matching + PDC context). Skips
-   agenda items already ingested (no testifier rows means "not yet
-   ingested"). This is what produces the rich bill-hearing pages.
+   every discovered agenda item (CSI testifiers + TVW captions,
+   transcript segmentation, organization seeding, and source/context
+   enrichment). Skips agenda items already ingested (no testifier rows
+   means "not yet ingested"). This is what produces the rich
+   bill-hearing pages.
    Summaries: `data/processed/_discovery.json` and
    `data/processed/_ingest.json`.
 
@@ -134,8 +136,8 @@ cmd/
   wa-dd/                  # operator CLI (find-candidates, ingest-*, daily pipeline)
   wa-dd-api/              # read-only HTTP API for the Next.js frontend
 internal/
-  sources/{lws,csi,committeeschedules,tvw,pdc}/
-                          # connectors (Phase 2): Fetch / StoreRaw / Parse / Normalize
+  sources/{lws,csi,committeeschedules,tvw,pdc,socrata,datawa,...}/
+                          # source connectors using Fetch / StoreRaw / Parse / Normalize patterns
   sources/httpx/          # shared retry + rate-limit + raw-bytes hook
   storage/{db,objectstore}/
                           # pgx wrapper, source_record helpers, filesystem object store
@@ -149,8 +151,9 @@ data/
   raw/                    # immutable raw API responses (gitignored)
   processed/              # run summaries and derived artifacts (gitignored)
 docs/
+  ingestion.md                    # canonical implementation/operator walkthrough
   phase0-spike-report.md          # preserved feasibility findings
-  written-testimony-source-note.md # pending written-testimony access note
+  written-testimony-source-note.md # written-testimony access note
 ```
 
 ## Architectural ground rules

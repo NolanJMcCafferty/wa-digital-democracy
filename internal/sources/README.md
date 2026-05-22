@@ -1,9 +1,9 @@
 # Source connectors
 
 Each subpackage implements one external data source per the four-layer split
-defined in `~/Documents/v1/wiki/politics/data-sources/0X *.md` files.
+tracked in `~/Documents/main/wiki/politics/data-sources/0X *.md` files.
 
-| Package | Source | Phase 0 / Phase 2 status | Notes |
+| Package | Source | Current status | Notes |
 |---|---|---|---|
 | `httpx` | shared HTTP client | shipped | retry, per-host rate limit, RawSink hook |
 | `lws` | Washington Legislative Web Services (SOAP/XML) | shipped | live-tested via `-tags=integration` |
@@ -57,4 +57,4 @@ with the live APIs. Captured here so they don't get lost.
   browser POST (with `__RequestVerificationToken`) when a date-filtered
   search is needed. Confirmed during Phase 0.
 
-These should be folded back into the wiki at next pass.
+These are retained here as implementation notes for connector maintainers.

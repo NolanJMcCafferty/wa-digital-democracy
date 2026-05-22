@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository.
 
 ## What this is
 
-A source-linked public graph of Washington State government — bills, hearings, testimony, video, money, lobbying — modeled on CalMatters Digital Democracy. The implementation tracks the MVP defined in `~/Documents/v1/wiki/politics/Washington Digital Democracy - First Page Implementation Blueprint.md`. Long-form ingestion walkthrough lives at **`docs/ingestion.md`** — read that before making changes to anything in `internal/jobs/` or `internal/sources/`.
+A source-linked public graph of Washington State legislative activity — bills, hearings, testimony, video, transcripts, reviewed speakers, organizations, and public-record context — modeled on CalMatters Digital Democracy. The implementation tracks the completed public-beta plan in `~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md`. Long-form ingestion walkthrough lives at **`docs/ingestion.md`** — read that before making changes to anything in `internal/jobs/` or `internal/sources/`.
 
 ## Architecture in one minute
 
@@ -13,7 +13,7 @@ nightly cron: make daily
   ├─ wa-dd ingest-session    LWS metadata for every bill in biennium (~70 min)
   ├─ wa-dd discover-hearings  fills CSI agenda IDs + TVW event IDs on hearing rows
   └─ wa-dd ingest-hearings    full pipeline (CSI testifiers + TVW captions +
-                              transcript + speaker matching + PDC) per hearing
+                              transcript segmentation + organization/context enrichment) per hearing
 
   → Postgres (single source of truth)
   → wa-dd-api on :8080 (chi router; reads only)
@@ -99,7 +99,7 @@ go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
 ## What lives where in the wiki
 
-- `~/Documents/v1/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md` — phase markers, current "Done so far" / "Still to do" / "Immediate Next Steps". Update this when phases progress.
-- `~/Documents/v1/wiki/politics/Washington Digital Democracy - First Page Implementation Blueprint.md` — frontend route inventory, API endpoint list, three-pass ingestion summary. Updated alongside Plan.
-- `~/Documents/v1/wiki/politics/data-sources/` — per-source connector specs.
+- `~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md` — current product/architecture record. The MVP phases through public beta are marked complete; do not reintroduce stale "next steps" or Phase 4 roadmap language unless Nolan asks.
+- `~/Documents/main/wiki/politics/Washington Digital Democracy - First Page Implementation Blueprint.md` — older implementation blueprint; useful historical context, but the Comprehensive Plan and repo code are the current source of truth.
+- `~/Documents/main/wiki/politics/data-sources/` — per-source connector specs.
 - The wiki is the project-level intent; `docs/ingestion.md` is the implementation walkthrough.

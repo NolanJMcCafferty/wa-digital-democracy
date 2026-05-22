@@ -1,6 +1,6 @@
 # Data ingestion
 
-Last updated: 2026-05-19.
+Last updated: 2026-05-20.
 
 This document describes how data flows from the official Washington
 state sources (LWS, CSI, TVW/Invintus, PDC, DataWA) into Postgres and out to
@@ -18,7 +18,7 @@ where things land, and how to debug a stuck or misbehaving run.
         │                  │                                    │
    LWS metadata         CSI agenda IDs + TVW event IDs, then
    for ~5,000 bills     CSI testifiers, TVW captions, transcript
-   in the biennium      segments, speaker matching, PDC context
+   in the biennium      segmentation, organizations, source context
         │                  │                                    │
         └──────────────────┴───────────────┬────────────────────┘
                                            ▼
@@ -214,17 +214,18 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
    stream URIs, and the WebVTT caption file. Inserts `tvw_event`,
    `tvw_media_asset`, and `transcript_segment` rows. The media-asset rows
    preserve caption, document/link, HLS, audio, and published-video metadata
-   needed for transcript QA and future diarization.
+   used by transcript QA and the Deepgram diarization path.
 4. **`SegmentTranscript`** — finds the bill-discussion window in the
    transcript via bill-mention regex; tags the matching
    `transcript_segment` rows with the agenda_item_id.
-5. **`MatchSpeakers`** — heuristic speaker attribution. Today this
-   pass largely produces `unknown_speaker` labels; it's a known
-   stretch-criterion gap (see [[Comprehensive Plan §Phase 3]]).
+5. **`MatchSpeakers`** — legacy WebVTT-cue speaker-label pass. The public
+   hearing transcript now uses Deepgram-derived `diarized_speech_segment`
+   rows plus reviewed `speaker_assignment` labels; this step remains for
+   the caption-segment/bill-window view.
 6. **`PopulateOrganizations`** — seeds `organization` rows from CSI
    `raw_organization` strings, records `organization_source_mention`, and
-   links matching testifier rows. PDC/vendor/federal context is added later
-   through reviewable entity matching rather than a hand-edited YAML file.
+   links matching testifier rows. PDC/vendor/federal context flows through
+   reviewable entity matching rather than a hand-edited YAML file.
 
 **Output:**
 
@@ -259,11 +260,29 @@ interact with these tables:
 | `testifier` | `IngestCSI` | One row per CSI sign-in. `testified` boolean distinguishes "did testify" from "registered position only". |
 | `tvw_event` | `IngestTVW` | One row per Invintus event. UPSERT on `tvw_event_id`; includes WordPress slug/link, bill/category taxonomy IDs, stream URIs, runtime, and audio/video download metadata when available. |
 | `tvw_media_asset` | `IngestTVW` | One row per Invintus media/document/link asset for an event. Replaced per event on re-ingest; captures caption VTT, agenda/document links, published MP4 metadata, thumbnails, HLS-adjacent asset URLs, and technical advanced-details JSON. |
-| `transcript_segment` | `IngestTVW` (creates), `SegmentTranscript` (tags), `MatchSpeakers` (labels) | One row per WebVTT cue. `agenda_item_id` is set when the cue falls in the bill window. |
+| `transcript_segment` | `IngestTVW` (creates), `SegmentTranscript` (tags), `MatchSpeakers` (legacy labels) | One row per WebVTT cue. `agenda_item_id` is set when the cue falls in the bill window; these rows also back transcript search. |
+| `agenda_item_window` | `SegmentTranscript` | Persisted bill/agenda discussion windows used by page assemblers instead of re-deriving windows in SQL. |
+| `tvw_audio_asset`, `diarization_job`, `speaker_cluster`, `diarized_speech_segment` | `audio-cache`, `diarize-event`, `diarize-pending`, `merge-segments` | Deepgram-derived canonical public hearing transcript path: anonymous clusters and merged speech segments. |
+| `speaker_identity_evidence`, `speaker_review_task`, `speaker_assignment` | `extract-speaker-evidence`, `/admin/review/speakers` | Reviewable evidence/tasks and accepted public speaker labels. |
+| `entity_mention` | Deepgram diarization/entity extraction | Provider-derived named-entity mentions, treated as reviewable evidence. |
 | `organization` | `PopulateOrganizations` | UPSERT on `canonical_name` from source-backed CSI org strings. |
 | `organization_source_mention` | `PopulateOrganizations` | One row per source-backed organization-name mention. |
+| `vendor_entity_match_candidate`, `vendor_entity_match_decision`, `reviewed_vendor_entity_match` | source-context ingest + entity-review commands/UI | Reviewable organization/entity links for PDC/DataWA/FiscalWA/Federal context. |
 | `source_record` | every HTTP fetch via `httpx.RawSink` | Append-only. UPSERT on `(system, endpoint, url, content_hash, transform_version)` DO UPDATE SET fetched_at — so identical responses get one row that ages forward. |
 | `ingestion_run` | `Pipeline.Run`, `RunMetadataOnly` | One row per pipeline step, with `started_at`, `finished_at`, `status`, `error`. Useful for grep-style debugging across runs. |
+
+## Hearing diarization and speaker review
+
+See [`docs/hearing-diarization-and-review.md`](hearing-diarization-and-review.md)
+for the Deepgram diarization flow, speaker evidence extraction, admin review
+workflow, and public-display safety rules for reviewed speaker labels.
+
+## Organization matching and entity review
+
+See [`docs/organization-matching-and-review.md`](organization-matching-and-review.md)
+for CSI organization seeding, public-record source-context matching, Deepgram
+organization mentions, entity-review decisions, and public-display safety rules
+for reviewed organization context.
 
 ## Provenance
 
@@ -348,8 +367,8 @@ All daily stages are safe to re-run. What changes:
 - `testifier`, `transcript_segment` — these are insert-only with no
   dedupe. Re-running creates duplicates today.
   `ingest-hearings` filters to agenda items without testifier rows, so
-  the routine nightly path doesn't hit this. Worth fixing eventually, but
-  not blocking.
+  the routine nightly path doesn't hit this. This remains a known
+  operational caveat, not a public-beta blocker.
 - `source_record` — UPSERT on `(system, endpoint, url, content_hash,
   transform_version)`. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new
@@ -388,12 +407,11 @@ All daily stages are safe to re-run. What changes:
 - Real-time / sub-day refresh. TVW captions don't appear until hours
   after a hearing, and CSI sign-ins for tomorrow's hearings don't
   exist yet. Daily is the right cadence given the data sources.
-- Speaker attribution beyond the deterministic heuristic — the
-  `MatchSpeakers` step currently labels most segments
-  `unknown_speaker`. Improving this is a known gap; see the
-  Comprehensive Plan's Phase 3 notes.
+- Broad accountability-graph expansion. The current public-beta product is
+  complete around legislative/testimony pages; DataWA/FiscalWA/Federal
+  context commands are bounded source-context tools, not a Phase 4 roadmap.
 
-## Optional Phase 4 contract ingestion
+## Optional source-context: DataWA contract and vendor ingestion
 
 `wa-dd ingest-contracts` ingests DataWA agency-contract fiscal-year datasets into
 `datawa_contract` with source provenance through `source_record`.
@@ -476,11 +494,11 @@ candidate joins against contract contractor/vendor names and PDC/lobbying
 organization names. Do not automatically merge or display a match as confirmed
 without a confidence/evidence layer or human-reviewed decision.
 
-This remains intentionally bounded. Broader budget/spending work should add
-or use separate issues for monthly IT spend datasets, fiscal.wa.gov, Seattle
-Open Budget, USAspending joins, and reviewed agency/vendor/entity resolution.
+This remains intentionally bounded. Broader budget/spending work should stay
+out of the core legislative/testimony beta unless Nolan explicitly reopens that
+scope.
 
-## Optional Phase 4 USAspending ingestion
+## Optional source-context: USAspending ingestion
 
 `wa-dd ingest-usaspending-wa-awards` ingests a scoped USAspending award-search
 page into `federal_award`:
@@ -489,25 +507,24 @@ page into `federal_award`:
 wa-dd ingest-usaspending-wa-awards --start-date 2025-10-01 --end-date 2026-09-30 --limit 100
 ```
 
-The current MVP scope is awards whose place of performance is Washington (`WA`)
-for the requested date range, sorted by award amount through USAspending's
-`/api/v2/search/spending_by_award/` endpoint.
+The current bounded scope is awards whose place of performance is Washington
+(`WA`) for the requested date range, sorted by award amount through
+USAspending's `/api/v2/search/spending_by_award/` endpoint.
 
 Rows preserve award ID, recipient name/UEI, awarding and funding agencies, award
 type, amount, start/end dates, place-of-performance state/county, raw award JSON,
 and `source_record_id` provenance. The raw API response is also stored through
 the shared `source_record`/object-store path.
 
-Matching strategy: recipient names and UEIs should generate reviewable candidate
-joins against Washington agencies, Seattle/King County entities, WEBS vendors,
-contract vendors, and organization records. Do not present uncertain joins as
+Matching strategy: recipient names and UEIs generate reviewable candidate joins
+against organization/context records. Do not present uncertain joins as
 confirmed without a confidence/evidence layer or human-reviewed decision.
 
 Scope caveat: this command ingests one bounded award-search page. Pagination,
 recipient-specific backfills, agency/account-level data, subawards, and richer
-entity-resolution workflows should remain separate follow-up work.
+entity-resolution workflows are outside the current completed beta scope.
 
-## Optional Phase 4 Seattle Open Budget ingestion
+## Optional source-context: Seattle Open Budget ingestion
 
 `wa-dd ingest-seattle-operating-budget` ingests the City of Seattle Operating
 Budget Socrata dataset into `seattle_operating_budget`:
@@ -516,22 +533,22 @@ Budget Socrata dataset into `seattle_operating_budget`:
 wa-dd ingest-seattle-operating-budget --limit 1000
 ```
 
-The current MVP source is:
+The current bounded source is:
 
 - `8u2j-imqx` — City of Seattle Operating Budget (`data.seattle.gov`), public-domain licensed and attributed to the City of Seattle in Socrata metadata.
 
 Rows preserve fiscal year, service, department, program, fund, fund type,
 expense type, description, approved amount, raw fields, and `source_record_id`
-provenance linking back to the fetched Socrata page. This gives the Seattle
-accountability slice a department/program/fiscal-period budget table that can
-later join to Seattle City Auditor recommendations.
+provenance linking back to the fetched Socrata page. This gives optional
+Seattle context work a department/program/fiscal-period budget table without
+making Seattle accountability expansion part of the current plan.
 
 Scope caveat: this is the operating-budget surface only. Seattle capital budget
 (`m6va-m4qe`), actual expenditures, project-level spending, and Open Budget site
-visualization metadata should remain separate work because they have different
-grains and columns.
+visualization metadata are outside the current completed beta scope because
+they have different grains and columns.
 
-## Optional Phase 4 fiscal.wa.gov spending ingestion
+## Optional source-context: fiscal.wa.gov spending ingestion
 
 `wa-dd ingest-fiscal-vendor-payments` ingests the current fiscal.wa.gov Open
 Checkbook vendor-payment workbook into `fiscalwa_vendor_payment`:
@@ -540,7 +557,7 @@ Checkbook vendor-payment workbook into `fiscalwa_vendor_payment`:
 wa-dd ingest-fiscal-vendor-payments --limit 1000
 ```
 
-The current MVP source is:
+The current bounded source is:
 
 - `https://fiscal.wa.gov/Spending/VendorPayments2527.xlsx` — Open Checkbook vendor payments for the 2025-27 biennium
 
@@ -551,8 +568,8 @@ subobject budget categories, vendor name, amount, raw fields, and
 Scope caveat: this is a spending/checkbook slice, not the full state budget.
 It supports agency/vendor/category spending context. Proposal-level operating,
 capital, transportation, LEAP document, revenue, allotment, and OFM budget book
-ingestion should remain separate follow-up work because those surfaces have
-different grains and source formats.
+ingestion is outside the current completed beta scope because those surfaces
+have different grains and source formats.
 
 Source/terms caveat: fiscal.wa.gov describes itself as a transparency site for
 state fiscal data, reports, charts, and maps. Preserve official source links and
