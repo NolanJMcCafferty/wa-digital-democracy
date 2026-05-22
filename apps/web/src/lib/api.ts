@@ -1,15 +1,23 @@
 import "server-only";
+import { internalAPIHeaders } from "./internalApiAuth";
 import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Status } from "./pageTypes";
 
-// The Next.js bill-detail page is a Server Component, so its fetch runs
-// in the Node runtime and does NOT pass through next.config.ts rewrites.
-// We hit the Go API by absolute URL. The rewrite still proxies any
-// future client-side fetches under /api/v1/* through the same origin.
+// Server Components fetch the Go API by absolute URL and attach the internal
+// bearer token server-side. Browser-originated /api/v1/* requests use the
+// Next.js route proxy in src/app/api/v1/[...path]/route.ts, which injects the
+// same token without exposing it to client-side JavaScript.
 const API_BASE =
   process.env.WADD_API_URL ??
   process.env.API_BASE_URL ??
-  process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:8080";
+
+function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  for (const [key, value] of Object.entries(internalAPIHeaders())) {
+    headers.set(key, value);
+  }
+  return fetch(input, { ...init, headers });
+}
 
 // Match daily-ingest cadence with margin. Override per-call by passing a
 // different `next` option if a section ever needs sub-minute freshness.
@@ -244,7 +252,7 @@ export async function listBills(): Promise<BillListEntry[]> {
   // Ask for a single page large enough to cover the count metric on
   // the home page; pages that actually render rows should call
   // searchBills with proper pagination.
-  const res = await fetch(`${API_BASE}/api/v1/bills?limit=100`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/bills?limit=100`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -257,7 +265,7 @@ export async function listBills(): Promise<BillListEntry[]> {
 // countBills hits the bills list endpoint with limit=1 to read the
 // `total` field.
 export async function countBills(): Promise<number> {
-  const res = await fetch(`${API_BASE}/api/v1/bills?limit=1`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/bills?limit=1`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -292,7 +300,7 @@ export async function searchBills(filters: BillSearchFilters): Promise<BillSearc
   if (offset > 0) params.set("offset", String(offset));
 
   const url = `${API_BASE}/api/v1/bills?${params.toString()}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await apiFetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`searchBills: ${url} returned ${res.status}`);
   }
@@ -408,7 +416,7 @@ export async function listHearings(): Promise<HearingPage[]> {
   // Ask for the API's hard cap so callers that need an overview (home
   // page, issue pages, generateStaticParams) get the full set in one
   // request. Pages that paginate should call searchHearings instead.
-  const res = await fetch(`${API_BASE}/api/v1/hearings?limit=100`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/hearings?limit=100`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -419,7 +427,7 @@ export async function listHearings(): Promise<HearingPage[]> {
 }
 
 export async function countHearings(): Promise<number> {
-  const res = await fetch(`${API_BASE}/api/v1/hearings?limit=1`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/hearings?limit=1`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -448,7 +456,7 @@ export async function searchHearings(filters: HearingSearchFilters): Promise<Hea
   if (offset > 0) params.set("offset", String(offset));
 
   const url = `${API_BASE}/api/v1/hearings?${params.toString()}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await apiFetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`searchHearings: ${url} returned ${res.status}`);
   }
@@ -470,7 +478,7 @@ export async function searchHearings(filters: HearingSearchFilters): Promise<Hea
 
 export async function loadHearingPage(hearingId: string | number): Promise<HearingPage | null> {
   const url = `${API_BASE}/api/v1/hearings/${encodeURIComponent(String(hearingId))}`;
-  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  const res = await apiFetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadHearingPage ${url} returned ${res.status}`);
@@ -625,7 +633,7 @@ export async function listSourceSummaries(): Promise<SourceSummary[]> {
   // Always refetch — this powers the /sources status dashboard which
   // should reflect the current source_record table rather than a
   // ~60s-old snapshot.
-  const res = await fetch(`${API_BASE}/api/v1/sources`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/sources`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -711,7 +719,7 @@ function mapLegislatorListItem(l: legislatorListItem): LegislatorListEntry {
 }
 
 export async function listLegislators(): Promise<LegislatorListEntry[]> {
-  const res = await fetch(`${API_BASE}/api/v1/legislators`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/legislators`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -723,7 +731,7 @@ export async function listLegislators(): Promise<LegislatorListEntry[]> {
 
 export async function loadLegislatorPage(slug: string): Promise<LegislatorPage | null> {
   const url = `${API_BASE}/api/v1/legislators/${encodeURIComponent(slug)}`;
-  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  const res = await apiFetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadLegislatorPage ${url} returned ${res.status}`);
@@ -816,7 +824,7 @@ function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
 }
 
 export async function listOrganizations(): Promise<OrganizationListEntry[]> {
-  const res = await fetch(`${API_BASE}/api/v1/organizations`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/organizations`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -828,7 +836,7 @@ export async function listOrganizations(): Promise<OrganizationListEntry[]> {
 
 export async function loadOrganizationPage(slug: string): Promise<OrganizationPage | null> {
   const url = `${API_BASE}/api/v1/organizations/${encodeURIComponent(slug)}`;
-  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  const res = await apiFetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadOrganizationPage ${url} returned ${res.status}`);
@@ -889,7 +897,7 @@ export async function loadBillPage(
   billNumber: number,
 ): Promise<BillPage | null> {
   const url = `${API_BASE}/api/v1/bills/${biennium}/${billPrefix}${billNumber}/page`;
-  const res = await fetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
+  const res = await apiFetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadBillPage ${url} returned ${res.status}`);
@@ -927,7 +935,7 @@ export type SpeakerReviewTask = {
 };
 
 export async function listSpeakerReviewTasks(status = "pending"): Promise<SpeakerReviewTask[]> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers?status=${encodeURIComponent(status)}`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers?status=${encodeURIComponent(status)}`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -938,7 +946,7 @@ export async function listSpeakerReviewTasks(status = "pending"): Promise<Speake
 }
 
 export async function loadSpeakerReviewTask(taskId: string): Promise<SpeakerReviewTask | null> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}`, {
     cache: "no-store",
   });
   if (res.status === 404) return null;
@@ -949,7 +957,7 @@ export async function loadSpeakerReviewTask(taskId: string): Promise<SpeakerRevi
 }
 
 export async function decideSpeakerReviewTask(taskId: string, action: "accept" | "reject" | "needs-more-evidence", reviewer: string, notes: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}/${action}`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reviewer, notes }),
@@ -997,7 +1005,7 @@ export type SpeakerClusterReview = {
 };
 
 export async function listSpeakerReviewEvents(): Promise<SpeakerReviewEvent[]> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/events`, { cache: "no-store" });
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/events`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`listSpeakerReviewEvents returned ${res.status}`);
   }
@@ -1006,7 +1014,7 @@ export async function listSpeakerReviewEvents(): Promise<SpeakerReviewEvent[]> {
 }
 
 export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<SpeakerClusterReview[]> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(tvwEventId)}`, { cache: "no-store" });
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(tvwEventId)}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`loadSpeakerReviewEvent returned ${res.status}`);
   }
@@ -1015,7 +1023,7 @@ export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<Speake
 }
 
 export async function loadSpeakerClusterReview(clusterId: string): Promise<SpeakerClusterReview | null> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}`, { cache: "no-store" });
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}`, { cache: "no-store" });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadSpeakerClusterReview returned ${res.status}`);
@@ -1077,7 +1085,7 @@ export async function listEntityMatchCandidates(
   if (opts.limit) params.set("limit", String(opts.limit));
   if (opts.offset) params.set("offset", String(opts.offset));
   const url = `${API_BASE}/api/v1/admin/review/entities/candidates${params.toString() ? `?${params}` : ""}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await apiFetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`listEntityMatchCandidates returned ${res.status}`);
   }
@@ -1096,7 +1104,7 @@ export async function decideEntityMatchCandidate(
   reviewer: string,
   notes: string,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/entities/candidates/${encodeURIComponent(String(candidateId))}/decide`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/entities/candidates/${encodeURIComponent(String(candidateId))}/decide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision, reviewer, notes }),
@@ -1108,7 +1116,7 @@ export async function decideEntityMatchCandidate(
 }
 
 export async function manuallyAssignSpeakerCluster(clusterId: string, kind: string, label: string, reviewer: string, notes: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}/assign`, {
+  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}/assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind, label, reviewer, notes }),

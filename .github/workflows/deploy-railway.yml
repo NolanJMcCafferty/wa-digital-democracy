@@ -82,6 +82,7 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       INVINTUS_EMBEDDER_KEY: ${{ secrets.INVINTUS_EMBEDDER_KEY }}
       SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+      WADD_INTERNAL_API_TOKEN: ${{ secrets.WADD_INTERNAL_API_TOKEN }}
 
       R2_BUCKET_RAW: ${{ vars.R2_BUCKET_RAW }}
       R2_BUCKET_LOCATION: ${{ vars.R2_BUCKET_LOCATION }}
@@ -122,6 +123,7 @@ jobs:
             R2_ACCESS_KEY_ID
             R2_SECRET_ACCESS_KEY
             INVINTUS_EMBEDDER_KEY
+            WADD_INTERNAL_API_TOKEN
           )
 
           required+=(CLOUDFLARE_API_TOKEN)
@@ -183,6 +185,7 @@ jobs:
             --arg r2_secret_access_key "${R2_SECRET_ACCESS_KEY}" \
             --arg invintus_embedder_key "${INVINTUS_EMBEDDER_KEY}" \
             --arg socrata_app_token "${SOCRATA_APP_TOKEN:-}" \
+            --arg internal_api_token "${WADD_INTERNAL_API_TOKEN}" \
             --arg api_railway_subdomain "${API_RAILWAY_SUBDOMAIN:-}" \
             --arg web_railway_subdomain "${WEB_RAILWAY_SUBDOMAIN:-}" \
             --arg api_custom_domain "${API_CUSTOM_DOMAIN:-}" \
@@ -207,6 +210,7 @@ jobs:
               r2_secret_access_key: $r2_secret_access_key,
               invintus_embedder_key: $invintus_embedder_key,
               socrata_app_token: $socrata_app_token,
+              internal_api_token: $internal_api_token,
               api_railway_subdomain: ($api_railway_subdomain | empty_to_null),
               web_railway_subdomain: ($web_railway_subdomain | empty_to_null),
               api_custom_domain: ($api_custom_domain | empty_to_null),

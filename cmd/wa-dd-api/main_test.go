@@ -30,6 +30,52 @@ func TestHealthHandler_IsLivenessOnly(t *testing.T) {
 	}
 }
 
+func TestInternalAPIAuthMiddleware(t *testing.T) {
+	protected := internalAPIAuthMiddleware("secret-token")(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "allowed"})
+	}))
+
+	cases := []struct {
+		name   string
+		header string
+		want   int
+	}{
+		{name: "missing", want: http.StatusUnauthorized},
+		{name: "wrong", header: "Bearer wrong-token", want: http.StatusUnauthorized},
+		{name: "right", header: "Bearer secret-token", want: http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/bills", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			w := httptest.NewRecorder()
+			protected.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestInternalAPIAuthMiddleware_MissingConfigRejects(t *testing.T) {
+	protected := internalAPIAuthMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "allowed"})
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+	w := httptest.NewRecorder()
+	protected.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "api authentication is not configured") {
+		t.Fatalf("body = %q, want missing config error", w.Body.String())
+	}
+}
+
 // TestBillPageHandler_BadSlug exercises the slug-parse path without
 // touching Postgres — the regex check happens before any DB call, so a
 // nil store is unreachable and a real *db.Store isn't required.

@@ -144,17 +144,21 @@ resource "railway_custom_domain" "web" {
 
 locals {
   api_vars = {
-    APP_ENV           = "production"
-    LOG_LEVEL         = "info"
-    DATABASE_URL      = local.database_url
-    SOURCE_USER_AGENT = var.source_user_agent
+    APP_ENV                 = "production"
+    LOG_LEVEL               = "info"
+    DATABASE_URL            = local.database_url
+    SOURCE_USER_AGENT       = var.source_user_agent
+    WADD_INTERNAL_API_TOKEN = var.internal_api_token
   }
 
   web_vars = {
-    WADD_API_URL         = local.api_public_url
-    API_BASE_URL         = local.api_public_url
-    NEXT_PUBLIC_API_URL  = local.api_public_url
-    NEXT_PUBLIC_SITE_URL = local.web_public_url
+    # Use Railway private networking for server-side web→API calls. The API may
+    # still have a public domain for health checks and manual diagnostics, but
+    # /api/v1 requires WADD_INTERNAL_API_TOKEN either way.
+    WADD_API_URL            = "http://$${{api.RAILWAY_PRIVATE_DOMAIN}}:${var.api_port}"
+    API_BASE_URL            = "http://$${{api.RAILWAY_PRIVATE_DOMAIN}}:${var.api_port}"
+    NEXT_PUBLIC_SITE_URL    = local.web_public_url
+    WADD_INTERNAL_API_TOKEN = var.internal_api_token
   }
 
   migrate_vars = {

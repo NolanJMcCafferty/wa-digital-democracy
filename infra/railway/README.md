@@ -208,6 +208,7 @@ POSTGIS_PASSWORD
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 INVINTUS_EMBEDDER_KEY
+WADD_INTERNAL_API_TOKEN
 ```
 
 Optional GitHub repository secret:
@@ -269,11 +270,12 @@ api
   LOG_LEVEL
   DATABASE_URL
   SOURCE_USER_AGENT
+  WADD_INTERNAL_API_TOKEN
 
 web
-  WADD_API_URL
-  API_BASE_URL
-  NEXT_PUBLIC_API_URL
+  WADD_API_URL        (Terraform sets this to the API service private domain)
+  API_BASE_URL        (Terraform sets this to the API service private domain)
+  WADD_INTERNAL_API_TOKEN
   NEXT_PUBLIC_SITE_URL
 
 migrate
