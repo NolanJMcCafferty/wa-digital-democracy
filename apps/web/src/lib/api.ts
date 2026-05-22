@@ -1,4 +1,5 @@
 import "server-only";
+import { clerkAdminAuthHeader } from "./adminAuth";
 import { internalAPIHeaders } from "./internalApiAuth";
 import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Status } from "./pageTypes";
 
@@ -17,6 +18,14 @@ function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
     headers.set(key, value);
   }
   return fetch(input, { ...init, headers });
+}
+
+async function adminApiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  for (const [key, value] of Object.entries(await clerkAdminAuthHeader())) {
+    headers.set(key, value);
+  }
+  return apiFetch(input, { ...init, headers });
 }
 
 // Match daily-ingest cadence with margin. Override per-call by passing a
@@ -935,7 +944,7 @@ export type SpeakerReviewTask = {
 };
 
 export async function listSpeakerReviewTasks(status = "pending"): Promise<SpeakerReviewTask[]> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers?status=${encodeURIComponent(status)}`, {
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers?status=${encodeURIComponent(status)}`, {
     cache: "no-store",
   });
   if (!res.ok) {
@@ -946,7 +955,7 @@ export async function listSpeakerReviewTasks(status = "pending"): Promise<Speake
 }
 
 export async function loadSpeakerReviewTask(taskId: string): Promise<SpeakerReviewTask | null> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}`, {
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}`, {
     cache: "no-store",
   });
   if (res.status === 404) return null;
@@ -956,11 +965,11 @@ export async function loadSpeakerReviewTask(taskId: string): Promise<SpeakerRevi
   return (await res.json()) as SpeakerReviewTask;
 }
 
-export async function decideSpeakerReviewTask(taskId: string, action: "accept" | "reject" | "needs-more-evidence", reviewer: string, notes: string): Promise<void> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}/${action}`, {
+export async function decideSpeakerReviewTask(taskId: string, action: "accept" | "reject" | "needs-more-evidence", notes: string): Promise<void> {
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/${encodeURIComponent(taskId)}/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reviewer, notes }),
+    body: JSON.stringify({ notes }),
     cache: "no-store",
   });
   if (!res.ok) {
@@ -1005,7 +1014,7 @@ export type SpeakerClusterReview = {
 };
 
 export async function listSpeakerReviewEvents(): Promise<SpeakerReviewEvent[]> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/events`, { cache: "no-store" });
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/events`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`listSpeakerReviewEvents returned ${res.status}`);
   }
@@ -1014,7 +1023,7 @@ export async function listSpeakerReviewEvents(): Promise<SpeakerReviewEvent[]> {
 }
 
 export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<SpeakerClusterReview[]> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(tvwEventId)}`, { cache: "no-store" });
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(tvwEventId)}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`loadSpeakerReviewEvent returned ${res.status}`);
   }
@@ -1023,7 +1032,7 @@ export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<Speake
 }
 
 export async function loadSpeakerClusterReview(clusterId: string): Promise<SpeakerClusterReview | null> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}`, { cache: "no-store" });
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}`, { cache: "no-store" });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`loadSpeakerClusterReview returned ${res.status}`);
@@ -1085,7 +1094,7 @@ export async function listEntityMatchCandidates(
   if (opts.limit) params.set("limit", String(opts.limit));
   if (opts.offset) params.set("offset", String(opts.offset));
   const url = `${API_BASE}/api/v1/admin/review/entities/candidates${params.toString() ? `?${params}` : ""}`;
-  const res = await apiFetch(url, { cache: "no-store" });
+  const res = await adminApiFetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`listEntityMatchCandidates returned ${res.status}`);
   }
@@ -1101,13 +1110,12 @@ export async function listEntityMatchCandidates(
 export async function decideEntityMatchCandidate(
   candidateId: number | string,
   decision: EntityMatchDecision,
-  reviewer: string,
   notes: string,
 ): Promise<void> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/entities/candidates/${encodeURIComponent(String(candidateId))}/decide`, {
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/entities/candidates/${encodeURIComponent(String(candidateId))}/decide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision, reviewer, notes }),
+    body: JSON.stringify({ decision, notes }),
     cache: "no-store",
   });
   if (!res.ok) {
@@ -1115,11 +1123,11 @@ export async function decideEntityMatchCandidate(
   }
 }
 
-export async function manuallyAssignSpeakerCluster(clusterId: string, kind: string, label: string, reviewer: string, notes: string): Promise<void> {
-  const res = await apiFetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}/assign`, {
+export async function manuallyAssignSpeakerCluster(clusterId: string, kind: string, label: string, notes: string): Promise<void> {
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/clusters/${encodeURIComponent(clusterId)}/assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind, label, reviewer, notes }),
+    body: JSON.stringify({ kind, label, notes }),
     cache: "no-store",
   });
   if (!res.ok) {

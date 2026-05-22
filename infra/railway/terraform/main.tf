@@ -149,16 +149,21 @@ locals {
     DATABASE_URL            = local.database_url
     SOURCE_USER_AGENT       = var.source_user_agent
     WADD_INTERNAL_API_TOKEN = var.internal_api_token
+    CLERK_JWT_ISSUER       = var.clerk_jwt_issuer
+    CLERK_JWKS_URL         = var.clerk_jwks_url
+    WADD_ADMIN_JWT_AUDIENCE = var.admin_jwt_audience
   }
 
   web_vars = {
     # Use Railway private networking for server-side web→API calls. The API may
     # still have a public domain for health checks and manual diagnostics, but
     # /api/v1 requires WADD_INTERNAL_API_TOKEN either way.
-    WADD_API_URL            = "http://$${{api.RAILWAY_PRIVATE_DOMAIN}}:${var.api_port}"
-    API_BASE_URL            = "http://$${{api.RAILWAY_PRIVATE_DOMAIN}}:${var.api_port}"
-    NEXT_PUBLIC_SITE_URL    = local.web_public_url
-    WADD_INTERNAL_API_TOKEN = var.internal_api_token
+    WADD_API_URL                       = "http://$${{api.RAILWAY_PRIVATE_DOMAIN}}:${var.api_port}"
+    API_BASE_URL                       = "http://$${{api.RAILWAY_PRIVATE_DOMAIN}}:${var.api_port}"
+    NEXT_PUBLIC_SITE_URL               = local.web_public_url
+    WADD_INTERNAL_API_TOKEN            = var.internal_api_token
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY  = var.clerk_publishable_key
+    CLERK_SECRET_KEY                   = var.clerk_secret_key
   }
 
   migrate_vars = {

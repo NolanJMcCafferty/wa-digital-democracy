@@ -36,9 +36,8 @@ async function decide(formData: FormData) {
   "use server";
   const candidateId = String(formData.get("candidateId") ?? "");
   const decision = String(formData.get("decision") ?? "") as EntityMatchDecision;
-  const reviewer = String(formData.get("reviewer") ?? "");
   const notes = String(formData.get("notes") ?? "");
-  await decideEntityMatchCandidate(candidateId, decision, reviewer, notes);
+  await decideEntityMatchCandidate(candidateId, decision, notes);
   revalidatePath("/admin/review/entities");
 }
 
@@ -311,15 +310,7 @@ function CandidateCard({ candidate: c }: { candidate: EntityMatchCandidate }) {
 
       <form action={decide} className="mt-4 grid gap-3 border-t border-stone-200 pt-4 sm:grid-cols-2">
         <input type="hidden" name="candidateId" value={c.id} />
-        <label className="text-xs font-medium uppercase tracking-wider text-stone-500">
-          Reviewer
-          <input
-            name="reviewer"
-            defaultValue="nolan"
-            className="mt-1 w-full rounded border border-stone-300 px-3 py-2 text-sm text-stone-900"
-          />
-        </label>
-        <label className="text-xs font-medium uppercase tracking-wider text-stone-500">
+        <label className="text-xs font-medium uppercase tracking-wider text-stone-500 sm:col-span-2">
           Notes
           <input
             name="notes"

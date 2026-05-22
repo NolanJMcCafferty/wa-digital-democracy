@@ -33,10 +33,15 @@ r2_bucket_jurisdiction = null
 r2_access_key_id     = "replace-with-r2-access-key-id"
 r2_secret_access_key = "replace-with-r2-secret-access-key"
 
-# Ingestion and internal service-auth secrets.
-invintus_embedder_key = "replace-with-invintus-key"
-socrata_app_token     = ""
-internal_api_token    = "replace-with-long-random-internal-api-token"
+# Ingestion, internal service-auth, and admin-auth secrets.
+invintus_embedder_key  = "replace-with-invintus-key"
+socrata_app_token      = ""
+internal_api_token     = "replace-with-long-random-internal-api-token"
+clerk_publishable_key  = "pk_live_..."
+clerk_secret_key       = "sk_live_..."
+clerk_jwt_issuer       = "https://your-clerk-domain.clerk.accounts.dev"
+clerk_jwks_url         = ""
+admin_jwt_audience     = "wa-dd-admin"
 
 daily_biennium   = "2025-26"
 daily_cron       = "30 3 * * *"

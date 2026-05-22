@@ -15,12 +15,17 @@ It reads:
 PORT
 DATABASE_URL
 WADD_INTERNAL_API_TOKEN
+CLERK_JWT_ISSUER
+CLERK_JWKS_URL
+WADD_ADMIN_JWT_AUDIENCE
 ```
 
 `DATABASE_URL` is accepted anywhere the local code previously used `WADD_DSN`.
 `WADD_INTERNAL_API_TOKEN` is a shared server-only bearer token required by all
 Go `/api/v1/*` endpoints; set the same value on the web service so the Next.js
-server can call/proxy API requests.
+server can call/proxy API requests. Admin `/api/v1/admin/*` routes also validate
+Clerk JWTs independently using `CLERK_JWT_ISSUER`/`CLERK_JWKS_URL` and the
+`WADD_ADMIN_JWT_AUDIENCE` value from the Clerk `wadd-admin` JWT template.
 
 Health check:
 
@@ -42,6 +47,8 @@ WADD_API_URL
 API_BASE_URL
 WADD_INTERNAL_API_TOKEN
 NEXT_PUBLIC_SITE_URL
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+CLERK_SECRET_KEY
 ```
 
 Prefer Railway private networking for `WADD_API_URL` / `API_BASE_URL`, e.g.

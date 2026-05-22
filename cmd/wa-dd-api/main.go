@@ -15,14 +15,17 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 
 	firstpage "github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
@@ -53,6 +56,15 @@ func main() {
 	r.Get("/readyz", readinessHandler(stores))
 
 	apiAuth := internalAPIAuthMiddleware(env("WADD_INTERNAL_API_TOKEN", ""))
+	adminAuth, err := newAdminAuthenticator(ctx, adminAuthConfigFromEnv())
+	if err != nil {
+		log.Printf("admin auth disabled: %v", err)
+		adminAuth = func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "admin authentication is not configured"})
+			})
+		}
+	}
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(apiAuth)
 		api.Get("/addresses/suggest", suggestAddressesHandler())
@@ -71,23 +83,32 @@ func main() {
 		api.Get("/hearings/{hearingId}", withStore(stores, getHearingHandler))
 		api.Get("/sources", withStore(stores, listSourcesHandler))
 		api.Get("/search/transcripts", withStore(stores, searchTranscriptsHandler))
-		api.Get("/admin/review/speakers", withStore(stores, adminListSpeakerReviewTasksHandler))
-		api.Get("/admin/review/speakers/events", withStore(stores, adminListSpeakerReviewEventsHandler))
-		api.Get("/admin/review/speakers/events/{tvwEventId}", withStore(stores, adminGetSpeakerReviewEventHandler))
-		api.Get("/admin/review/speakers/clusters/{clusterId}", withStore(stores, adminGetSpeakerClusterReviewHandler))
-		api.Post("/admin/review/speakers/clusters/{clusterId}/assign", withStore(stores, adminManualAssignSpeakerClusterHandler))
-		api.Get("/admin/review/speakers/{taskId}", withStore(stores, adminGetSpeakerReviewTaskHandler))
-		api.Post("/admin/review/speakers/{taskId}/accept", withStore(stores, func(store *db.Store) http.HandlerFunc {
-			return adminSpeakerReviewDecisionHandler(store, "accept")
-		}))
-		api.Post("/admin/review/speakers/{taskId}/reject", withStore(stores, func(store *db.Store) http.HandlerFunc {
-			return adminSpeakerReviewDecisionHandler(store, "reject")
-		}))
-		api.Post("/admin/review/speakers/{taskId}/needs-more-evidence", withStore(stores, func(store *db.Store) http.HandlerFunc {
-			return adminSpeakerReviewDecisionHandler(store, "needs_more_evidence")
-		}))
-		api.Get("/admin/review/entities/candidates", withStore(stores, adminListEntityMatchCandidatesHandler))
-		api.Post("/admin/review/entities/candidates/{candidateId}/decide", withStore(stores, adminDecideEntityMatchHandler))
+		api.Route("/admin", func(admin chi.Router) {
+			admin.Use(adminAuth)
+			admin.Group(func(view chi.Router) {
+				view.Use(requireAdminRole(adminRoleViewer))
+				view.Get("/review/speakers", withStore(stores, adminListSpeakerReviewTasksHandler))
+				view.Get("/review/speakers/events", withStore(stores, adminListSpeakerReviewEventsHandler))
+				view.Get("/review/speakers/events/{tvwEventId}", withStore(stores, adminGetSpeakerReviewEventHandler))
+				view.Get("/review/speakers/clusters/{clusterId}", withStore(stores, adminGetSpeakerClusterReviewHandler))
+				view.Get("/review/speakers/{taskId}", withStore(stores, adminGetSpeakerReviewTaskHandler))
+				view.Get("/review/entities/candidates", withStore(stores, adminListEntityMatchCandidatesHandler))
+			})
+			admin.Group(func(write chi.Router) {
+				write.Use(requireAdminRole(adminRoleReviewer))
+				write.Post("/review/speakers/clusters/{clusterId}/assign", withStore(stores, adminManualAssignSpeakerClusterHandler))
+				write.Post("/review/speakers/{taskId}/accept", withStore(stores, func(store *db.Store) http.HandlerFunc {
+					return adminSpeakerReviewDecisionHandler(store, "accept")
+				}))
+				write.Post("/review/speakers/{taskId}/reject", withStore(stores, func(store *db.Store) http.HandlerFunc {
+					return adminSpeakerReviewDecisionHandler(store, "reject")
+				}))
+				write.Post("/review/speakers/{taskId}/needs-more-evidence", withStore(stores, func(store *db.Store) http.HandlerFunc {
+					return adminSpeakerReviewDecisionHandler(store, "needs_more_evidence")
+				}))
+				write.Post("/review/entities/candidates/{candidateId}/decide", withStore(stores, adminDecideEntityMatchHandler))
+			})
+		})
 	})
 
 	srv := &http.Server{
@@ -108,6 +129,213 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+}
+
+type adminRole string
+
+const (
+	adminRoleViewer   adminRole = "viewer"
+	adminRoleReviewer adminRole = "reviewer"
+	adminRoleAdmin    adminRole = "admin"
+)
+
+var adminRoleRank = map[adminRole]int{
+	adminRoleViewer:   1,
+	adminRoleReviewer: 2,
+	adminRoleAdmin:    3,
+}
+
+type adminAuthConfig struct {
+	Issuer   string
+	Audience string
+	JWKSURL  string
+}
+
+type adminUser struct {
+	ID    string
+	Email string
+	Name  string
+	Role  adminRole
+}
+
+type adminUserContextKey struct{}
+
+type clerkClaims struct {
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	AdminRole   string `json:"admin_role"`
+	WADDRole    string `json:"wadd_role"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	PrimaryMail string `json:"primary_email_address"`
+	jwt.RegisteredClaims
+}
+
+func adminAuthConfigFromEnv() adminAuthConfig {
+	issuer := strings.TrimRight(env("CLERK_JWT_ISSUER", env("NEXT_PUBLIC_CLERK_FRONTEND_API_URL", "")), "/")
+	if issuer == "" {
+		if domain := env("CLERK_DOMAIN", ""); domain != "" {
+			issuer = "https://" + strings.Trim(domain, "/")
+		}
+	}
+	jwksURL := env("CLERK_JWKS_URL", "")
+	if jwksURL == "" && issuer != "" {
+		jwksURL = issuer + "/.well-known/jwks.json"
+	}
+	return adminAuthConfig{
+		Issuer:   issuer,
+		Audience: env("WADD_ADMIN_JWT_AUDIENCE", "wa-dd-admin"),
+		JWKSURL:  jwksURL,
+	}
+}
+
+func newAdminAuthenticator(ctx context.Context, cfg adminAuthConfig) (func(http.Handler) http.Handler, error) {
+	if cfg.Issuer == "" || cfg.JWKSURL == "" {
+		return nil, fmt.Errorf("CLERK_JWT_ISSUER or CLERK_DOMAIN is required for admin auth")
+	}
+	jwks, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.JWKSURL})
+	if err != nil {
+		return nil, fmt.Errorf("load Clerk JWKS: %w", err)
+	}
+	return adminAuthMiddleware(cfg, jwks.Keyfunc), nil
+}
+
+func adminAuthMiddleware(cfg adminAuthConfig, keys jwt.Keyfunc) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			user, err := validateAdminBearer(req.Header.Get("X-WADD-Admin-Auth"), cfg, keys)
+			if err != nil {
+				log.Printf("admin auth rejected path=%s reason=%v", req.URL.Path, err)
+				w.Header().Set("WWW-Authenticate", `Bearer realm="wa-dd-admin"`)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "admin authentication required"})
+				return
+			}
+			ctx := context.WithValue(req.Context(), adminUserContextKey{}, user)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	}
+}
+
+func requireAdminRole(minimum adminRole) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			user, ok := adminUserFromContext(req.Context())
+			if !ok || !adminRoleAtLeast(user.Role, minimum) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+func adminUserFromContext(ctx context.Context) (adminUser, bool) {
+	user, ok := ctx.Value(adminUserContextKey{}).(adminUser)
+	return user, ok
+}
+
+func adminRoleAtLeast(role, minimum adminRole) bool {
+	return adminRoleRank[role] >= adminRoleRank[minimum]
+}
+
+func validateAdminBearer(header string, cfg adminAuthConfig, keys jwt.Keyfunc) (adminUser, error) {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return adminUser{}, fmt.Errorf("missing bearer")
+	}
+	tokenString := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if tokenString == "" {
+		return adminUser{}, fmt.Errorf("empty bearer")
+	}
+	claims := &clerkClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, keys,
+		jwt.WithIssuer(cfg.Issuer),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithValidMethods([]string{"RS256"}),
+	)
+	if err != nil {
+		return adminUser{}, err
+	}
+	if !token.Valid {
+		return adminUser{}, fmt.Errorf("invalid token")
+	}
+	if cfg.Audience != "" && !slices.Contains(claims.Audience, cfg.Audience) {
+		return adminUser{}, fmt.Errorf("invalid audience")
+	}
+	role := parseAdminRole(firstNonEmpty(claims.Role, claims.AdminRole, claims.WADDRole))
+	if role == "" {
+		return adminUser{}, fmt.Errorf("missing admin role")
+	}
+	email := firstNonEmpty(claims.Email, claims.PrimaryMail)
+	if email == "" {
+		email = "unknown"
+	}
+	name := claims.Name
+	if name == "" {
+		name = strings.TrimSpace(claims.FirstName + " " + claims.LastName)
+	}
+	return adminUser{ID: claims.Subject, Email: email, Name: name, Role: role}, nil
+}
+
+func parseAdminRole(v string) adminRole {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "viewer":
+		return adminRoleViewer
+	case "reviewer":
+		return adminRoleReviewer
+	case "admin":
+		return adminRoleAdmin
+	default:
+		return ""
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func adminMutationAudit(store *db.Store, req *http.Request, action, targetType, targetID string, previousState, newState any, notes string) {
+	user, ok := adminUserFromContext(req.Context())
+	if !ok {
+		return
+	}
+	previousJSON, _ := json.Marshal(previousState)
+	newJSON, _ := json.Marshal(newState)
+	ip := strings.TrimSpace(req.Header.Get("X-Forwarded-For"))
+	if i := strings.Index(ip, ","); i >= 0 {
+		ip = strings.TrimSpace(ip[:i])
+	}
+	if ip == "" {
+		ip = strings.TrimSpace(req.RemoteAddr)
+		if host, _, found := strings.Cut(ip, ":"); found {
+			ip = host
+		}
+	}
+	if _, err := store.InsertAdminAuditLog(req.Context(), db.AdminAuditLogParams{
+		ActorUserID:   user.ID,
+		ActorEmail:    user.Email,
+		ActorName:     user.Name,
+		ActorRole:     string(user.Role),
+		Route:         req.URL.Path,
+		Action:        action,
+		TargetType:    targetType,
+		TargetID:      targetID,
+		PreviousState: previousJSON,
+		NewState:      newJSON,
+		ReviewerNotes: notes,
+		RequestID:     middleware.GetReqID(req.Context()),
+		IPAddress:     ip,
+		UserAgent:     req.UserAgent(),
+	}); err != nil {
+		log.Printf("admin audit log failed path=%s action=%s target=%s/%s err=%v", req.URL.Path, action, targetType, targetID, err)
 	}
 }
 
@@ -1599,10 +1827,9 @@ func adminGetSpeakerClusterReviewHandler(store *db.Store) http.HandlerFunc {
 
 func adminManualAssignSpeakerClusterHandler(store *db.Store) http.HandlerFunc {
 	type body struct {
-		Kind     string `json:"kind"`
-		Label    string `json:"label"`
-		Reviewer string `json:"reviewer"`
-		Notes    string `json:"notes"`
+		Kind  string `json:"kind"`
+		Label string `json:"label"`
+		Notes string `json:"notes"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(req, "clusterId"), 10, 64)
@@ -1612,10 +1839,14 @@ func adminManualAssignSpeakerClusterHandler(store *db.Store) http.HandlerFunc {
 		}
 		var b body
 		_ = json.NewDecoder(req.Body).Decode(&b)
-		if err := store.ManualAssignSpeakerCluster(req.Context(), id, b.Kind, b.Label, b.Reviewer, b.Notes); err != nil {
+		previous, _ := store.GetSpeakerClusterReview(req.Context(), id)
+		user, _ := adminUserFromContext(req.Context())
+		if err := store.ManualAssignSpeakerCluster(req.Context(), id, b.Kind, b.Label, user.Email, b.Notes); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		current, _ := store.GetSpeakerClusterReview(req.Context(), id)
+		adminMutationAudit(store, req, "speaker_cluster_assign", "speaker_cluster", strconv.FormatInt(id, 10), previous, current, b.Notes)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
@@ -1750,7 +1981,6 @@ func adminDecideEntityMatchHandler(store *db.Store) http.HandlerFunc {
 	type body struct {
 		Decision   string `json:"decision"`
 		Confidence string `json:"confidence"`
-		Reviewer   string `json:"reviewer"`
 		Notes      string `json:"notes"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -1772,25 +2002,28 @@ func adminDecideEntityMatchHandler(store *db.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "candidate not found"})
 			return
 		}
+		previousState, _ := store.GetVendorEntityMatchCandidate(req.Context(), candidateID)
+		user, _ := adminUserFromContext(req.Context())
 		if _, err := store.UpsertVendorEntityMatchDecision(req.Context(), db.InsertVendorEntityMatchDecisionParams{
 			CandidateID:    candidateID,
 			OrganizationID: organizationID,
 			Decision:       b.Decision,
 			Confidence:     b.Confidence,
-			ReviewedBy:     b.Reviewer,
+			ReviewedBy:     user.Email,
 			ReviewNotes:    b.Notes,
 		}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		newState, _ := store.GetVendorEntityMatchCandidate(req.Context(), candidateID)
+		adminMutationAudit(store, req, "entity_match_decide", "entity_match_candidate", strconv.FormatInt(candidateID, 10), previousState, newState, b.Notes)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
 
 func adminSpeakerReviewDecisionHandler(store *db.Store, action string) http.HandlerFunc {
 	type body struct {
-		Reviewer string `json:"reviewer"`
-		Notes    string `json:"notes"`
+		Notes string `json:"notes"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(req, "taskId"), 10, 64)
@@ -1800,13 +2033,15 @@ func adminSpeakerReviewDecisionHandler(store *db.Store, action string) http.Hand
 		}
 		var b body
 		_ = json.NewDecoder(req.Body).Decode(&b)
+		previous, _ := store.GetSpeakerReviewTask(req.Context(), id)
+		user, _ := adminUserFromContext(req.Context())
 		switch action {
 		case "accept":
-			err = store.AcceptSpeakerReviewTask(req.Context(), id, b.Reviewer, b.Notes)
+			err = store.AcceptSpeakerReviewTask(req.Context(), id, user.Email, b.Notes)
 		case "reject":
-			err = store.RejectSpeakerReviewTask(req.Context(), id, b.Reviewer, b.Notes)
+			err = store.RejectSpeakerReviewTask(req.Context(), id, user.Email, b.Notes)
 		case "needs_more_evidence":
-			err = store.NeedsMoreEvidenceSpeakerReviewTask(req.Context(), id, b.Reviewer, b.Notes)
+			err = store.NeedsMoreEvidenceSpeakerReviewTask(req.Context(), id, user.Email, b.Notes)
 		default:
 			err = fmt.Errorf("unsupported action")
 		}
@@ -1814,6 +2049,8 @@ func adminSpeakerReviewDecisionHandler(store *db.Store, action string) http.Hand
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		current, _ := store.GetSpeakerReviewTask(req.Context(), id)
+		adminMutationAudit(store, req, "speaker_review_"+action, "speaker_review_task", strconv.FormatInt(id, 10), previous, current, b.Notes)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
