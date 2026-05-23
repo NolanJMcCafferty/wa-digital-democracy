@@ -1,0 +1,42 @@
+name: Backend Integration Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend-integration:
+    name: Run backend integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5-alpine
+        env:
+          POSTGRES_USER: wadd
+          POSTGRES_PASSWORD: wadd
+          POSTGRES_DB: wa_dd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply migrations and deterministic fixtures
+        run: make integration-db seed-test-fixtures
+
+      - name: Run backend integration tests
+        run: WADD_TEST_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" go test -tags=integration ./...

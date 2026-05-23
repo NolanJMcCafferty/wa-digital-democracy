@@ -26,6 +26,8 @@
 /apps/web/node_modules/
 /apps/web/.next/
 /apps/web/.turbo/
+/apps/web/test-results/
+/apps/web/playwright-report/
 
 # Generated database docs
 /docs/db/schemaspy/
