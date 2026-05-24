@@ -35,7 +35,9 @@ test("organization search opens fixture organization detail", async ({ page }) =
   await page.goto("/organizations?q=Fixture%20Housing%20Coalition");
   await expect(page.getByRole("heading", { name: "Organizations" })).toBeVisible();
 
-  const fixtureOrg = page.getByRole("link", { name: "Fixture Housing Coalition" }).first();
+  const fixtureOrgRow = page.getByRole("row", { name: /Fixture Housing Coalition.*2/i });
+  const fixtureOrg = fixtureOrgRow.getByRole("link", { name: "Fixture Housing Coalition" });
+  await expect(fixtureOrgRow).toBeVisible();
   await expect(fixtureOrg).toBeVisible();
   await expect(page.getByText(/aka .*FHC/i)).toBeVisible();
   await fixtureOrg.click();
