@@ -1,11 +1,11 @@
 import Link from "next/link";
-import type { Organization } from "@/lib/pageTypes";
+import type { OrganizationSummary } from "@/lib/pageTypes";
 import { slugify } from "@/lib/api";
 
 export function OrganizationsSection({
   organizations,
 }: {
-  organizations: Organization[];
+  organizations: OrganizationSummary[];
 }) {
   return (
     <section aria-labelledby="orgs-heading" className="space-y-4">

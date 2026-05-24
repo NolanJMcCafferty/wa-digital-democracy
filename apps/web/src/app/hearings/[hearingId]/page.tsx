@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loadHearingPage, listHearings, type HearingAgendaItemEntry } from "@/lib/api";
-import type { Position, Testifier } from "@/lib/pageTypes";
+import type { Position, TestifierSummary } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 import { DiarizedTranscriptSection } from "./_sections/DiarizedTranscriptSection";
 
@@ -149,8 +149,8 @@ function AgendaItemCard({ item }: { item: HearingAgendaItemEntry }) {
   );
 }
 
-function PositionBreakdown({ testifiers }: { testifiers: Testifier[] }) {
-  const groups: Record<Position, Testifier[]> = {
+function PositionBreakdown({ testifiers }: { testifiers: TestifierSummary[] }) {
+  const groups: Record<Position, TestifierSummary[]> = {
     Pro: [],
     Con: [],
     Other: [],

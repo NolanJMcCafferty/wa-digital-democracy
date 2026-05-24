@@ -1,4 +1,4 @@
-import type { Source } from "@/lib/pageTypes";
+import type { SourceRecordSummary } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 
 const SYSTEM_LABEL: Record<string, string> = {
@@ -15,12 +15,12 @@ export function SourcePanel({
   knownLimitations,
   generatedAt,
 }: {
-  sources: Source[];
+  sources: SourceRecordSummary[];
   knownLimitations?: string[];
   generatedAt: string;
 }) {
   // Group by system so the panel reads as a list of feeds, not a flat dump.
-  const bySystem = new Map<string, Source[]>();
+  const bySystem = new Map<string, SourceRecordSummary[]>();
   for (const s of sources) {
     const arr = bySystem.get(s.system) ?? [];
     arr.push(s);

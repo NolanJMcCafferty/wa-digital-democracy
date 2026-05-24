@@ -1,7 +1,7 @@
 import "server-only";
 import { clerkAdminAuthHeader } from "./adminAuth";
 import { internalAPIHeaders } from "./internalApiAuth";
-import type { Bill, HearingSection, Organization, Position, Source, Sponsor, Status } from "./pageTypes";
+import type { AgendaItemSection, BillSponsor, BillStatus, BillSummary, OrganizationSummary, Position, SourceRecordSummary } from "./pageTypes";
 
 // Server Components fetch the Go API by absolute URL and attach the internal
 // bearer token server-side. Browser-originated /api/v1/* requests use the
@@ -128,7 +128,7 @@ export type HearingAgendaItemEntry = {
   billNumber: number;
   testifierCount: number;
   testifiedCount: number;
-  section?: HearingSection;
+  section?: AgendaItemSection;
 };
 
 export type HearingPage = {
@@ -337,7 +337,7 @@ type hearingAgendaItemResponse = {
   bill_number: number;
   testifier_count: number;
   testified_count: number;
-  section?: HearingSection;
+  section?: AgendaItemSection;
 };
 
 type hearingResponseItem = {
@@ -775,7 +775,7 @@ export async function loadLegislatorPage(slug: string): Promise<LegislatorPage |
   };
 }
 
-export function legislatorSlug(s: Sponsor): string {
+export function legislatorSlug(s: BillSponsor): string {
   return slugify(s.name);
 }
 
@@ -783,7 +783,7 @@ type orgListItem = {
   slug: string;
   canonical_name: string;
   aliases: string[];
-  match_confidence: Organization["match_confidence"];
+  match_confidence: OrganizationSummary["match_confidence"];
   match_notes?: string;
   testifier_count: number;
   positions: Record<Position, number>;
@@ -815,7 +815,7 @@ type orgDetailResponse = orgListItem & {
     record_date?: string;
     url?: string;
     source_record_id?: number;
-    match_confidence: Organization["match_confidence"];
+    match_confidence: OrganizationSummary["match_confidence"];
     evidence?: string[];
   }>;
 };
@@ -891,27 +891,27 @@ export function slugify(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export type BillPage = {
+export type BillDetailResponse = {
   generated_at: string;
-  bill: Bill;
-  status: Status;
-  hearings: HearingSection[];
-  sources: Source[];
+  bill: BillSummary;
+  status: BillStatus;
+  hearings: AgendaItemSection[];
+  sources: SourceRecordSummary[];
   known_limitations?: string[];
 };
 
-export async function loadBillPage(
+export async function loadBillDetail(
   biennium: string,
   billPrefix: string,
   billNumber: number,
-): Promise<BillPage | null> {
+): Promise<BillDetailResponse | null> {
   const url = `${API_BASE}/api/v1/bills/${biennium}/${billPrefix}${billNumber}/page`;
   const res = await apiFetch(url, { next: { revalidate: DEFAULT_REVALIDATE } });
   if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`loadBillPage ${url} returned ${res.status}`);
+    throw new Error(`loadBillDetail ${url} returned ${res.status}`);
   }
-  return (await res.json()) as BillPage;
+  return (await res.json()) as BillDetailResponse;
 }
 
 export type SpeakerReviewSegment = {

@@ -1,15 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import type { Status, StatusEntry } from "@/lib/pageTypes";
+import type { BillStatus, BillStatusEvent } from "@/lib/pageTypes";
 import { formatDate } from "@/lib/format";
 import { isMilestoneStatus } from "@/lib/billStatus";
 
-export function StatusTimeline({ status }: { status: Status }) {
+export function StatusTimeline({ status }: { status: BillStatus }) {
   const timeline = status.timeline ?? [];
-  const reversed: StatusEntry[] = [...timeline].reverse();
+  const reversed: BillStatusEvent[] = [...timeline].reverse();
   const filtered = reversed.filter((e) => isMilestoneStatus(e.history_line));
-  const milestones: StatusEntry[] =
+  const milestones: BillStatusEvent[] =
     filtered.length > 0 ? filtered : reversed.slice(0, 3);
   const hasMore = reversed.length > milestones.length;
 
