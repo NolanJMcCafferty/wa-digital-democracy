@@ -86,7 +86,7 @@ e2e-install: ## Install Playwright browser dependencies for end-to-end tests
 	cd apps/web && pnpm exec playwright install --with-deps chromium
 
 e2e: build ## Run frontend -> backend end-to-end tests against configured env/services
-	cd apps/web && WADD_INTERNAL_API_TOKEN=$${WADD_INTERNAL_API_TOKEN:-e2e-internal-token} WADD_API_URL=$${WADD_API_URL:-http://127.0.0.1:$${WADD_E2E_API_PORT:-18080}} pnpm build
+	cd apps/web && SKIP_BUILD_STATIC_PARAMS=1 WADD_INTERNAL_API_TOKEN=$${WADD_INTERNAL_API_TOKEN:-e2e-internal-token} WADD_API_URL=$${WADD_API_URL:-http://127.0.0.1:$${WADD_E2E_API_PORT:-18080}} pnpm build
 	cd apps/web && WADD_API_BIN="$(CURDIR)/bin/wa-dd-api" WADD_E2E_DSN="$${WADD_E2E_DSN:-$(DSN)}" pnpm exec playwright test
 
 coverage:     ## Enforce unit test coverage threshold for core packages

@@ -52,11 +52,8 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
         working-directory: apps/web
 
-      - name: Apply migrations
-        run: make migrate-up
-
-      - name: Build API binary
-        run: make build
+      - name: Apply migrations and deterministic fixtures
+        run: make migrate-up seed-test-fixtures
 
       - name: Run e2e tests
         run: make e2e
