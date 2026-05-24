@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 test("bill search opens fixture bill detail", async ({ page }) => {
@@ -88,6 +89,27 @@ test("home page address lookup matches fixture legislator", async ({ page }) => 
   await expect(page.getByText("Legislative District 99")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Matched: 600 4th Ave, Seattle, WA 98104")).toBeVisible();
   await expect(page.getByRole("link", { name: /Fixture Sponsor State Representative/i })).toBeVisible();
+});
+
+test("home page exposes basic accessibility landmarks", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveAttribute("lang", /\w+/);
+  await expect(page.getByRole("heading", { level: 1, name: "WA Digital Democracy" })).toBeVisible();
+  await expect(page.getByRole("main")).toBeVisible();
+
+  const addressInput = page.getByPlaceholder("600 4th Ave, Seattle, WA 98104");
+  await expect(addressInput).toHaveAccessibleName(/address/i);
+
+  for (const img of await page.getByRole("img").all()) {
+    await expect(img).toHaveAccessibleName(/.+/);
+  }
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
 });
 
 test("invalid bill slug renders through the frontend without leaking backend auth", async ({ page }) => {

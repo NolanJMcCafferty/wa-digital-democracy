@@ -176,6 +176,7 @@ export function FindLegislators({
                   }}
                   placeholder="600 4th Ave, Seattle, WA 98104"
                   autoComplete="street-address"
+                  role="combobox"
                   aria-autocomplete="list"
                   aria-controls="address-suggestions"
                   aria-expanded={suggestionsOpen}

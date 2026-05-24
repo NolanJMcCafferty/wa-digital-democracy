@@ -59,7 +59,7 @@ export default async function HomePage() {
           <h2 id="issues-heading" className="text-2xl font-bold text-stone-900">
             Washington Agenda
           </h2>
-          <span className="text-xs uppercase tracking-wider text-stone-500">
+          <span className="text-xs uppercase tracking-wider text-stone-600">
             {ISSUE_TILES.filter((i) => i.status === "live").length} of{" "}
             {ISSUE_TILES.length} live
           </span>
@@ -186,7 +186,7 @@ function LegislatorMosaic({
         <h2 id="mosaic-heading" className="text-2xl font-bold text-stone-900">
           Legislature at a glance
         </h2>
-        <span className="text-xs uppercase tracking-wider text-stone-500">
+        <span className="text-xs uppercase tracking-wider text-stone-600">
           {senate.toLocaleString()} Senate · {house.toLocaleString()} House
         </span>
       </div>

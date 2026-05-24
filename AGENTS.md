@@ -68,12 +68,12 @@ make migrate-up             # apply migrations via project-pinned goose
 make api                    # run wa-dd-api on :8080
 cd apps/web && pnpm dev     # Next.js on :3000
 
-# Tests + gates
+# Tests + gates — see "Running tests" below for full setup per category
 go vet ./...
-go test ./...
-go test -tags=integration ./cmd/wa-dd-api/...   # needs WADD_DSN + dev Postgres
-go test ./internal/sources/lws/... -run TestParse  # single package, single test
-cd apps/web && pnpm typecheck
+go test ./...                                       # Go unit tests, no infra
+make integration                                    # Go integration tests (boots Postgres + seeds)
+cd apps/web && pnpm typecheck                       # Frontend typecheck
+make e2e                                            # Playwright e2e (requires Postgres + fixtures + chromium)
 
 # Ingestion (operator-driven; usually triggered via make daily)
 INVINTUS_EMBEDDER_KEY=… make daily             # full nightly chain
@@ -84,6 +84,64 @@ go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 ```
 
 `make help` lists every Makefile target with a one-line description.
+
+## Running tests
+
+Four categories. **Always use these exact commands** — don't improvise (e.g. `pnpm exec playwright` directly will fail without env vars).
+
+### 1. Go unit tests (no infra)
+
+```sh
+go test ./...
+go test ./internal/sources/lws/... -run TestParse   # single package + test
+go vet ./...
+```
+
+### 2. Go integration tests (need Postgres)
+
+```sh
+make integration              # boots integration DB, seeds fixtures, runs go test -tags=integration ./...
+# under the hood:
+#   make integration-db       # docker compose up + migrate
+#   make seed-test-fixtures   # deterministic fixture rows
+#   WADD_TEST_DSN=… go test -tags=integration ./...
+```
+
+For a single integration package: `WADD_TEST_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" go test -tags=integration ./cmd/wa-dd-api/...` (DB must already be up + seeded).
+
+### 3. Frontend typecheck / lint
+
+```sh
+cd apps/web && pnpm install      # first time only
+cd apps/web && pnpm typecheck
+cd apps/web && pnpm lint
+```
+
+### 4. End-to-end (Playwright + axe a11y)
+
+E2E spins up `wa-dd-api` and `next start` against a real Postgres seeded with e2e fixtures, then drives Chromium. **First-time setup is required** or every test will fail with "browser not installed" / "module not found".
+
+```sh
+# One-time setup
+make up                                 # Postgres in Docker
+make migrate-up
+cd apps/web && pnpm install             # installs @playwright/test, @axe-core/playwright, etc.
+make e2e-install                        # downloads Chromium for Playwright
+
+# Before each run
+WADD_E2E_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" \
+  make seed-e2e-fixtures                # idempotent; reseeds deterministic fixtures
+
+# Run
+make e2e                                # builds wa-dd-api + Next.js, then runs full Playwright suite
+
+# Single test (DB already seeded, binary already built)
+cd apps/web && WADD_API_BIN="$(pwd)/../../bin/wa-dd-api" \
+  WADD_E2E_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" \
+  pnpm exec playwright test -g "accessibility landmarks" --reporter=list
+```
+
+E2E tests live in `apps/web/e2e/`. Accessibility checks use `@axe-core/playwright` against WCAG 2.0/2.1 A+AA — a real violation fails the build, so fix the markup/styles rather than suppressing rules.
 
 ## Conventions worth knowing
 
