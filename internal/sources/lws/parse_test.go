@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,6 +128,35 @@ func TestParseSOAPFault(t *testing.T) {
 	}
 	if fault.Code == "" || fault.Message == "" {
 		t.Errorf("fault = %+v", fault)
+	}
+	if got := fault.Error(); got == "" || !strings.Contains(got, "soap fault") {
+		t.Errorf("fault.Error() = %q", got)
+	}
+}
+
+func TestParseAdditionalLegislationResults(t *testing.T) {
+	rolls, err := ParseRollCalls([]byte(lwsEnvelope("GetRollCallsResponse", `<GetRollCallsResult><RollCall><BillId>HB 1234</BillId><Agency>House</Agency><Motion>Final passage</Motion><SequenceNumber>1</SequenceNumber><VoteDate>2026-02-01T00:00:00</VoteDate><YeaVotes>55</YeaVotes><NayVotes>40</NayVotes><AbsentVotes>2</AbsentVotes><ExcusedVotes>1</ExcusedVotes></RollCall></GetRollCallsResult>`)))
+	if err != nil {
+		t.Fatalf("ParseRollCalls: %v", err)
+	}
+	if len(rolls) != 1 || rolls[0].BillID != "HB 1234" || rolls[0].YeaVotes != 55 {
+		t.Fatalf("rolls = %+v", rolls)
+	}
+
+	changes, err := ParseStatusChanges([]byte(lwsEnvelope("GetLegislativeStatusChangesByBillNumberResponse", `<GetLegislativeStatusChangesByBillNumberResult><LegislativeStatus><BillId>HB 1234</BillId><HistoryLine>Passed House</HistoryLine><ActionDate>2026-02-01T00:00:00</ActionDate><Status>Passed</Status></LegislativeStatus></GetLegislativeStatusChangesByBillNumberResult>`)))
+	if err != nil {
+		t.Fatalf("ParseStatusChanges: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Status != "Passed" {
+		t.Fatalf("changes = %+v", changes)
+	}
+
+	items, err := ParseLegislationByYear([]byte(lwsEnvelope("GetLegislationByYearResponse", `<GetLegislationByYearResult><LegislationInfo><Biennium>2025-26</Biennium><BillId>HB 1234</BillId><BillNumber>1234</BillNumber><OriginalAgency>House</OriginalAgency><Active>true</Active><ShortLegislationType><ShortLegislationType>HB</ShortLegislationType><LongLegislationType>House Bill</LongLegislationType></ShortLegislationType></LegislationInfo></GetLegislationByYearResult>`)))
+	if err != nil {
+		t.Fatalf("ParseLegislationByYear: %v", err)
+	}
+	if len(items) != 1 || items[0].BillID != "HB 1234" || items[0].ShortLegislationType.ShortType != "HB" {
+		t.Fatalf("items = %+v", items)
 	}
 }
 

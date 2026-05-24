@@ -12,14 +12,20 @@ import (
 // FindOptions configures a Finder run.
 type FindOptions struct {
 	Issue              string
-	MaxAgendaItems     int           // hard cap across all committees (default 50)
-	MaxMeetingsPerComm int           // recent meetings to inspect per committee (default 8)
-	OnProgress         func(string)  // optional progress callback
+	MaxAgendaItems     int          // hard cap across all committees (default 50)
+	MaxMeetingsPerComm int          // recent meetings to inspect per committee (default 8)
+	OnProgress         func(string) // optional progress callback
+}
+
+type csiReader interface {
+	ListMeetings(ctx context.Context, chamber, committeeID string) ([]csi.Meeting, error)
+	ListAgendaItems(ctx context.Context, chamber, meetingFamilyID string) ([]csi.AgendaItem, error)
+	GetTestifiers(ctx context.Context, agendaItemID, agendaItemDescription string) ([]csi.Testifier, error)
 }
 
 // Finder runs the CSI-driven candidate scan.
 type Finder struct {
-	CSI *csi.Client
+	CSI csiReader
 }
 
 // NewFinder constructs a Finder.
@@ -94,16 +100,16 @@ func (f *Finder) Find(ctx context.Context, opts FindOptions) ([]Candidate, error
 					break
 				}
 				cand := Candidate{
-					Issue:               opts.Issue,
-					Chamber:             t.Chamber,
-					CommitteeID:         t.CommitteeID,
-					CommitteeName:       t.CommitteeName,
-					MeetingFamilyID:     m.MeetingFamilyID,
-					MeetingDateTime:     m.StartDateTime,
-					MeetingLabel:        m.Label,
-					AgendaItemFamilyID:  item.AgendaItemFamilyID,
-					AgendaItemID:        item.AgendaItemID,
-					AgendaItemLabel:     item.Label,
+					Issue:              opts.Issue,
+					Chamber:            t.Chamber,
+					CommitteeID:        t.CommitteeID,
+					CommitteeName:      t.CommitteeName,
+					MeetingFamilyID:    m.MeetingFamilyID,
+					MeetingDateTime:    m.StartDateTime,
+					MeetingLabel:       m.Label,
+					AgendaItemFamilyID: item.AgendaItemFamilyID,
+					AgendaItemID:       item.AgendaItemID,
+					AgendaItemLabel:    item.Label,
 				}
 				prefix, num, title := ParseBillFromLabel(item.Label)
 				if prefix != "" {
