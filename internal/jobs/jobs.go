@@ -16,7 +16,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/config"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
@@ -31,7 +31,7 @@ type Pipeline struct {
 	CSI   *csi.Client
 	TVW   *tvw.Client
 	PDC   *pdc.Client
-	Demo  *config.SelectedDemo
+	Demo  *domain.BillAgendaTarget
 
 	// SourceRecordIDFor returns the source_record id for the connector's
 	// most recent fetch of a given URL. Populated during a run by reading
@@ -78,8 +78,8 @@ func (p *Pipeline) Run(ctx context.Context, log func(string), ids *IDs) error {
 	for _, s := range steps {
 		log(fmt.Sprintf("==> %s", s.name))
 		runID, err := p.Store.StartIngestionRun(ctx, s.name, map[string]any{
-			"biennium": p.Demo.Biennium, "bill": p.Demo.BillID(),
-			"agenda_item_id": p.Demo.Agenda.CSIAgendaItemID,
+			"biennium": p.Demo.Bill.Biennium, "bill": p.Demo.Bill.ID(),
+			"agenda_item_id": p.Demo.AgendaItem.CSIAgendaItemID,
 		})
 		if err != nil {
 			return fmt.Errorf("start run %s: %w", s.name, err)
@@ -109,7 +109,7 @@ func (p *Pipeline) RunMetadataOnly(ctx context.Context, log func(string), ids *I
 	const step = "ingest-bill"
 	log(fmt.Sprintf("==> %s", step))
 	runID, err := p.Store.StartIngestionRun(ctx, step, map[string]any{
-		"biennium": p.Demo.Biennium, "bill": p.Demo.BillID(),
+		"biennium": p.Demo.Bill.Biennium, "bill": p.Demo.Bill.ID(),
 		"mode": "metadata-only",
 	})
 	if err != nil {

@@ -16,9 +16,9 @@ import (
 // bill_status_change. Legislator rows are owned by ingest-legislators;
 // sponsor joins resolve against that roster and skip missing members.
 func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
-	biennium := p.Demo.Biennium
-	billNumber := strconv.Itoa(p.Demo.BillNumber)
-	billID := p.Demo.BillID()
+	biennium := p.Demo.Bill.Biennium
+	billNumber := strconv.Itoa(p.Demo.Bill.Number)
+	billID := p.Demo.Bill.ID()
 
 	// We bypass the lws.Client wrappers and hit Do() directly so we can
 	// capture the source_record_id from the RawFetch each call returns.
@@ -142,7 +142,7 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	// metadata-only path (no chamber, no committee — ingest-session
 	// driver), upsert every hearing LWS reports so the auto-discovery
 	// pass downstream has rows to enrich.
-	if p.Demo.Chamber != "" {
+	if p.Demo.Committee.Chamber != "" {
 		matched := pickHearingForDemo(hearings, p.Demo)
 		if matched != nil {
 			nh := lws.NormalizeHearings([]lws.Hearing{*matched})[0]

@@ -19,13 +19,13 @@ import (
 func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 	httpClient := p.CSI.HTTP
 	base := p.CSI.BaseURL
-	chamber := p.Demo.Chamber
+	chamber := p.Demo.Committee.Chamber
 	demo := p.Demo
 
 	// 1. Fetch the testifier list (and capture the source_record id).
 	q := url.Values{}
-	q.Set("agendaItemId", demo.Agenda.CSIAgendaItemID)
-	q.Set("agendaItemDescription", demo.Agenda.Label)
+	q.Set("agendaItemId", demo.AgendaItem.CSIAgendaItemID)
+	q.Set("agendaItemDescription", demo.AgendaItem.Label)
 	tFetch, err := httpClient.Do(ctx, httpx.Request{
 		System:   csi.SystemName,
 		Endpoint: "csi.GetOtherTestifiers",
@@ -58,7 +58,7 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 		if err != nil {
 			return err
 		}
-		startTime := pickMeetingTime(meetings, demo.Agenda.CSIMeetingFamilyID)
+		startTime := pickMeetingTime(meetings, demo.AgendaItem.CSIMeetingFamilyID)
 		hid, err := p.Store.UpsertHearing(ctx, db.UpsertHearingParams{
 			BillID:           pInt64(ids.BillID),
 			CommitteeName:    chamberCommitteeName(chamber, demo.Committee.Acronym),
@@ -77,10 +77,10 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 	aiID, err := p.Store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
 		HearingID:             ids.HearingID,
 		BillID:                pInt64(ids.BillID),
-		Label:                 demo.Agenda.Label,
-		CSIMeetingFamilyID:    demo.Agenda.CSIMeetingFamilyID,
-		CSIAgendaItemFamilyID: demo.Agenda.CSIAgendaItemFamilyID,
-		CSIAgendaItemID:       demo.Agenda.CSIAgendaItemID,
+		Label:                 demo.AgendaItem.Label,
+		CSIMeetingFamilyID:    demo.AgendaItem.CSIMeetingFamilyID,
+		CSIAgendaItemFamilyID: demo.AgendaItem.CSIAgendaItemFamilyID,
+		CSIAgendaItemID:       demo.AgendaItem.CSIAgendaItemID,
 		SourceRecordID:        tFetch.SourceRecordID,
 	})
 	if err != nil {

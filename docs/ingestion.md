@@ -195,8 +195,8 @@ fetch the actual testimony, video captions, and downstream derivatives.
 
 - Reads `(csi_agenda_item_id, biennium, bill_prefix, bill_number)` rows
   via `Store.ListDiscoveredAgendaItems`.
-- For each row, calls `firstpage.LookupSelectedDemoByAgendaItem` to
-  rebuild a `*config.SelectedDemo` from the DB (no YAML parsing).
+- For each row, calls `firstpage.LookupBillAgendaTargetByAgendaItem` to
+  rebuild a `*domain.BillAgendaTarget` from the DB (no YAML parsing).
 - Calls `ingestOne`, which runs `Pipeline.Run`'s 6 ingestion steps.
   Page JSON is assembled later on demand by `wa-dd-api`; this pass no
   longer writes generated page snapshots.

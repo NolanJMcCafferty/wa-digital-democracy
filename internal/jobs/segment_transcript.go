@@ -45,10 +45,10 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	for _, c := range cues {
 		jobCues = append(jobCues, segmentCue{StartMS: c.StartMS, EndMS: c.EndMS, Text: c.Text})
 	}
-	windows := DetectBillDiscussionWindows(jobCues, p.Demo.BillPrefix, p.Demo.BillNumber)
+	windows := DetectBillDiscussionWindows(jobCues, p.Demo.Bill.Prefix, p.Demo.Bill.Number)
 	if len(windows) == 0 {
 		fmt.Fprintf(stderrSink, "  no transcript mentions of %s %d; bill segment unset (set TranscriptOverride on the selected demo to override)\n",
-			p.Demo.BillPrefix, p.Demo.BillNumber)
+			p.Demo.Bill.Prefix, p.Demo.Bill.Number)
 		// Empty input still clears any stale assignments + windows
 		// from a prior run that found mentions and now doesn't.
 		_, err := p.Store.AssignSegmentsToAgendaItemWindows(ctx, ids.TVWEventID, ids.AgendaItemID, nil)

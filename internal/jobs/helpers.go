@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/config"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 )
 
@@ -53,26 +53,26 @@ func parseLWSDate(s string) (time.Time, error) {
 // pickHearingForDemo picks the LWS hearing that most likely corresponds to
 // the demo's committee. Match priority:
 //
-//   1. Exact LWS AgendaId match against demo's CSI meeting family ID.
-//      (LWS AgendaId and CSI meetingFamilyId are different namespaces, so
-//       this rarely fires — but cheap to check.)
-//   2. Same chamber AND committee acronym matches (case-insensitive).
-//   3. Same chamber AND committee LongName contains "housing".
-//   4. First hearing whose chamber matches the demo.
+//  1. Exact LWS AgendaId match against demo's CSI meeting family ID.
+//     (LWS AgendaId and CSI meetingFamilyId are different namespaces, so
+//     this rarely fires — but cheap to check.)
+//  2. Same chamber AND committee acronym matches (case-insensitive).
+//  3. Same chamber AND committee LongName contains "housing".
+//  4. First hearing whose chamber matches the demo.
 //
 // We deliberately do NOT fall back to the first arbitrary hearing — that
 // led to a real bug where a House-origin bill's first hearing in the
 // House Housing committee shadowed the demo's Senate Housing hearing.
-func pickHearingForDemo(in []lws.Hearing, demo *config.SelectedDemo) *lws.Hearing {
+func pickHearingForDemo(in []lws.Hearing, demo *domain.BillAgendaTarget) *lws.Hearing {
 	if len(in) == 0 {
 		return nil
 	}
-	chamber := strings.ToLower(strings.TrimSpace(demo.Chamber))
+	chamber := strings.ToLower(strings.TrimSpace(demo.Committee.Chamber))
 	wantAcronym := strings.ToLower(strings.TrimSpace(demo.Committee.Acronym))
 
 	// Priority 1: AgendaId match.
 	for i, h := range in {
-		if h.CommitteeMeeting.AgendaID != "" && h.CommitteeMeeting.AgendaID == demo.Agenda.CSIMeetingFamilyID {
+		if h.CommitteeMeeting.AgendaID != "" && h.CommitteeMeeting.AgendaID == demo.AgendaItem.CSIMeetingFamilyID {
 			return &in[i]
 		}
 	}

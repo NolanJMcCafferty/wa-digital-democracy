@@ -11,7 +11,7 @@ GOOSE ?= $(GO) run -modfile=tools/goose/go.mod github.com/pressly/goose/v3/cmd/g
 SCHEMASPY_IMAGE ?= schemaspy/schemaspy:latest
 SCHEMASPY_OUT ?= docs/db/schemaspy
 COVERAGE_THRESHOLD ?= 50.0
-COVERAGE_PKGS ?= ./internal/sources/... ./internal/candidate ./internal/config
+COVERAGE_PKGS ?= ./internal/sources/... ./internal/candidate ./internal/domain
 
 ifneq (,$(wildcard $(ENV_FILE)))
 include $(ENV_FILE)
