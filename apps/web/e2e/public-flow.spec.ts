@@ -21,7 +21,8 @@ test("hearing search opens fixture hearing detail", async ({ page }) => {
 
   const fixtureHearing = page.getByRole("link", { name: /House Committee on Housing/i }).first();
   await expect(fixtureHearing).toBeVisible();
-  await expect(page.getByText("HB 9001")).toBeVisible();
+  const hearingRow = page.getByRole("row", { name: /House Committee on Housing.*HB 9001/i });
+  await expect(hearingRow).toBeVisible();
   await fixtureHearing.click();
 
   await expect(page).toHaveURL(/\/hearings\/\d+$/);
@@ -36,7 +37,7 @@ test("organization search opens fixture organization detail", async ({ page }) =
 
   const fixtureOrg = page.getByRole("link", { name: "Fixture Housing Coalition" }).first();
   await expect(fixtureOrg).toBeVisible();
-  await expect(page.getByText("aka FHC")).toBeVisible();
+  await expect(page.getByText(/aka .*FHC/i)).toBeVisible();
   await fixtureOrg.click();
 
   await expect(page).toHaveURL(/\/organizations\/fixture-housing-coalition$/);
@@ -58,9 +59,9 @@ test("housing issue page aggregates fixture bill, hearing, and organization", as
 
 test("home page legislator mosaic opens fixture legislator detail", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "WA Digital Democracy" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "WA Digital Democracy" })).toBeVisible();
 
-  const legislator = page.getByRole("link", { name: /Fixture Sponsor/i }).first();
+  const legislator = page.getByRole("link", { name: "Fixture Sponsor", exact: true });
   await expect(legislator).toBeVisible();
   await legislator.click();
 
@@ -80,7 +81,7 @@ test("home page address lookup matches fixture legislator", async ({ page }) => 
 
   await expect(page.getByText("Legislative District 99")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Matched: 600 4th Ave, Seattle, WA 98104")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Fixture Sponsor/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Fixture Sponsor State Representative/i })).toBeVisible();
 });
 
 test("invalid bill slug renders through the frontend without leaking backend auth", async ({ page }) => {
