@@ -33,7 +33,7 @@ jobs:
           cache: true
 
       - name: Apply migrations and deterministic fixtures
-        run: make integration-db seed-test-fixtures
+        run: make migrate-up seed-test-fixtures
 
       - name: Run backend unit and integration tests
         run: WADD_TEST_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" go test -tags=integration ./...
