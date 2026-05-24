@@ -35,6 +35,7 @@ export default defineConfig({
       timeout: 30_000,
       env: {
         WADD_INTERNAL_API_TOKEN: INTERNAL_TOKEN,
+        WADD_E2E_ADDRESS_LOOKUP: "1",
       },
     },
     {

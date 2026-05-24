@@ -933,6 +933,9 @@ type districtLookupResult struct {
 }
 
 func lookupLegislativeDistrict(ctx context.Context, address, magicKey string) (districtLookupResult, error) {
+	if result, ok := e2eDistrictLookup(address); ok {
+		return result, nil
+	}
 	point, err := geocodeAddress(ctx, address, magicKey)
 	if err != nil {
 		return districtLookupResult{}, err
@@ -948,6 +951,19 @@ type geocodedPoint struct {
 	lon            float64
 	lat            float64
 	matchedAddress string
+}
+
+func e2eDistrictLookup(address string) (districtLookupResult, bool) {
+	if os.Getenv("WADD_E2E_ADDRESS_LOOKUP") != "1" {
+		return districtLookupResult{}, false
+	}
+	if !strings.Contains(strings.ToLower(address), "600 4th ave") {
+		return districtLookupResult{}, false
+	}
+	return districtLookupResult{
+		District:       "99",
+		MatchedAddress: "600 4th Ave, Seattle, WA 98104",
+	}, true
 }
 
 type addressSuggestion struct {
