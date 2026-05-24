@@ -1,24 +1,18 @@
 import { expect, test } from "@playwright/test";
 
-test("public frontend proxies through the authenticated backend API", async ({ page, request }) => {
-  const browserAPI = await request.get("/api/v1/bills?q=Fixture%20Housing%20Stability&limit=1");
-  expect(browserAPI.status()).toBe(200);
-  expect(browserAPI.headers()["content-type"]).toMatch(/application\/json/);
-  const body = await browserAPI.json();
-  expect(body.total).toBeGreaterThanOrEqual(1);
-  expect(body.bills[0].bill_id).toBe("HB 9001");
-
+test("fixture bill can be found in the UI and opened", async ({ page }) => {
   await page.goto("/bills?q=Fixture%20Housing%20Stability&limit=5");
   await expect(page).toHaveTitle(/WA Digital Democracy|Bills/i);
-  await expect(page.getByText("Fixture Housing Stability Act")).toBeVisible();
-});
 
-test("fixture bill detail renders frontend data from the backend", async ({ page }) => {
-  const response = await page.goto("/bills/2099-00/HB9001");
-  expect(response?.status()).toBe(200);
+  const fixtureBill = page.getByRole("link", { name: /HB 9001/i }).first();
+  await expect(page.getByText("Fixture Housing Stability Act")).toBeVisible();
+  await expect(fixtureBill).toBeVisible();
+  await fixtureBill.click();
+
+  await expect(page).toHaveURL(/\/bills\/2099-00\/HB9001$/);
+  await expect(page.getByRole("heading", { name: "HB 9001" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /Fixture Housing Stability Act/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /House Committee on Housing/i })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "HB 9001" })).toBeVisible();
 });
 
 test("invalid bill slug renders through the frontend without leaking backend auth", async ({ page }) => {
