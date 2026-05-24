@@ -1,9 +1,9 @@
 import {
-  loadBillPage,
+  loadBillDetail,
   searchBills,
   searchHearings,
   slugify,
-  type BillPage,
+  type BillDetailResponse,
   type OrganizationListEntry,
 } from "@/lib/api";
 import type { Position } from "@/lib/pageTypes";
@@ -50,10 +50,10 @@ export async function IssuePage({
   const billPages = (
     await Promise.all(
       coverageBillResult.bills.map((b) =>
-        loadBillPage(b.biennium, b.billPrefix, b.billNumber),
+        loadBillDetail(b.biennium, b.billPrefix, b.billNumber),
       ),
     )
-  ).filter((b): b is BillPage => Boolean(b));
+  ).filter((b): b is BillDetailResponse => Boolean(b));
 
   const hearingResult = await searchHearings(
     hearingFiltersToSearch(hearingFilters, config.keywords),
@@ -126,7 +126,7 @@ export async function IssuePage({
   );
 }
 
-function issueOrganizations(billPages: BillPage[]): OrganizationListEntry[] {
+function issueOrganizations(billPages: BillDetailResponse[]): OrganizationListEntry[] {
   const orgs = new Map<string, OrganizationListEntry>();
   for (const b of billPages) {
     for (const section of b.hearings ?? []) {

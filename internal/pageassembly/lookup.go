@@ -1,4 +1,4 @@
-package firstpage
+package pageassembly
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // ErrBillNotFound signals the API layer that no ingested bill+hearing was
 // found for the requested (biennium, prefix, number). The handler maps
 // this to HTTP 404; everything else propagates as 500.
-var ErrBillNotFound = errors.New("firstpage: bill not ingested")
+var ErrBillNotFound = errors.New("pageassembly: bill not ingested")
 
 // LookupBillAgendaTarget reconstructs a BillAgendaTarget for a bill by joining
 // against the agenda_item + hearing tables the ingestion pipeline populated.
@@ -53,7 +53,7 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 		return nil, fmt.Errorf("%w: %s %d in %s", ErrBillNotFound, prefix, number, biennium)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup demo: %w", err)
+		return nil, fmt.Errorf("lookup bill agenda target: %w", err)
 	}
 
 	demo := &domain.BillAgendaTarget{
@@ -92,7 +92,7 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
  ORDER BY h.meeting_datetime DESC;`
 	rows, err := store.Pool.Query(ctx, q, biennium, prefix, number)
 	if err != nil {
-		return nil, fmt.Errorf("lookup all demos: %w", err)
+		return nil, fmt.Errorf("lookup bill agenda targets: %w", err)
 	}
 	defer rows.Close()
 	var out []*domain.BillAgendaTarget
@@ -105,7 +105,7 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 			&csiAgendaItemID, &csiMeetingFamilyID, &csiAgendaItemFamilyID,
 			&label, &tvwEventID, &committeeAcronym, &chamber,
 		); err != nil {
-			return nil, fmt.Errorf("scan demo: %w", err)
+			return nil, fmt.Errorf("scan bill agenda target: %w", err)
 		}
 		demo := &domain.BillAgendaTarget{
 			Bill:      domain.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
@@ -160,7 +160,7 @@ SELECT b.biennium, b.prefix, b.number,
 		return nil, fmt.Errorf("%w: agenda_item %s", ErrBillNotFound, csiAgendaItemID)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup demo by agenda item: %w", err)
+		return nil, fmt.Errorf("lookup bill agenda target by agenda item: %w", err)
 	}
 
 	demo := &domain.BillAgendaTarget{

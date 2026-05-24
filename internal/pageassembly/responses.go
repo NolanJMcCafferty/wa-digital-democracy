@@ -1,5 +1,5 @@
-// Package firstpage assembles source-linked page payloads from Postgres state.
-package firstpage
+// Package pageassembly assembles source-linked API response payloads from Postgres state.
+package pageassembly
 
 import (
 	"context"
@@ -16,28 +16,28 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// HearingSection groups everything tied to a single agenda_item: the
+// AgendaItemSection groups everything tied to a single agenda_item: the
 // hearing metadata plus the testifiers, transcript, and organizations
 // scoped to it. The bill-detail page uses one of these per hearing on
 // the bill.
-type HearingSection struct {
-	Hearing       Hearing        `json:"hearing"`
-	Testifiers    []Testifier    `json:"testifiers"`
-	Transcript    *Transcript    `json:"transcript,omitempty"`
-	Organizations []Organization `json:"organizations"`
+type AgendaItemSection struct {
+	Hearing       HearingSummary        `json:"hearing"`
+	Testifiers    []TestifierSummary    `json:"testifiers"`
+	Transcript    *TranscriptSection    `json:"transcript,omitempty"`
+	Organizations []OrganizationSummary `json:"organizations"`
 }
 
-type Bill struct {
-	Biennium      string    `json:"biennium"`
-	BillID        string    `json:"bill_id"` // "HB 1234"
-	Title         string    `json:"title,omitempty"`
-	Description   string    `json:"description,omitempty"`
-	ChamberOrigin string    `json:"chamber_origin,omitempty"`
-	OfficialURL   string    `json:"official_url,omitempty"`
-	Sponsors      []Sponsor `json:"sponsors,omitempty"`
+type BillSummary struct {
+	Biennium      string        `json:"biennium"`
+	BillID        string        `json:"bill_id"` // "HB 1234"
+	Title         string        `json:"title,omitempty"`
+	Description   string        `json:"description,omitempty"`
+	ChamberOrigin string        `json:"chamber_origin,omitempty"`
+	OfficialURL   string        `json:"official_url,omitempty"`
+	Sponsors      []BillSponsor `json:"sponsors,omitempty"`
 }
 
-type Sponsor struct {
+type BillSponsor struct {
 	Name         string `json:"name"`
 	Chamber      string `json:"chamber,omitempty"`
 	SponsorType  string `json:"sponsor_type,omitempty"`
@@ -45,18 +45,18 @@ type Sponsor struct {
 	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 }
 
-type Status struct {
-	Current    string        `json:"current,omitempty"`
-	StatusDate *time.Time    `json:"status_date,omitempty"`
-	Timeline   []StatusEntry `json:"timeline,omitempty"`
+type BillStatus struct {
+	Current    string            `json:"current,omitempty"`
+	StatusDate *time.Time        `json:"status_date,omitempty"`
+	Timeline   []BillStatusEvent `json:"timeline,omitempty"`
 }
 
-type StatusEntry struct {
+type BillStatusEvent struct {
 	ActionDate  time.Time `json:"action_date"`
 	HistoryLine string    `json:"history_line"`
 }
 
-type Hearing struct {
+type HearingSummary struct {
 	HearingID         int64     `json:"hearing_id,omitempty"`
 	CommitteeName     string    `json:"committee_name"`
 	CommitteeAcronym  string    `json:"committee_acronym,omitempty"`
@@ -70,7 +70,7 @@ type Hearing struct {
 	CSIAgendaItemID   string    `json:"csi_agenda_item_id,omitempty"`
 }
 
-type Testifier struct {
+type TestifierSummary struct {
 	RawName         string     `json:"raw_name"`
 	RawOrganization string     `json:"raw_organization,omitempty"`
 	Position        string     `json:"position"`
@@ -79,7 +79,7 @@ type Testifier struct {
 	OrganizationID  *int64     `json:"organization_id,omitempty"`
 }
 
-type Transcript struct {
+type TranscriptSection struct {
 	CaptionURL       string              `json:"caption_url,omitempty"`
 	BillSegmentStart int                 `json:"bill_segment_start_ms,omitempty"`
 	BillSegmentEnd   int                 `json:"bill_segment_end_ms,omitempty"`
@@ -100,7 +100,7 @@ type TranscriptSegment struct {
 	SpeakerConfidence string `json:"speaker_confidence"`
 }
 
-type Organization struct {
+type OrganizationSummary struct {
 	CanonicalName     string   `json:"canonical_name"`
 	Aliases           []string `json:"aliases,omitempty"`
 	MatchConfidence   string   `json:"match_confidence"`
@@ -110,33 +110,33 @@ type Organization struct {
 	ContextSummary    []string `json:"context_summary,omitempty"`
 }
 
-type Source struct {
+type SourceRecordSummary struct {
 	System    string    `json:"system"`
 	Endpoint  string    `json:"endpoint"`
 	URL       string    `json:"url"`
 	FetchedAt time.Time `json:"fetched_at"`
 }
 
-// BillPage is the page-level response shape for the bill detail route.
-// It has bill-level fields plus explicit per-hearing sections.
-type BillPage struct {
-	GeneratedAt      time.Time        `json:"generated_at"`
-	Bill             Bill             `json:"bill"`
-	Status           Status           `json:"status"`
-	Hearings         []HearingSection `json:"hearings"`
-	Sources          []Source         `json:"sources"`
-	KnownLimitations []string         `json:"known_limitations,omitempty"`
+// BillDetailResponse is the API response shape for the bill detail route.
+// It has bill-level fields plus explicit per-hearing agenda-item sections.
+type BillDetailResponse struct {
+	GeneratedAt      time.Time             `json:"generated_at"`
+	Bill             BillSummary           `json:"bill"`
+	Status           BillStatus            `json:"status"`
+	Hearings         []AgendaItemSection   `json:"hearings"`
+	Sources          []SourceRecordSummary `json:"sources"`
+	KnownLimitations []string              `json:"known_limitations,omitempty"`
 }
 
-// BuildBillPage assembles the page-level bill detail response for any bill row
+// BuildBillDetailResponse assembles the bill detail response for any bill row
 // in Postgres. Metadata-only bills return snapshot/status/sources with an empty
-// hearings array; enriched bills return one HearingSection per agenda item.
-func BuildBillPage(
+// hearings array; enriched bills return one AgendaItemSection per agenda item.
+func BuildBillDetailResponse(
 	ctx context.Context,
 	store *db.Store,
 	biennium, prefix string,
 	number int,
-) (*BillPage, error) {
+) (*BillDetailResponse, error) {
 	demo := &domain.BillAgendaTarget{
 		Bill: domain.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
 	}
@@ -152,9 +152,9 @@ func BuildBillPage(
 	if err != nil {
 		return nil, fmt.Errorf("hearing lookup: %w", err)
 	}
-	hearings := make([]HearingSection, 0, len(demos))
+	hearings := make([]AgendaItemSection, 0, len(demos))
 	for _, demo := range demos {
-		section, err := BuildHearingSection(ctx, store, demo)
+		section, err := BuildAgendaItemSection(ctx, store, demo)
 		if err != nil {
 			return nil, err
 		}
@@ -165,7 +165,7 @@ func BuildBillPage(
 	if err != nil {
 		return nil, fmt.Errorf("sources: %w", err)
 	}
-	page := &BillPage{
+	page := &BillDetailResponse{
 		GeneratedAt: time.Now().UTC(),
 		Bill:        bill,
 		Status:      status,
@@ -176,10 +176,10 @@ func BuildBillPage(
 	return page, nil
 }
 
-// BuildHearingSection returns the page section tied to one agenda_item. The
+// BuildAgendaItemSection returns the page section tied to one agenda_item. The
 // hearing-detail handler reuses this for each agenda item rendered under a
 // committee hearing.
-func BuildHearingSection(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (*HearingSection, error) {
+func BuildAgendaItemSection(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (*AgendaItemSection, error) {
 	hearing, err := loadHearingAndAgenda(ctx, store, demo)
 	if err != nil {
 		return nil, fmt.Errorf("hearing: %w", err)
@@ -196,7 +196,7 @@ func BuildHearingSection(ctx context.Context, store *db.Store, demo *domain.Bill
 	if err != nil {
 		return nil, fmt.Errorf("organizations: %w", err)
 	}
-	return &HearingSection{
+	return &AgendaItemSection{
 		Hearing:       hearing,
 		Testifiers:    testifiers,
 		Transcript:    transcript,
@@ -204,7 +204,7 @@ func BuildHearingSection(ctx context.Context, store *db.Store, demo *domain.Bill
 	}, nil
 }
 
-func loadBill(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (Bill, Status, error) {
+func loadBill(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (BillSummary, BillStatus, error) {
 	const q = `
 SELECT id, biennium, bill_number, title, description, chamber_origin,
        current_status, status_date, official_url
@@ -224,12 +224,12 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		&currentStatus, &statusDate, &officialURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Bill{}, Status{}, fmt.Errorf("%w: %s in %s", ErrBillNotFound, demo.Bill.ID(), demo.Bill.Biennium)
+		return BillSummary{}, BillStatus{}, fmt.Errorf("%w: %s in %s", ErrBillNotFound, demo.Bill.ID(), demo.Bill.Biennium)
 	}
 	if err != nil {
-		return Bill{}, Status{}, err
+		return BillSummary{}, BillStatus{}, err
 	}
-	bill := Bill{
+	bill := BillSummary{
 		Biennium:      biennium,
 		BillID:        billNumber,
 		Title:         deref(title),
@@ -237,7 +237,7 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		ChamberOrigin: deref(chamberOrigin),
 		OfficialURL:   deref(officialURL),
 	}
-	status := Status{
+	status := BillStatus{
 		Current:    deref(currentStatus),
 		StatusDate: statusDate,
 	}
@@ -251,22 +251,22 @@ SELECT l.name, l.chamber, bs.sponsor_type, COALESCE(l.lws_sponsor_id, '')
  ORDER BY CASE bs.sponsor_type WHEN 'Primary' THEN 0 ELSE 1 END, l.name;`
 	rows, err := store.Pool.Query(ctx, sponsorQ, billRowID)
 	if err != nil {
-		return Bill{}, Status{}, err
+		return BillSummary{}, BillStatus{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var s Sponsor
+		var s BillSponsor
 		var ch *string
 		var lwsSponsorID string
 		if err := rows.Scan(&s.Name, &ch, &s.SponsorType, &lwsSponsorID); err != nil {
-			return Bill{}, Status{}, err
+			return BillSummary{}, BillStatus{}, err
 		}
 		s.Chamber = deref(ch)
 		s.PhotoURL, s.ThumbnailURL = legislatorPhotoURLs(lwsSponsorID)
 		bill.Sponsors = append(bill.Sponsors, s)
 	}
 	if err := rows.Err(); err != nil {
-		return Bill{}, Status{}, err
+		return BillSummary{}, BillStatus{}, err
 	}
 
 	// Status timeline.
@@ -275,20 +275,20 @@ SELECT action_date, history_line FROM bill_status_change
  WHERE bill_id = $1 ORDER BY action_date ASC, id ASC;`
 	rows2, err := store.Pool.Query(ctx, tlQ, billRowID)
 	if err != nil {
-		return Bill{}, Status{}, err
+		return BillSummary{}, BillStatus{}, err
 	}
 	defer rows2.Close()
 	for rows2.Next() {
-		var e StatusEntry
+		var e BillStatusEvent
 		if err := rows2.Scan(&e.ActionDate, &e.HistoryLine); err != nil {
-			return Bill{}, Status{}, err
+			return BillSummary{}, BillStatus{}, err
 		}
 		status.Timeline = append(status.Timeline, e)
 	}
 	return bill, status, rows2.Err()
 }
 
-func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (Hearing, error) {
+func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (HearingSummary, error) {
 	const q = `
 SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
        h.location, h.official_agenda_url, h.tvw_url, h.tvw_event_id,
@@ -311,12 +311,12 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 		&label, &csiAID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Hearing{}, fmt.Errorf("no agenda_item row for csi_agenda_item_id=%s", demo.AgendaItem.CSIAgendaItemID)
+		return HearingSummary{}, fmt.Errorf("no agenda_item row for csi_agenda_item_id=%s", demo.AgendaItem.CSIAgendaItemID)
 	}
 	if err != nil {
-		return Hearing{}, err
+		return HearingSummary{}, err
 	}
-	return Hearing{
+	return HearingSummary{
 		HearingID:         hearingID,
 		CommitteeName:     commName,
 		CommitteeAcronym:  deref(commAcronym),
@@ -331,7 +331,7 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 	}, nil
 }
 
-func loadTestifiers(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) ([]Testifier, error) {
+func loadTestifiers(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) ([]TestifierSummary, error) {
 	const q = `
 SELECT t.raw_name, t.raw_organization, t.position, t.testified,
        t.time_signed_in, t.normalized_org_id
@@ -347,10 +347,10 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Testifier{}
+	out := []TestifierSummary{}
 	for rows.Next() {
 		var (
-			t        Testifier
+			t        TestifierSummary
 			rawOrg   *string
 			signedAt *time.Time
 			orgID    *int64
@@ -366,7 +366,7 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 	return out, rows.Err()
 }
 
-func loadTranscript(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (*Transcript, error) {
+func loadTranscript(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (*TranscriptSection, error) {
 	// Caption URL + agenda-bound segment range.
 	const headQ = `
 SELECT te.caption_url,
@@ -390,7 +390,7 @@ SELECT te.caption_url,
 	if err != nil {
 		return nil, err
 	}
-	tr := &Transcript{CaptionURL: deref(captionURL)}
+	tr := &TranscriptSection{CaptionURL: deref(captionURL)}
 	if startMS != nil {
 		tr.BillSegmentStart = *startMS
 	}
@@ -447,7 +447,7 @@ SELECT ts.start_ms, ts.end_ms, ts.text, ts.speaker_label, ts.speaker_confidence:
 	return tr, rows.Err()
 }
 
-func loadOrganizations(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) ([]Organization, error) {
+func loadOrganizations(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) ([]OrganizationSummary, error) {
 	const q = `
 SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_notes,
        MIN(t.position::text) AS pos,
@@ -462,10 +462,10 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Organization{}
+	out := []OrganizationSummary{}
 	for rows.Next() {
 		var (
-			o     Organization
+			o     OrganizationSummary
 			id    int64
 			notes *string
 			pos   *string
@@ -517,7 +517,7 @@ func summarizeOrganizationContexts(contexts []db.OrganizationPublicContext) []st
 	return out
 }
 
-func loadSourcesForSections(ctx context.Context, store *db.Store, sections []HearingSection) ([]Source, error) {
+func loadSourcesForSections(ctx context.Context, store *db.Store, sections []AgendaItemSection) ([]SourceRecordSummary, error) {
 	csiIDs := make([]string, 0, len(sections))
 	for _, section := range sections {
 		if section.Hearing.CSIAgendaItemID != "" {
@@ -533,9 +533,9 @@ func loadSourcesForSections(ctx context.Context, store *db.Store, sections []Hea
 //
 // Per the wiki: "every public fact needs provenance" — the source panel
 // is part of the product, not engineering metadata.
-func loadSourcesForAgendaItems(ctx context.Context, store *db.Store, csiIDs []string) ([]Source, error) {
+func loadSourcesForAgendaItems(ctx context.Context, store *db.Store, csiIDs []string) ([]SourceRecordSummary, error) {
 	if len(csiIDs) == 0 {
-		return []Source{}, nil
+		return []SourceRecordSummary{}, nil
 	}
 	const q = `
 SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_at
@@ -555,9 +555,9 @@ SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Source{}
+	out := []SourceRecordSummary{}
 	for rows.Next() {
-		var s Source
+		var s SourceRecordSummary
 		if err := rows.Scan(&s.System, &s.Endpoint, &s.URL, &s.FetchedAt); err != nil {
 			return nil, err
 		}
@@ -566,7 +566,7 @@ SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_
 	return out, rows.Err()
 }
 
-func computeBillPageLimitations(page *BillPage) []string {
+func computeBillPageLimitations(page *BillDetailResponse) []string {
 	var out []string
 	if len(page.Bill.Sponsors) == 0 {
 		out = append(out, "Sponsors not yet ingested.")

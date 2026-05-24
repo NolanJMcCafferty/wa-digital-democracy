@@ -1,24 +1,24 @@
-// Shared page/domain types returned by the Go API. Keep these in sync with
-// the page-level response structs in cmd/wa-dd-api and internal/render/firstpage.
+// Shared API response/domain types returned by the Go API. Keep these in sync
+// with cmd/wa-dd-api and internal/pageassembly response structs.
 
-export type HearingSection = {
-  hearing: Hearing;
-  testifiers: Testifier[];
-  transcript?: Transcript;
-  organizations: Organization[];
+export type AgendaItemSection = {
+  hearing: HearingSummary;
+  testifiers: TestifierSummary[];
+  transcript?: TranscriptSection;
+  organizations: OrganizationSummary[];
 };
 
-export type Bill = {
+export type BillSummary = {
   biennium: string;
   bill_id: string;
   title?: string;
   description?: string;
   chamber_origin?: string;
   official_url?: string;
-  sponsors?: Sponsor[];
+  sponsors?: BillSponsor[];
 };
 
-export type Sponsor = {
+export type BillSponsor = {
   name: string;
   chamber?: string;
   sponsor_type?: string;
@@ -26,18 +26,18 @@ export type Sponsor = {
   thumbnail_url?: string;
 };
 
-export type Status = {
+export type BillStatus = {
   current?: string;
   status_date?: string | null;
-  timeline?: StatusEntry[];
+  timeline?: BillStatusEvent[];
 };
 
-export type StatusEntry = {
+export type BillStatusEvent = {
   action_date: string;
   history_line: string;
 };
 
-export type Hearing = {
+export type HearingSummary = {
   hearing_id?: number;
   committee_name: string;
   committee_acronym?: string;
@@ -53,7 +53,7 @@ export type Hearing = {
 
 export type Position = "Pro" | "Con" | "Other" | "Unknown";
 
-export type Testifier = {
+export type TestifierSummary = {
   raw_name: string;
   raw_organization?: string;
   position: Position;
@@ -69,7 +69,7 @@ export type SpeakerConfidence =
   | "unknown_speaker"
   | "ai_inferred_pending_review";
 
-export type Transcript = {
+export type TranscriptSection = {
   caption_url?: string;
   bill_segment_start_ms?: number;
   bill_segment_end_ms?: number;
@@ -90,7 +90,7 @@ export type TranscriptSegment = {
   speaker_confidence: SpeakerConfidence;
 };
 
-export type Organization = {
+export type OrganizationSummary = {
   canonical_name: string;
   aliases?: string[];
   match_confidence: "confirmed" | "probable" | "possible" | "unmatched";
@@ -100,7 +100,7 @@ export type Organization = {
   context_summary?: string[];
 };
 
-export type Source = {
+export type SourceRecordSummary = {
   system: string;
   endpoint: string;
   url: string;

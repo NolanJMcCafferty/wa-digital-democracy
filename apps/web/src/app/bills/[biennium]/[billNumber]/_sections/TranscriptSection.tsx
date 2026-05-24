@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { Transcript } from "@/lib/pageTypes";
+import type { TranscriptSection as TranscriptSectionData } from "@/lib/pageTypes";
 import { confidenceLabel, formatMS, tvwDeepLink } from "@/lib/format";
 
 export function TranscriptSection({
   transcript,
   tvwEventId,
 }: {
-  transcript: Transcript;
+  transcript: TranscriptSectionData;
   tvwEventId: string;
 }) {
   const segments = transcript.segments ?? [];

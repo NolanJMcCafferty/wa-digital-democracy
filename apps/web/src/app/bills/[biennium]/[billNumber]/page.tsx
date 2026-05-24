@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
-import { loadBillPage, type HearingPage } from "@/lib/api";
-import type { HearingSection } from "@/lib/pageTypes";
+import { loadBillDetail, type HearingPage } from "@/lib/api";
+import type { AgendaItemSection } from "@/lib/pageTypes";
 import { BillSnapshot } from "./_sections/BillSnapshot";
 import { StatusTimeline } from "./_sections/StatusTimeline";
 import {
@@ -32,7 +32,7 @@ export default async function BillHearingPage({
   const parsed = parseBillSlug(slug);
   if (!parsed) notFound();
 
-  const page = await loadBillPage(biennium, parsed.prefix, parsed.number);
+  const page = await loadBillDetail(biennium, parsed.prefix, parsed.number);
   if (!page) notFound();
 
   const allHearings = billHearingsToHearings(page.bill, page.hearings);
@@ -71,7 +71,7 @@ export default async function BillHearingPage({
 
 function billHearingsToHearings(
   bill: { biennium: string; bill_id: string },
-  sections: HearingSection[],
+  sections: AgendaItemSection[],
 ): HearingPage[] {
   const billPrefixMatch = bill.bill_id.match(/^([A-Z]+)([0-9]+)$/i);
   const billPrefix = billPrefixMatch ? billPrefixMatch[1].toUpperCase() : "";

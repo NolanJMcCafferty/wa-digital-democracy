@@ -1,8 +1,8 @@
 import Link from "next/link";
-import type { Bill, Sponsor } from "@/lib/pageTypes";
+import type { BillSponsor, BillSummary } from "@/lib/pageTypes";
 import { legislatorSlug } from "@/lib/api";
 
-export function BillSnapshot({ bill }: { bill: Bill }) {
+export function BillSnapshot({ bill }: { bill: BillSummary }) {
   const sponsors = bill.sponsors ?? [];
   const primarySponsors = sponsors.filter((s) => s.sponsor_type === "Primary");
   const otherSponsors = sponsors.filter((s) => s.sponsor_type !== "Primary");
@@ -81,7 +81,7 @@ function SponsorCard({
   sponsor,
   variant,
 }: {
-  sponsor: Sponsor;
+  sponsor: BillSponsor;
   variant: "primary" | "secondary";
 }) {
   const imageUrl =

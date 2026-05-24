@@ -39,7 +39,7 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/entitymatch"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/pageassembly"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/datawa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/fiscalwa"
@@ -1086,7 +1086,7 @@ func nonfatalDiscoveryStatus(err error) (string, bool) {
 // agenda_item whose hearing has a TVW event but no testifiers yet,
 // run the full curated pipeline (buildOne) so the hearing's testimony,
 // transcript, and PDC context get ingested. Reuses
-// firstpage.LookupBillAgendaTargetByAgendaItem so we don't re-derive the
+// pageassembly.LookupBillAgendaTargetByAgendaItem so we don't re-derive the
 // BillAgendaTarget by hand.
 func runIngestHearings(args []string) int {
 	fs := flag.NewFlagSet("ingest-hearings", flag.ContinueOnError)
@@ -1134,7 +1134,7 @@ func runIngestHearings(args []string) int {
 	failures := 0
 
 	for i, r := range rows {
-		demo, err := firstpage.LookupBillAgendaTargetByAgendaItem(ctx, deps.store, r.CSIAgendaItemID)
+		demo, err := pageassembly.LookupBillAgendaTargetByAgendaItem(ctx, deps.store, r.CSIAgendaItemID)
 		if err != nil {
 			failures++
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s lookup FAIL: %v\n", i+1, len(rows), r.CSIAgendaItemID, err)

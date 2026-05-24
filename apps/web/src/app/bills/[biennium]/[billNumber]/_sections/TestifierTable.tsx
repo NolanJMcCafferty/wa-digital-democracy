@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Position, Testifier } from "@/lib/pageTypes";
+import type { Position, TestifierSummary } from "@/lib/pageTypes";
 
 const POSITION_ORDER: Position[] = ["Pro", "Con", "Other"];
 
@@ -12,10 +12,10 @@ const POSITION_STYLE: Record<Position, string> = {
   Unknown: "text-stone-500 bg-stone-100",
 };
 
-export function TestifierTable({ testifiers }: { testifiers: Testifier[] }) {
+export function TestifierTable({ testifiers }: { testifiers: TestifierSummary[] }) {
   const [showRegisteredOnly, setShowRegisteredOnly] = useState(false);
 
-  const groups: Record<Position, Testifier[]> = {
+  const groups: Record<Position, TestifierSummary[]> = {
     Pro: [],
     Con: [],
     Other: [],

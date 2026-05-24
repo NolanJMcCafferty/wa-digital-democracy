@@ -5,8 +5,8 @@ import {
   listLegislators,
   listBills,
   listOrganizations,
-  loadBillPage,
-  type BillPage,
+  loadBillDetail,
+  type BillDetailResponse,
 } from "./api";
 
 export type SearchResult = {
@@ -28,9 +28,9 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
   ]);
   const billPages = (
     await Promise.all(
-      bills.map((b) => loadBillPage(b.biennium, b.billPrefix, b.billNumber))
+      bills.map((b) => loadBillDetail(b.biennium, b.billPrefix, b.billNumber))
     )
-  ).filter((b): b is BillPage => Boolean(b));
+  ).filter((b): b is BillDetailResponse => Boolean(b));
 
   return [
     ...billPages.map((b) =>
