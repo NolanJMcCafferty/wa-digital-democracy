@@ -35,8 +35,8 @@ import (
 	"time"
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/candidate"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/config"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/diarization"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/entitymatch"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/render/firstpage"
@@ -527,7 +527,7 @@ func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64)
 // ingestOne runs the full hearing-ingestion pipeline for one agenda item.
 // Page JSON is assembled on demand by wa-dd-api; this routine only writes
 // normalized source-linked records to Postgres.
-func ingestOne(ctx context.Context, deps *buildDeps, demo *config.SelectedDemo, logf func(string)) error {
+func ingestOne(ctx context.Context, deps *buildDeps, demo *domain.BillAgendaTarget, logf func(string)) error {
 	pipeline := &jobs.Pipeline{
 		Store: deps.store,
 		LWS:   deps.lwsClient,
@@ -566,7 +566,7 @@ func runIngestTVW(args []string) int {
 	}
 	defer cleanup()
 
-	demo := &config.SelectedDemo{}
+	demo := &domain.BillAgendaTarget{}
 	demo.TVW.EventID = strings.TrimSpace(*eventID)
 	pipeline := &jobs.Pipeline{
 		Store: deps.store,
@@ -724,12 +724,10 @@ func runIngestSession(args []string) int {
 			defer wg.Done()
 			for j := range jobsCh {
 				b := j.bill
-				demo := &config.SelectedDemo{
-					Biennium:   b.biennium,
-					BillPrefix: b.prefix,
-					BillNumber: b.number,
+				demo := &domain.BillAgendaTarget{
+					Bill: domain.BillKey{Biennium: b.biennium, Prefix: b.prefix, Number: b.number},
 				}
-				prefix := fmt.Sprintf("[%d/%d] %s", j.index+1, len(bills), demo.BillID())
+				prefix := fmt.Sprintf("[%d/%d] %s", j.index+1, len(bills), demo.Bill.ID())
 				t0 := time.Now()
 				pipeline := &jobs.Pipeline{
 					Store: deps.store,
@@ -739,7 +737,7 @@ func runIngestSession(args []string) int {
 				ids := jobs.NewIDs()
 				stepErr := pipeline.RunMetadataOnly(ctx, func(string) {}, ids)
 				dur := time.Since(t0)
-				res := result{Index: j.index, Bill: demo.BillID(), DurationMS: dur.Milliseconds()}
+				res := result{Index: j.index, Bill: demo.Bill.ID(), DurationMS: dur.Milliseconds()}
 				if stepErr != nil {
 					res.Status = "failed"
 					res.Error = stepErr.Error()
@@ -1088,8 +1086,8 @@ func nonfatalDiscoveryStatus(err error) (string, bool) {
 // agenda_item whose hearing has a TVW event but no testifiers yet,
 // run the full curated pipeline (buildOne) so the hearing's testimony,
 // transcript, and PDC context get ingested. Reuses
-// firstpage.LookupSelectedDemoByAgendaItem so we don't re-derive the
-// SelectedDemo by hand.
+// firstpage.LookupBillAgendaTargetByAgendaItem so we don't re-derive the
+// BillAgendaTarget by hand.
 func runIngestHearings(args []string) int {
 	fs := flag.NewFlagSet("ingest-hearings", flag.ContinueOnError)
 	var (
@@ -1136,7 +1134,7 @@ func runIngestHearings(args []string) int {
 	failures := 0
 
 	for i, r := range rows {
-		demo, err := firstpage.LookupSelectedDemoByAgendaItem(ctx, deps.store, r.CSIAgendaItemID)
+		demo, err := firstpage.LookupBillAgendaTargetByAgendaItem(ctx, deps.store, r.CSIAgendaItemID)
 		if err != nil {
 			failures++
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s lookup FAIL: %v\n", i+1, len(rows), r.CSIAgendaItemID, err)
@@ -1147,7 +1145,7 @@ func runIngestHearings(args []string) int {
 			})
 			continue
 		}
-		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(rows), demo.BillID())
+		prefix := fmt.Sprintf("[%d/%d] %s", i+1, len(rows), demo.Bill.ID())
 		fmt.Fprintf(os.Stderr, "==> %s starting (agenda=%s)\n", prefix, r.CSIAgendaItemID)
 		t0 := time.Now()
 		logf := func(s string) { fmt.Fprintf(os.Stderr, "    %s\n", s) }
@@ -1157,7 +1155,7 @@ func runIngestHearings(args []string) int {
 			failures++
 			fmt.Fprintf(os.Stderr, "    %s FAIL (%s): %v\n", prefix, dur.Round(time.Millisecond), err)
 			results = append(results, result{
-				Bill: demo.BillID(), CSIAgendaItemID: r.CSIAgendaItemID,
+				Bill: demo.Bill.ID(), CSIAgendaItemID: r.CSIAgendaItemID,
 				Status: "failed", Error: err.Error(),
 				DurationMS: dur.Milliseconds(),
 			})
@@ -1168,7 +1166,7 @@ func runIngestHearings(args []string) int {
 		}
 		fmt.Fprintf(os.Stderr, "    %s ok (%s)\n", prefix, dur.Round(time.Millisecond))
 		results = append(results, result{
-			Bill: demo.BillID(), CSIAgendaItemID: r.CSIAgendaItemID,
+			Bill: demo.Bill.ID(), CSIAgendaItemID: r.CSIAgendaItemID,
 			Status: "ok", DurationMS: dur.Milliseconds(),
 		})
 	}

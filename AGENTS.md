@@ -42,8 +42,8 @@ internal/
   storage/db/   pgx wrapper, hand-written Pool.Query methods on *Store,
                 source_record helpers, RawSink
   storage/objectstore/  filesystem object store for raw API responses
-  render/firstpage/  Page-object assemblers + DB→SelectedDemo lookups
-  config/       shared ingestion configuration structs
+  render/firstpage/  Page-object assemblers + DB→BillAgendaTarget lookups
+  domain/       shared civic-domain value objects (BillKey, BillAgendaTarget)
 db/migrations/  goose-style SQL; project-pinned via tools/goose
 db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
                 Pool.Query methods on *Store, not codegen. Don't add to this

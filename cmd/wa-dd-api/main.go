@@ -1555,7 +1555,7 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 		// The list endpoint deliberately omits these to keep the payload
 		// small.
 		for i := range resp.AgendaItems {
-			demo, err := firstpage.LookupSelectedDemoByAgendaItem(req.Context(), store, resp.AgendaItems[i].CSIAgendaItemID)
+			demo, err := firstpage.LookupBillAgendaTargetByAgendaItem(req.Context(), store, resp.AgendaItems[i].CSIAgendaItemID)
 			if err != nil {
 				if errors.Is(err, firstpage.ErrBillNotFound) {
 					continue
