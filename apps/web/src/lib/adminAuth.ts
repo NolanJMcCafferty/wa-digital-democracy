@@ -33,6 +33,9 @@ export function hasAdminRole(role: AdminRole | null, minimum: AdminRole): boolea
 }
 
 export async function requireAdminRole(minimum: AdminRole = "viewer"): Promise<{ role: AdminRole; userId: string }> {
+  if (process.env.WADD_E2E_ADMIN_AUTH === "1") {
+    return { role: minimum, userId: "e2e-admin" };
+  }
   const session = await auth();
   if (!session.userId) {
     redirect(`/sign-in?redirect_url=${encodeURIComponent("/admin/review/speakers")}`);
@@ -47,6 +50,9 @@ export async function requireAdminRole(minimum: AdminRole = "viewer"): Promise<{
 }
 
 export async function clerkAdminAuthHeader(): Promise<Record<string, string>> {
+  if (process.env.WADD_E2E_ADMIN_AUTH === "1") {
+    return { [ADMIN_TOKEN_HEADER]: "Bearer e2e-admin" };
+  }
   const session = await auth();
   if (!session.userId) {
     throw new Error("Clerk admin session is required for admin API requests");
