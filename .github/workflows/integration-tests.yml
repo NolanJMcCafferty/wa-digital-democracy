@@ -1,12 +1,12 @@
-name: Backend Integration Tests
+name: Backend Tests
 
 on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  backend-integration:
-    name: Run backend integration tests
+  backend-tests:
+    name: Run backend tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -35,5 +35,8 @@ jobs:
       - name: Apply migrations and deterministic fixtures
         run: make integration-db seed-test-fixtures
 
-      - name: Run backend integration tests
+      - name: Run backend unit and integration tests
         run: WADD_TEST_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" go test -tags=integration ./...
+
+      - name: Enforce coverage gate
+        run: make coverage
