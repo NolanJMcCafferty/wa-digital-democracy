@@ -192,6 +192,9 @@ func adminAuthConfigFromEnv() adminAuthConfig {
 }
 
 func newAdminAuthenticator(ctx context.Context, cfg adminAuthConfig) (func(http.Handler) http.Handler, error) {
+	if os.Getenv("WADD_E2E_ADMIN_AUTH") == "1" {
+		return e2eAdminAuthMiddleware, nil
+	}
 	if cfg.Issuer == "" || cfg.JWKSURL == "" {
 		return nil, fmt.Errorf("CLERK_JWT_ISSUER or CLERK_DOMAIN is required for admin auth")
 	}
@@ -200,6 +203,22 @@ func newAdminAuthenticator(ctx context.Context, cfg adminAuthConfig) (func(http.
 		return nil, fmt.Errorf("load Clerk JWKS: %w", err)
 	}
 	return adminAuthMiddleware(cfg, jwks.Keyfunc), nil
+}
+
+func e2eAdminAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("X-WADD-Admin-Auth") != "Bearer e2e-admin" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "admin authentication required"})
+			return
+		}
+		ctx := context.WithValue(req.Context(), adminUserContextKey{}, adminUser{
+			ID:    "e2e-admin",
+			Email: "e2e-admin@example.test",
+			Name:  "E2E Admin",
+			Role:  adminRoleAdmin,
+		})
+		next.ServeHTTP(w, req.WithContext(ctx))
+	})
 }
 
 func adminAuthMiddleware(cfg adminAuthConfig, keys jwt.Keyfunc) func(http.Handler) http.Handler {

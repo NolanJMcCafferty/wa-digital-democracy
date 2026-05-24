@@ -357,3 +357,124 @@ FROM agenda_item
 WHERE csi_agenda_item_id = 'fixture-agenda-item-9001';
 
 COMMIT;
+
+-- Admin review fixture data.
+DELETE FROM diarization_job WHERE provider_job_id = 'fixture-diarization-job-9001';
+
+WITH sr AS (
+  SELECT id FROM source_record
+  WHERE source_system = 'lws'
+    AND source_endpoint = 'Fixture.Minimal'
+    AND source_url = 'fixture://wa-dd/minimal'
+    AND content_hash = 'fixture-minimal-v1'
+    AND transform_version = 'fixture-v1'
+), ev AS (
+  SELECT tvw_event_id FROM tvw_event WHERE tvw_event_id = 'fixture-tvw-event-9001'
+), audio AS (
+  INSERT INTO tvw_audio_asset (
+    tvw_event_id, source_url, source_kind, original_path, normalized_path,
+    content_hash, duration_ms, sample_rate, channels, codec
+  )
+  SELECT ev.tvw_event_id, 'fixture://audio/admin-review', 'audio_download_url',
+         'fixture-original.wav', 'fixture-normalized.wav', 'fixture-audio-admin-review',
+         16000, 16000, 1, 'pcm_s16le'
+  FROM ev
+  ON CONFLICT (tvw_event_id, source_url) DO UPDATE SET
+    duration_ms = EXCLUDED.duration_ms,
+    content_hash = EXCLUDED.content_hash
+  RETURNING id, tvw_event_id
+), job AS (
+  INSERT INTO diarization_job (
+    tvw_event_id, audio_asset_id, provider, provider_job_id, model, status,
+    submitted_at, finished_at, raw_result_path
+  )
+  SELECT ev.tvw_event_id, audio.id, 'fixture', 'fixture-diarization-job-9001',
+         'fixture-model', 'succeeded', NOW(), NOW(), 'fixture://diarization/admin-review.json'
+  FROM ev JOIN audio ON audio.tvw_event_id = ev.tvw_event_id
+  RETURNING id, tvw_event_id
+), picked_job AS (
+  SELECT id, tvw_event_id FROM job
+  UNION ALL
+  SELECT id, tvw_event_id FROM diarization_job WHERE provider_job_id = 'fixture-diarization-job-9001'
+  LIMIT 1
+), cluster AS (
+  INSERT INTO speaker_cluster (diarization_job_id, tvw_event_id, cluster_label, total_speech_ms, turn_count, metadata)
+  SELECT id, tvw_event_id, 'speaker-fixture-review', 10000, 2, '{"fixture":true}'::jsonb
+  FROM picked_job
+  ON CONFLICT (diarization_job_id, cluster_label) DO UPDATE SET
+    total_speech_ms = EXCLUDED.total_speech_ms,
+    turn_count = EXCLUDED.turn_count
+  RETURNING id, diarization_job_id, tvw_event_id, cluster_label
+), seg AS (
+  INSERT INTO diarized_speech_segment (
+    diarization_job_id, speaker_cluster_id, tvw_event_id, cluster_label,
+    start_ms, end_ms, confidence, text, raw
+  )
+  SELECT diarization_job_id, id, tvw_event_id, cluster_label,
+         6000, 11000, 0.95,
+         'My name is Alex Fixture, and I support this fixture housing bill.',
+         '{"fixture":true}'::jsonb
+  FROM cluster
+  RETURNING id, diarization_job_id, speaker_cluster_id
+), evidence AS (
+  INSERT INTO speaker_identity_evidence (
+    evidence_key, diarization_job_id, speaker_cluster_id, diarized_speech_segment_id,
+    evidence_type, evidence_text, candidate_kind, candidate_id, candidate_label,
+    confidence, start_ms, end_ms, raw
+  )
+  SELECT 'fixture-speaker-evidence-9001', cluster.diarization_job_id, cluster.id,
+         COALESCE((SELECT id FROM seg LIMIT 1), NULL),
+         'self_introduction', 'Self-introduction: Alex Fixture', 'testifier',
+         (SELECT id FROM testifier WHERE raw_name = 'Alex Fixture' LIMIT 1),
+         'Alex Fixture', 0.95, 6000, 11000, '{"fixture":true}'::jsonb
+  FROM cluster
+  ON CONFLICT (evidence_key) DO UPDATE SET
+    evidence_text = EXCLUDED.evidence_text,
+    candidate_label = EXCLUDED.candidate_label,
+    confidence = EXCLUDED.confidence
+  RETURNING id, diarization_job_id, speaker_cluster_id
+)
+INSERT INTO speaker_review_task (
+  diarization_job_id, speaker_cluster_id, status, priority,
+  proposed_candidate_kind, proposed_candidate_id, proposed_label,
+  proposed_confidence, evidence_ids
+)
+SELECT diarization_job_id, speaker_cluster_id, 'pending', 100,
+       'testifier',
+       (SELECT id FROM testifier WHERE raw_name = 'Alex Fixture' LIMIT 1),
+       'Alex Fixture', 0.95, ARRAY[id]
+FROM evidence;
+
+DELETE FROM vendor_entity_match_candidate
+WHERE source_kind = 'organization_alias'
+  AND source_dataset_id = 'fixture-admin-review'
+  AND source_row_id = 'fixture-admin-review-row';
+
+WITH org AS (
+  SELECT id FROM organization WHERE canonical_name = 'Fixture Housing Coalition'
+), sr AS (
+  SELECT id FROM source_record
+  WHERE source_system = 'lws'
+    AND source_endpoint = 'Fixture.Minimal'
+    AND source_url = 'fixture://wa-dd/minimal'
+    AND content_hash = 'fixture-minimal-v1'
+    AND transform_version = 'fixture-v1'
+)
+INSERT INTO vendor_entity_match_candidate (
+  source_kind, source_table, source_pk, source_dataset_id, source_row_id,
+  source_name, normalized_name, organization_id, candidate_confidence,
+  evidence, source_record_id
+)
+SELECT 'organization_alias', 'fixture_admin_review', 9001, 'fixture-admin-review',
+       'fixture-admin-review-row', 'Fixture Housing Coalition PAC',
+       'fixture housing coalition pac', org.id, 'probable',
+       '["Synthetic admin review fixture candidate"]'::jsonb, sr.id
+FROM org CROSS JOIN sr;
+
+DELETE FROM vendor_entity_match_decision
+WHERE candidate_id IN (
+  SELECT id FROM vendor_entity_match_candidate
+  WHERE source_kind = 'organization_alias'
+    AND source_dataset_id = 'fixture-admin-review'
+    AND source_row_id = 'fixture-admin-review-row'
+);

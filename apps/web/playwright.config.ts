@@ -36,6 +36,7 @@ export default defineConfig({
       env: {
         WADD_INTERNAL_API_TOKEN: INTERNAL_TOKEN,
         WADD_E2E_ADDRESS_LOOKUP: "1",
+        WADD_E2E_ADMIN_AUTH: "1",
       },
     },
     {
@@ -46,6 +47,7 @@ export default defineConfig({
       env: {
         WADD_API_URL: `http://127.0.0.1:${API_PORT}`,
         WADD_INTERNAL_API_TOKEN: INTERNAL_TOKEN,
+        WADD_E2E_ADMIN_AUTH: "1",
       },
     },
   ],
