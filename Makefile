@@ -6,6 +6,7 @@ COMPOSE := docker compose -f infra/docker-compose.yml
 COMPOSE_NETWORK ?= infra_default
 ENV_FILE ?= .env.local
 GO ?= go
+PSQL ?= psql
 GOOSE ?= $(GO) run -modfile=tools/goose/go.mod github.com/pressly/goose/v3/cmd/goose
 SCHEMASPY_IMAGE ?= schemaspy/schemaspy:latest
 SCHEMASPY_OUT ?= docs/db/schemaspy
@@ -17,7 +18,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh db-docs db-docs-open test coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs db-docs-open test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -55,6 +56,15 @@ migrate-fresh: nuke up    ## Wipe DB and re-migrate
 	@sleep 2
 	@$(MAKE) migrate-up
 
+integration-db: up migrate-up ## Start and migrate the local real DB used by integration tests
+
+seed-test-fixtures: ## Seed deterministic fixture data into the local integration DB
+	WADD_TEST_DSN="$(DSN)" scripts/seed-test-fixtures.sh --dsn "$(DSN)"
+
+seed-e2e-fixtures: ## Seed deterministic fixture data into an existing e2e/staging DB (requires WADD_E2E_DSN)
+	@test -n "$$WADD_E2E_DSN" || { echo "WADD_E2E_DSN is required"; exit 1; }
+	scripts/seed-test-fixtures.sh --dsn "$$WADD_E2E_DSN"
+
 db-docs: up   ## Generate SchemaSpy HTML docs for the local Postgres schema
 	@mkdir -p $(SCHEMASPY_OUT)
 	docker run --rm \
@@ -68,6 +78,16 @@ db-docs-open: db-docs ## Generate and open SchemaSpy docs in the default browser
 
 test:         ## Run unit tests
 	$(GO) test ./...
+
+integration: integration-db seed-test-fixtures ## Run backend integration tests against a real Postgres DB
+	WADD_TEST_DSN="$(DSN)" $(GO) test -tags=integration ./...
+
+e2e-install: ## Install Playwright browser dependencies for end-to-end tests
+	cd apps/web && pnpm exec playwright install --with-deps chromium
+
+e2e: build ## Run frontend -> backend end-to-end tests against configured env/services
+	cd apps/web && SKIP_BUILD_STATIC_PARAMS=1 WADD_INTERNAL_API_TOKEN=$${WADD_INTERNAL_API_TOKEN:-e2e-internal-token} WADD_API_URL=$${WADD_API_URL:-http://127.0.0.1:$${WADD_E2E_API_PORT:-18080}} pnpm build
+	cd apps/web && WADD_API_BIN="$(CURDIR)/bin/wa-dd-api" WADD_E2E_DSN="$${WADD_E2E_DSN:-$(DSN)}" pnpm exec playwright test
 
 coverage:     ## Enforce unit test coverage threshold for core packages
 	@tmp=$$(mktemp); \

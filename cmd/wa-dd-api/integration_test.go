@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -46,39 +47,55 @@ func TestBillPageHandler_NotFound(t *testing.T) {
 	}
 }
 
-// TestBillPageHandler_OK assumes HB 1501 has been ingested in the local
-// dev DB (the daily-batch seed). If it hasn't, skip — a clean check
-// for "is the success path wired" without forcing a fixture upload.
 func TestBillPageHandler_OK(t *testing.T) {
 	store := openTestStore(t)
 	r := chi.NewRouter()
 	r.Get("/api/v1/bills/{biennium}/{billNumber}/page", billPageHandler(store))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2025-26/HB1501/page", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/bills/2099-00/HB9001/page", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code == http.StatusNotFound {
-		t.Skip("HB 1501 not ingested in the test DB; run `make daily` first")
-	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 	var body struct {
 		Bill struct {
 			BillID string `json:"bill_id"`
+			Title  string `json:"title"`
 		} `json:"bill"`
-		Hearings []any `json:"hearings"`
-		Sources  []any `json:"sources"`
+		Hearings []struct {
+			Hearing struct {
+				CSIAgendaItemID string `json:"csi_agenda_item_id"`
+			} `json:"hearing"`
+			Transcript *struct {
+				Segments []struct {
+					Text string `json:"text"`
+				} `json:"segments"`
+			} `json:"transcript"`
+		} `json:"hearings"`
+		Sources []any `json:"sources"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.Bill.BillID != "HB 1501" {
-		t.Errorf("bill_id = %q, want %q", body.Bill.BillID, "HB 1501")
+	if body.Bill.BillID != "HB 9001" {
+		t.Errorf("bill_id = %q, want %q", body.Bill.BillID, "HB 9001")
 	}
-	if body.Hearings == nil || body.Sources == nil {
-		t.Errorf("collection fields should serialize as [], not null: %+v", body)
+	if body.Bill.Title != "Fixture Housing Stability Act" {
+		t.Errorf("title = %q, want fixture title", body.Bill.Title)
+	}
+	if len(body.Hearings) != 1 {
+		t.Fatalf("hearings len = %d, want 1", len(body.Hearings))
+	}
+	if body.Hearings[0].Hearing.CSIAgendaItemID != "fixture-agenda-item-9001" {
+		t.Errorf("csi_agenda_item_id = %q", body.Hearings[0].Hearing.CSIAgendaItemID)
+	}
+	if body.Hearings[0].Transcript == nil || len(body.Hearings[0].Transcript.Segments) == 0 {
+		t.Fatalf("fixture bill should include transcript segments")
+	}
+	if body.Sources == nil {
+		t.Errorf("sources should serialize as [], not null")
 	}
 }
 
@@ -94,20 +111,20 @@ func TestListBillsHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var bills []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &bills); err != nil {
+	var body struct {
+		Bills []map[string]any `json:"bills"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// At minimum the daily-batch seed contains HB 1501.
-	found := false
-	for _, b := range bills {
-		if b["bill_id"] == "HB 1501" {
-			found = true
-			break
-		}
+	if body.Bills == nil {
+		t.Fatalf("bills field must serialize as JSON array, got %q", w.Body.String())
 	}
-	if !found {
-		t.Errorf("HB 1501 not in /api/v1/bills response (got %d bills)", len(bills))
+	// The integration DB may be freshly migrated and unseeded. If bills exist,
+	// total should be internally consistent with the returned page.
+	if body.Total < len(body.Bills) {
+		t.Errorf("total = %d, returned bills = %d", body.Total, len(body.Bills))
 	}
 }
 
@@ -182,13 +199,13 @@ func TestGetHearingHandler_OK(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v1/hearings/{hearingId}", getHearingHandler(store))
 
-	// Demo seed: HB 1501 lives on hearing.id=2 in the local daily-batch DB.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings/2", nil)
+	var hearingID int64
+	if err := store.Pool.QueryRow(context.Background(), `SELECT id FROM hearing WHERE tvw_event_id = 'fixture-tvw-event-9001'`).Scan(&hearingID); err != nil {
+		t.Fatalf("lookup fixture hearing: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hearings/"+strconv.FormatInt(hearingID, 10), nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code == http.StatusNotFound {
-		t.Skip("hearing 2 (HB 1501) not ingested in the test DB; run `make daily` first")
-	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -201,18 +218,18 @@ func TestGetHearingHandler_OK(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.HearingID != 2 {
-		t.Errorf("hearing_id = %d, want 2", body.HearingID)
+	if body.HearingID != hearingID {
+		t.Errorf("hearing_id = %d, want %d", body.HearingID, hearingID)
 	}
 	found := false
 	for _, item := range body.AgendaItems {
-		if item.BillID == "HB 1501" {
+		if item.BillID == "HB 9001" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("agenda_items did not include HB 1501: %+v", body.AgendaItems)
+		t.Errorf("agenda_items did not include HB 9001: %+v", body.AgendaItems)
 	}
 }
 
@@ -305,8 +322,6 @@ func TestSearchTranscriptsHandler_OK(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/api/v1/search/transcripts", searchTranscriptsHandler(store))
 
-	// Assumes ingested transcript content — uses "housing" since the demo
-	// set is housing-themed. If no segments exist (fresh DB), skip.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/transcripts?q=housing&limit=5", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -334,7 +349,7 @@ func TestSearchTranscriptsHandler_OK(t *testing.T) {
 		t.Errorf("limit = %d, want 5", body.Limit)
 	}
 	if body.Total == 0 {
-		t.Skip("no transcript segments matching 'housing' in test DB; skipping (run ingest-hearings first)")
+		t.Fatalf("fixture transcript search returned no hits")
 	}
 	if len(body.Hits) == 0 {
 		t.Errorf("expected hits when total=%d, got 0", body.Total)

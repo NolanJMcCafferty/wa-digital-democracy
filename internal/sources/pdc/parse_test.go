@@ -46,6 +46,26 @@ func TestNormalizeLobbyistEmployment(t *testing.T) {
 	}
 }
 
+func TestNormalizeLobbyistCompensationAndContribution(t *testing.T) {
+	comp := NormalizeLobbyistCompensation(Row{
+		"filer_id": "L123", "filer_name": "Doe, Jane", "funding_source_id": 456.0, "funding_source": "Roundtable",
+		"filing_period": "2026", "employer_id": "E1", "employer_name": "Washington Roundtable",
+		"compensation": "123.45", "total_expenses": 67.0, "net_total": nil, "url": "https://example.test/comp",
+	})
+	if comp.FilerID != "L123" || comp.FundingSourceID != "456" || comp.Compensation != 123.45 || comp.TotalExpenses != 67 || comp.NetTotal != 0 {
+		t.Fatalf("comp = %+v", comp)
+	}
+
+	contrib := NormalizeContribution(Row{
+		"id": "C1", "filer_id": "F1", "filer_name": "Candidate", "office": "LEG", "legislative_district": "43",
+		"party": true, "election_year": "2026", "amount": "250.50", "cash_or_in_kind": "Cash",
+		"receipt_date": "2026-01-02", "contributor_name": "Donor", "contributor_category": "Individual", "url": "https://example.test/contrib",
+	})
+	if contrib.ID != "C1" || contrib.Party != "true" || contrib.Amount != 250.50 || contrib.ContributorName != "Donor" {
+		t.Fatalf("contrib = %+v", contrib)
+	}
+}
+
 func TestNormalizeOrgName(t *testing.T) {
 	cases := map[string]string{
 		"Washington Roundtable":          "washington roundtable",
@@ -58,6 +78,13 @@ func TestNormalizeOrgName(t *testing.T) {
 		if got := NormalizeOrgName(in); got != want {
 			t.Errorf("NormalizeOrgName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestClient_NewDefaults(t *testing.T) {
+	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "TKN")
+	if c.BaseURL != DefaultBaseURL || c.AppToken != "TKN" {
+		t.Fatalf("client = %+v", c)
 	}
 }
 
@@ -130,6 +157,72 @@ func TestClient_URLEncoding(t *testing.T) {
 	check("$limit", "1000")
 	check("$offset", "5000")
 	check("$$app_token", "TKN")
+}
+
+func TestClient_CountAndMetadata(t *testing.T) {
+	var sawCount, sawMetadata bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/resource/" + DatasetContributions + ".json":
+			sawCount = true
+			q := r.URL.Query()
+			if q.Get("$select") != "count(*)" || q.Get("$where") != "election_year=2026" || q.Get("$limit") != "1" {
+				t.Fatalf("count query = %s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`[{"count":"42"}]`))
+		case "/api/views/" + DatasetContributions:
+			sawMetadata = true
+			if r.URL.Query().Get("$$app_token") != "TKN" {
+				t.Fatalf("metadata app token = %q", r.URL.Query().Get("$$app_token"))
+			}
+			_, _ = w.Write([]byte(`{"id":"2jwd-akfb"}`))
+		default:
+			t.Fatalf("unexpected path = %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTP: httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), BaseURL: srv.URL, AppToken: "TKN"}
+	count, err := c.Count(context.Background(), DatasetContributions, "election_year=2026")
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if count != 42 {
+		t.Fatalf("count = %d, want 42", count)
+	}
+	body, err := c.Metadata(context.Background(), DatasetContributions)
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if !strings.Contains(string(body), `"2jwd-akfb"`) {
+		t.Fatalf("metadata body = %s", body)
+	}
+	if !sawCount || !sawMetadata {
+		t.Fatalf("sawCount=%v sawMetadata=%v", sawCount, sawMetadata)
+	}
+}
+
+func TestClient_CountHandlesNumericEmptyAndUnexpectedTypes(t *testing.T) {
+	responses := [][]byte{
+		[]byte(`[{"count":7}]`),
+		[]byte(`[]`),
+		[]byte(`[{"count":true}]`),
+	}
+	wantCounts := []int64{7, 0, 0}
+	wantErr := []bool{false, false, true}
+	for i, body := range responses {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
+		c := &Client{HTTP: httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), BaseURL: srv.URL}
+		got, err := c.Count(context.Background(), DatasetContributions, "")
+		srv.Close()
+		if (err != nil) != wantErr[i] {
+			t.Fatalf("case %d err = %v, wantErr %v", i, err, wantErr[i])
+		}
+		if got != wantCounts[i] {
+			t.Fatalf("case %d count = %d, want %d", i, got, wantCounts[i])
+		}
+	}
 }
 
 func TestClient_PageAllStopsOnShortPage(t *testing.T) {
