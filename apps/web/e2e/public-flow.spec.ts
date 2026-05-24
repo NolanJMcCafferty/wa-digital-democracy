@@ -44,7 +44,9 @@ test("organization search opens fixture organization detail", async ({ page }) =
 
   await expect(page).toHaveURL(/\/organizations\/fixture-housing-coalition$/);
   await expect(page.getByRole("heading", { name: "Fixture Housing Coalition" })).toBeVisible();
-  await expect(page.getByText(/Synthetic organization used by deterministic test fixtures/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Positions in testimony sign-ins" })).toBeVisible();
+  await expect(page.getByText(/Pro\s+1/i)).toBeVisible();
+  await expect(page.getByText(/Con\s+1/i)).toBeVisible();
   await expect(page.getByRole("link", { name: /House Committee on Housing/i })).toBeVisible();
 });
 
