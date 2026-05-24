@@ -5,9 +5,10 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/seed-test-fixtures.sh --dsn <postgres-url> [--fixture db/fixtures/minimal.sql]
 
-Applies deterministic test fixture data to an already-migrated database.
-The script does not create or migrate the database; use `make integration-db`
-for local integration DB setup, or point --dsn at a real/staging e2e env DB.
+Applies deterministic test fixture data to an already-migrated database using
+Dockerized psql. The script does not create or migrate the database; use
+`make integration-db` for local integration DB setup, or point --dsn at a
+real/staging e2e env DB.
 
 Environment fallback:
   WADD_TEST_DSN     used when --dsn is omitted
@@ -51,20 +52,17 @@ if [[ ! -f "$FIXTURE" ]]; then
   exit 2
 fi
 
-if command -v psql >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required to apply fixture SQL; install/start Docker and retry." >&2
+  exit 127
+fi
+
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+SEED_DOCKER_NETWORK="${SEED_DOCKER_NETWORK:-host}"
+
+docker run --rm \
+  --network "$SEED_DOCKER_NETWORK" \
+  -v "$PWD:/workspace:ro" \
+  -w /workspace \
+  "$POSTGRES_IMAGE" \
   psql "$DSN" -v ON_ERROR_STOP=1 -f "$FIXTURE"
-  exit 0
-fi
-
-if command -v docker >/dev/null 2>&1; then
-  docker run --rm \
-    --network host \
-    -v "$PWD:/workspace:ro" \
-    -w /workspace \
-    postgres:16-alpine \
-    psql "$DSN" -v ON_ERROR_STOP=1 -f "$FIXTURE"
-  exit 0
-fi
-
-echo "Neither psql nor docker is available; cannot apply fixture SQL." >&2
-exit 127
