@@ -18,12 +18,15 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up down nuke ps analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-up:           ## Start local Postgres (and friends)
+up:           ## Start the full local stack (Postgres + migrations + API + web)
+	$(COMPOSE) up -d --build postgres migrate api web
+
+up-db:        ## Start local Postgres only
 	$(COMPOSE) up -d postgres
 
 down:         ## Stop containers
@@ -34,6 +37,21 @@ nuke:         ## Stop containers AND wipe volumes
 
 ps:           ## Show service status
 	$(COMPOSE) ps
+
+logs:         ## Tail logs for all services
+	$(COMPOSE) logs -f
+
+logs-api:     ## Tail API logs
+	$(COMPOSE) logs -f api
+
+logs-web:     ## Tail web logs
+	$(COMPOSE) logs -f web
+
+logs-postgres: ## Tail Postgres logs
+	$(COMPOSE) logs -f postgres
+
+logs-migrate: ## Show migration container logs
+	$(COMPOSE) logs migrate
 
 analytics:    ## Start optional local Metabase analytics UI on :3001
 	$(COMPOSE) --profile analytics up -d metabase
@@ -52,11 +70,11 @@ migrate-up:   ## Apply all migrations with project-pinned goose
 migrate-down: ## Roll back the last migration with project-pinned goose
 	$(GOOSE) -dir db/migrations postgres "$(DSN)" down
 
-migrate-fresh: nuke up    ## Wipe DB and re-migrate
+migrate-fresh: nuke up-db ## Wipe DB and re-migrate
 	@sleep 2
 	@$(MAKE) migrate-up
 
-integration-db: up migrate-up ## Start and migrate the local real DB used by integration tests
+integration-db: up-db migrate-up ## Start and migrate the local real DB used by integration tests
 
 seed-test-fixtures: ## Seed deterministic fixture data into the local integration DB
 	WADD_TEST_DSN="$(DSN)" scripts/seed-test-fixtures.sh --dsn "$(DSN)"
@@ -65,7 +83,7 @@ seed-e2e-fixtures: ## Seed deterministic fixture data into an existing e2e/stagi
 	@test -n "$$WADD_E2E_DSN" || { echo "WADD_E2E_DSN is required"; exit 1; }
 	scripts/seed-test-fixtures.sh --dsn "$$WADD_E2E_DSN"
 
-db-docs: up   ## Generate SchemaSpy HTML docs and open them in the default browser
+db-docs: up-db ## Generate SchemaSpy HTML docs and open them in the default browser
 	@mkdir -p $(SCHEMASPY_OUT)
 	docker run --rm \
 		--network $(COMPOSE_NETWORK) \

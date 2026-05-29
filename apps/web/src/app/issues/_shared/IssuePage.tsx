@@ -1,12 +1,8 @@
 import {
-  loadBillDetail,
+  listOrganizations,
   searchBills,
   searchHearings,
-  slugify,
-  type BillDetailResponse,
-  type OrganizationListEntry,
 } from "@/lib/api";
-import type { Position } from "@/lib/pageTypes";
 import {
   BillSearchResults,
   parseBillFilters,
@@ -42,24 +38,11 @@ export async function IssuePage({
   const organizationFilters = parseOrganizationFilters(searchParams ?? {}, "org");
   const billSearchFilters = { ...filters, topicKeywords: config.keywords };
 
-  const billResult = await searchBills(billSearchFilters);
-  const coverageBillResult =
-    billResult.offset === 0 && billResult.limit >= 100
-      ? billResult
-      : await searchBills({ ...billSearchFilters, page: 1, limit: 100 });
-  const billPages = (
-    await Promise.all(
-      coverageBillResult.bills.map((b) =>
-        loadBillDetail(b.biennium, b.billPrefix, b.billNumber),
-      ),
-    )
-  ).filter((b): b is BillDetailResponse => Boolean(b));
-
-  const hearingResult = await searchHearings(
-    hearingFiltersToSearch(hearingFilters, config.keywords),
-  );
-
-  const organizations = issueOrganizations(billPages);
+  const [billResult, hearingResult, organizations] = await Promise.all([
+    searchBills(billSearchFilters),
+    searchHearings(hearingFiltersToSearch(hearingFilters, config.keywords)),
+    listOrganizations(config.keywords),
+  ]);
 
   return (
     <article className="space-y-10">
@@ -124,46 +107,5 @@ export async function IssuePage({
       )}
     </article>
   );
-}
-
-function issueOrganizations(billPages: BillDetailResponse[]): OrganizationListEntry[] {
-  const orgs = new Map<string, OrganizationListEntry>();
-  for (const b of billPages) {
-    for (const section of b.hearings ?? []) {
-      for (const org of section.organizations ?? []) {
-        const existing = orgs.get(org.canonical_name);
-        const aliases = new Set([...(existing?.aliases ?? []), ...(org.aliases ?? [])]);
-        const positions = {
-          Pro: existing?.positions.Pro ?? 0,
-          Con: existing?.positions.Con ?? 0,
-          Other: existing?.positions.Other ?? 0,
-          Unknown: existing?.positions.Unknown ?? 0,
-        };
-        const position = normalizePosition(org.testifier_position);
-        positions[position] += org.testifier_count ?? 0;
-        const confirmed = (existing?.confirmed ?? false) || org.match_confidence === "confirmed";
-
-        orgs.set(org.canonical_name, {
-          slug: existing?.slug ?? slugify(org.canonical_name),
-          canonicalName: org.canonical_name,
-          aliases: Array.from(aliases).filter((a) => a !== org.canonical_name).sort(),
-          confirmed,
-          matchNotes: existing?.matchNotes ?? org.match_notes,
-          testifierCount: (existing?.testifierCount ?? 0) + (org.testifier_count ?? 0),
-          positions,
-        });
-      }
-    }
-  }
-  return Array.from(orgs.values()).sort((a, b) => {
-    const byTestifiers = b.testifierCount - a.testifierCount;
-    if (byTestifiers !== 0) return byTestifiers;
-    return a.canonicalName.localeCompare(b.canonicalName);
-  });
-}
-
-function normalizePosition(position?: string): Position {
-  if (position === "Pro" || position === "Con" || position === "Other") return position;
-  return "Unknown";
 }
 
