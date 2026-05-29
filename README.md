@@ -133,5 +133,4 @@ docs/
   testing.md              # test strategy and commands
   *.md                    # feature/source/operator notes
 DEPLOYMENT.md             # hosted deployment overview
-VERIFICATION.md           # verification checklist/status
 ```
