@@ -38,22 +38,6 @@ make api &                                  # Go API on :8080
 cd apps/web && WADD_INTERNAL_API_TOKEN=dev-change-me pnpm dev  # Next.js on :3000
 ```
 
-Admin review pages and APIs also require Clerk user authentication. Configure
-Clerk for the web app with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
-`CLERK_SECRET_KEY`, then create a Clerk JWT template named `wadd-admin` with
-audience `wa-dd-admin`. Include the authenticated user's email/name and one role
-claim named `role`, `admin_role`, or `wadd_role`; accepted roles are `viewer`,
-`reviewer`, and `admin`. Set `CLERK_JWT_ISSUER` (or `CLERK_JWKS_URL`) on the Go
-API so `/api/v1/admin/*` can validate Clerk tokens independently of the Next.js
-route guards. `viewer` can read review queues; `reviewer` and `admin` can mutate
-review decisions. Every admin mutation writes an `admin_audit_log` record.
-
-## Deployment
-
-Railway is the first hosted demo target. See `DEPLOYMENT.md` for the deployment
-contract and `infra/railway/README.md` for the Railway service layout and
-required variables.
-
 ### Database docs
 
 Generate browsable SchemaSpy documentation for the local Postgres schema and open it in the default browser:
@@ -135,21 +119,3 @@ docs/
   phase0-spike-report.md          # preserved feasibility findings
   written-testimony-source-note.md # written-testimony access note
 ```
-
-## Architectural ground rules
-
-From the wiki Recommended Tech Stack §"Key architectural decisions":
-
-1. Postgres owns truth; search and AI summaries are rebuildable.
-2. Raw source records are immutable.
-3. Every public fact needs provenance (`source_url` + `fetched_at`).
-4. Confidence is a first-class field.
-5. Manual review is a feature, not a failure.
-6. Start static, grow dynamic.
-
-The schema in `db/migrations/0001_initial.sql` enforces #2 and #3 by requiring
-every normalized row to point at an immutable `source_record`.
-
-## License
-
-TBD.
