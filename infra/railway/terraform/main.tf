@@ -150,9 +150,17 @@ locals {
     SOURCE_USER_AGENT       = var.source_user_agent
     WADD_INTERNAL_API_TOKEN = var.internal_api_token
     CLERK_JWT_ISSUER       = var.clerk_jwt_issuer
-    CLERK_JWKS_URL         = var.clerk_jwks_url
     WADD_ADMIN_JWT_AUDIENCE = var.admin_jwt_audience
   }
+
+  optional_api_vars = {
+    CLERK_JWKS_URL = var.clerk_jwks_url
+  }
+
+  effective_api_vars = merge(
+    local.api_vars,
+    { for key, value in local.optional_api_vars : key => value if trimspace(value) != "" },
+  )
 
   web_vars = {
     # Use Railway private networking for server-side web→API calls. The API may
@@ -190,7 +198,7 @@ locals {
 }
 
 resource "railway_variable" "api" {
-  for_each = local.api_vars
+  for_each = local.effective_api_vars
 
   name           = each.key
   value          = each.value
