@@ -4,9 +4,6 @@ A source-linked public graph of Washington State legislative activity — bills,
 hearings, testimony, video, transcripts, reviewed speakers, organizations, and
 public-record context — modeled on CalMatters Digital Democracy.
 
-This repo implements the public-beta legislative/testimony product tracked in
-`~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md`.
-
 ## Stack
 
 Current stack:
@@ -15,8 +12,6 @@ Current stack:
 - **Frontend:** Next.js + React + TypeScript + Tailwind + shadcn-style components.
 - **Database:** Postgres with JSONB, `pg_trgm`, source records, and project-pinned Goose migrations.
 - **Raw storage:** local filesystem under `data/raw/` for immutable source responses.
-
-The page architecture is "Go assembles route-specific JSON page objects from Postgres; Next.js renders those page objects." Postgres is the source of truth; the frontend no longer reads generated snapshot files.
 
 ## Local dev
 
@@ -33,8 +28,6 @@ make api                    # run the HTTP API the Next.js frontend reads from (
 ```
 
 `INVINTUS_EMBEDDER_KEY` is required for TVW/Invintus caption ingestion.
-`SOCRATA_APP_TOKEN` is optional for data.wa.gov/PDC reads; leave it blank
-unless/until broader PDC ingestion starts hitting Socrata/Tyler throttling.
 
 The frontend reads from the API, so a full local loop is:
 
@@ -44,17 +37,6 @@ export WADD_INTERNAL_API_TOKEN=dev-change-me
 make api &                                  # Go API on :8080
 cd apps/web && WADD_INTERNAL_API_TOKEN=dev-change-me pnpm dev  # Next.js on :3000
 ```
-
-Override the API URL the frontend hits with `WADD_API_URL` (default
-`http://localhost:8080`) — useful when running the API on a non-default
-port or against a remote dev DB.
-
-All Go `/api/v1/*` endpoints require an internal bearer token. Set the same
-server-only `WADD_INTERNAL_API_TOKEN` value on both the Go API service and the
-Next.js web app. Server Components attach it directly; browser-originated
-`/api/v1/*` requests go through the Next.js route proxy so the token is never
-bundled into client-side JavaScript. `/healthz` and `/readyz` remain
-unauthenticated for platform health checks.
 
 Admin review pages and APIs also require Clerk user authentication. Configure
 Clerk for the web app with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
