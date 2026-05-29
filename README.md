@@ -97,25 +97,41 @@ every upstream API at the configured rate.
 
 ```
 cmd/
-  wa-dd/                  # operator CLI (find-candidates, ingest-*, daily pipeline)
-  wa-dd-api/              # read-only HTTP API for the Next.js frontend
+  wa-dd/                  # operator CLI: ingest, discover, daily, backfill jobs
+  wa-dd-api/              # HTTP API for the Next.js frontend
+apps/
+  web/                    # Next.js frontend, admin review UI, API proxy routes
 internal/
-  sources/{lws,csi,committeeschedules,tvw,pdc,socrata,datawa,...}/
-                          # source connectors using Fetch / StoreRaw / Parse / Normalize patterns
-  sources/httpx/          # shared retry + rate-limit + raw-bytes hook
-  storage/{db,objectstore}/
-                          # pgx wrapper, source_record helpers, filesystem object store
+  candidate/              # candidate hearing finder
+  diarization/            # speaker diarization/evidence helpers
+  domain/                 # shared civic-domain value objects
+  entitymatch/            # organization/entity matching logic
+  jobs/                   # ingestion and enrichment pipeline steps
+  pageassembly/           # API response assemblers
+  sources/                # external source connectors
+  sources/httpx/          # shared HTTP retry/rate-limit/raw sink hook
+  storage/db/             # pgx store, source records, query helpers
+  storage/objectstore/    # local/S3 raw artifact storage
 db/
+  fixtures/               # deterministic test/e2e fixture data
   migrations/             # goose-style SQL migrations
 config/
   issue_keywords.yml
 infra/
-  docker-compose.yml
+  docker-compose.yml      # local services
+  railway/                # Railway Terraform/config/docs
+scripts/
+  seed-test-fixtures.sh
+tools/
+  goose/                  # project-pinned goose module
 data/
   raw/                    # immutable raw API responses (gitignored)
   processed/              # run summaries and derived artifacts (gitignored)
 docs/
-  ingestion.md                    # canonical implementation/operator walkthrough
-  phase0-spike-report.md          # preserved feasibility findings
-  written-testimony-source-note.md # written-testimony access note
+  db/                     # SchemaSpy config and database docs notes
+  ingestion.md            # canonical implementation/operator walkthrough
+  testing.md              # test strategy and commands
+  *.md                    # feature/source/operator notes
+DEPLOYMENT.md             # hosted deployment overview
+VERIFICATION.md           # verification checklist/status
 ```
