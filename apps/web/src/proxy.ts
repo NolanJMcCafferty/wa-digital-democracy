@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { absoluteSiteURL } from "@/lib/siteUrl";
 
 const isAdminRoute = createRouteMatcher(["/admin(.*)"]);
 
@@ -7,7 +8,8 @@ export default clerkMiddleware(async (auth, req) => {
   if (isAdminRoute(req)) {
     const { userId, redirectToSignIn } = await auth();
     if (!userId) {
-      return redirectToSignIn({ returnBackUrl: req.url });
+      const returnBackUrl = absoluteSiteURL(`${req.nextUrl.pathname}${req.nextUrl.search}`);
+      return redirectToSignIn({ returnBackUrl });
     }
   }
   return NextResponse.next();
