@@ -77,7 +77,12 @@ For custom domains, set:
 ```hcl
 api_custom_domain = "api.example.org"
 web_custom_domain = "example.org"
+api_port          = 8080
+web_port          = 3000
 ```
+
+`api_port` and `web_port` are passed to Railway as custom-domain target ports.
+Keep them as plain integer ports, not `$PORT` or a URL.
 
 Then use `terraform output custom_domain_dns` to retrieve DNS records and add
 them in your DNS provider.
@@ -97,10 +102,11 @@ TF_STATE_R2_ACCESS_KEY_ID
 TF_STATE_R2_SECRET_ACCESS_KEY
 ```
 
-Set `TF_STATE_R2_KEY` to:
+Use separate state keys per deployment target. Recommended defaults:
 
 ```txt
-wa-digital-democracy/railway/terraform.tfstate
+wa-digital-democracy/railway/production.tfstate
+wa-digital-democracy/railway/staging.tfstate
 ```
 
 `terraform.tfvars`, `.terraform/`, generated backend files, plan files, and
@@ -112,10 +118,55 @@ State contains sensitive Railway variables.
 ## GitHub Actions
 
 `.github/workflows/deploy-railway.yml` validates Terraform on pull requests,
-then plans and applies on pushes to `main`.
+then plans and applies to Railway on both pull requests and pushes to `main`:
 
-Set the GitHub repository secrets and variables listed in
-`infra/railway/README.md` before merging the workflow to `main`.
+- Pull requests deploy the PR head branch to the GitHub `staging` environment.
+- Pushes to `main` deploy `main` to the GitHub `production` environment.
+
+Both targets deploy into the same Railway project:
+
+```txt
+project_name = wa-digital-democracy
+```
+
+Use GitHub Environments to give staging and production separate secrets and
+variables. Both environments need the shared secret names listed in
+`infra/railway/README.md`; values may differ by environment.
+
+Staging defaults to a separate Railway environment and separate Terraform state.
+It intentionally ignores the production variable names (`TF_STATE_R2_KEY`,
+`R2_BUCKET_RAW`, `API_RAILWAY_SUBDOMAIN`, `WEB_RAILWAY_SUBDOMAIN`, custom-domain
+variables, and URL overrides) so a PR deploy cannot accidentally reuse
+production state or domains.
+
+```txt
+environment_name = staging
+STAGING_TF_STATE_R2_KEY = wa-digital-democracy/railway/staging.tfstate
+STAGING_R2_BUCKET_RAW = wa-dd-raw-staging
+STAGING_API_RAILWAY_SUBDOMAIN = wa-dd-api-staging
+STAGING_WEB_RAILWAY_SUBDOMAIN = wa-dd-web-staging
+```
+
+Optional staging-only overrides:
+
+```txt
+STAGING_API_CUSTOM_DOMAIN
+STAGING_WEB_CUSTOM_DOMAIN
+STAGING_API_PUBLIC_URL_OVERRIDE
+STAGING_WEB_PUBLIC_URL_OVERRIDE
+STAGING_DAILY_BIENNIUM
+STAGING_DAILY_CRON
+```
+
+Production defaults remain:
+
+```txt
+environment_name = production
+r2_bucket_raw = wa-dd-raw-prod
+```
+
+For production, set `TF_STATE_R2_KEY`, `API_RAILWAY_SUBDOMAIN` and
+`WEB_RAILWAY_SUBDOMAIN` explicitly, or set custom domains / public URL overrides.
 
 The workflow uses `terraform plan/apply -parallelism=1` to avoid Railway
 service deployment rate limits while variables are created.

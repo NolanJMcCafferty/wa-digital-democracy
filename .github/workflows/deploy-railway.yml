@@ -5,24 +5,16 @@ on:
     branches:
       - main
   pull_request:
-    paths:
-      - ".github/workflows/deploy-railway.yml"
-      - "railway.json"
-      - "Dockerfile"
-      - "infra/railway/config/postgis.railway.json"
-      - "infra/railway/postgis/**"
-      - "apps/web/**"
-      - "cmd/**"
-      - "internal/**"
-      - "db/migrations/**"
-      - "infra/railway/**"
-      - "go.mod"
-      - "go.sum"
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
   workflow_dispatch:
 
 concurrency:
-  group: railway-production
-  cancel-in-progress: false
+  group: railway-${{ github.event_name == 'pull_request' && 'staging' || 'production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
@@ -53,11 +45,13 @@ jobs:
         run: terraform -chdir="${TF_WORKING_DIR}" validate
 
   deploy:
-    name: Apply Railway Terraform
+    name: Apply Railway Terraform (${{ github.event_name == 'pull_request' && 'staging' || 'production' }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: validate
-    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    if: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'staging' || 'production' }}
     permissions:
       contents: read
     env:
@@ -112,6 +106,40 @@ jobs:
           terraform_version: 1.15.4
           terraform_wrapper: false
 
+      - name: Resolve deployment target
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "DEPLOY_TARGET=staging" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_ENVIRONMENT_NAME=staging" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_GITHUB_BRANCH=${GITHUB_HEAD_REF}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_TF_STATE_R2_KEY=${STAGING_TF_STATE_R2_KEY:-wa-digital-democracy/railway/staging.tfstate}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_R2_BUCKET_RAW=${STAGING_R2_BUCKET_RAW:-wa-dd-raw-staging}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_API_RAILWAY_SUBDOMAIN=${STAGING_API_RAILWAY_SUBDOMAIN:-wa-dd-api-staging}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_WEB_RAILWAY_SUBDOMAIN=${STAGING_WEB_RAILWAY_SUBDOMAIN:-wa-dd-web-staging}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_API_CUSTOM_DOMAIN=${STAGING_API_CUSTOM_DOMAIN:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_WEB_CUSTOM_DOMAIN=${STAGING_WEB_CUSTOM_DOMAIN:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_API_PUBLIC_URL_OVERRIDE=${STAGING_API_PUBLIC_URL_OVERRIDE:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_WEB_PUBLIC_URL_OVERRIDE=${STAGING_WEB_PUBLIC_URL_OVERRIDE:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_DAILY_BIENNIUM=${STAGING_DAILY_BIENNIUM:-2025-26}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_DAILY_CRON=${STAGING_DAILY_CRON:-30 3 * * *}" >> "$GITHUB_ENV"
+          else
+            echo "DEPLOY_TARGET=production" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_ENVIRONMENT_NAME=production" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_GITHUB_BRANCH=main" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_TF_STATE_R2_KEY=${TF_STATE_R2_KEY:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_R2_BUCKET_RAW=${R2_BUCKET_RAW:-wa-dd-raw-prod}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_API_RAILWAY_SUBDOMAIN=${API_RAILWAY_SUBDOMAIN:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_WEB_RAILWAY_SUBDOMAIN=${WEB_RAILWAY_SUBDOMAIN:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_API_CUSTOM_DOMAIN=${API_CUSTOM_DOMAIN:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_WEB_CUSTOM_DOMAIN=${WEB_CUSTOM_DOMAIN:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_API_PUBLIC_URL_OVERRIDE=${API_PUBLIC_URL_OVERRIDE:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_WEB_PUBLIC_URL_OVERRIDE=${WEB_PUBLIC_URL_OVERRIDE:-}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_DAILY_BIENNIUM=${DAILY_BIENNIUM:-2025-26}" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_DAILY_CRON=${DAILY_CRON:-30 3 * * *}" >> "$GITHUB_ENV"
+          fi
+
       - name: Validate required deployment inputs
         run: |
           set -euo pipefail
@@ -120,7 +148,7 @@ jobs:
             RAILWAY_TOKEN
             CLOUDFLARE_ACCOUNT_ID
             TF_STATE_R2_BUCKET
-            TF_STATE_R2_KEY
+            EFFECTIVE_TF_STATE_R2_KEY
             TF_STATE_R2_ACCESS_KEY_ID
             TF_STATE_R2_SECRET_ACCESS_KEY
             POSTGIS_PASSWORD
@@ -143,13 +171,13 @@ jobs:
             fi
           done
 
-          if [ -z "${API_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${API_CUSTOM_DOMAIN:-}" ] && [ -z "${API_PUBLIC_URL_OVERRIDE:-}" ]; then
-            echo "Set API_RAILWAY_SUBDOMAIN, API_CUSTOM_DOMAIN, or API_PUBLIC_URL_OVERRIDE." >&2
+          if [ -z "${EFFECTIVE_API_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${EFFECTIVE_API_CUSTOM_DOMAIN:-}" ] && [ -z "${EFFECTIVE_API_PUBLIC_URL_OVERRIDE:-}" ]; then
+            echo "Set API_RAILWAY_SUBDOMAIN, API_CUSTOM_DOMAIN, or API_PUBLIC_URL_OVERRIDE for ${DEPLOY_TARGET}." >&2
             exit 1
           fi
 
-          if [ -z "${WEB_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${WEB_CUSTOM_DOMAIN:-}" ] && [ -z "${WEB_PUBLIC_URL_OVERRIDE:-}" ]; then
-            echo "Set WEB_RAILWAY_SUBDOMAIN, WEB_CUSTOM_DOMAIN, or WEB_PUBLIC_URL_OVERRIDE." >&2
+          if [ -z "${EFFECTIVE_WEB_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${EFFECTIVE_WEB_CUSTOM_DOMAIN:-}" ] && [ -z "${EFFECTIVE_WEB_PUBLIC_URL_OVERRIDE:-}" ]; then
+            echo "Set WEB_RAILWAY_SUBDOMAIN, WEB_CUSTOM_DOMAIN, or WEB_PUBLIC_URL_OVERRIDE for ${DEPLOY_TARGET}." >&2
             exit 1
           fi
 
@@ -160,7 +188,7 @@ jobs:
 
           cat > backend.hcl <<EOF
           bucket                      = "${TF_STATE_R2_BUCKET}"
-          key                         = "${TF_STATE_R2_KEY}"
+          key                         = "${EFFECTIVE_TF_STATE_R2_KEY}"
           region                      = "auto"
           endpoints                   = { s3 = "https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" }
           access_key                  = "${TF_STATE_R2_ACCESS_KEY_ID}"
@@ -179,12 +207,14 @@ jobs:
           set -euo pipefail
 
           jq -n \
+            --arg project_name "wa-digital-democracy" \
+            --arg environment_name "${EFFECTIVE_ENVIRONMENT_NAME}" \
             --arg github_repo "${GITHUB_REPOSITORY}" \
-            --arg github_branch "main" \
+            --arg github_branch "${EFFECTIVE_GITHUB_BRANCH}" \
             --arg workspace_id "${RAILWAY_WORKSPACE_ID:-}" \
             --arg postgis_password "${POSTGIS_PASSWORD}" \
             --arg cloudflare_account_id "${CLOUDFLARE_ACCOUNT_ID}" \
-            --arg r2_bucket_raw "${R2_BUCKET_RAW:-wa-dd-raw-prod}" \
+            --arg r2_bucket_raw "${EFFECTIVE_R2_BUCKET_RAW}" \
             --arg r2_bucket_location "${R2_BUCKET_LOCATION:-}" \
             --arg r2_bucket_jurisdiction "${R2_BUCKET_JURISDICTION:-}" \
             --arg r2_bucket_storage_class "${R2_BUCKET_STORAGE_CLASS:-Standard}" \
@@ -198,17 +228,19 @@ jobs:
             --arg clerk_jwt_issuer "${CLERK_JWT_ISSUER:-}" \
             --arg clerk_jwks_url "${CLERK_JWKS_URL:-}" \
             --arg admin_jwt_audience "${WADD_ADMIN_JWT_AUDIENCE:-wa-dd-admin}" \
-            --arg api_railway_subdomain "${API_RAILWAY_SUBDOMAIN:-}" \
-            --arg web_railway_subdomain "${WEB_RAILWAY_SUBDOMAIN:-}" \
-            --arg api_custom_domain "${API_CUSTOM_DOMAIN:-}" \
-            --arg web_custom_domain "${WEB_CUSTOM_DOMAIN:-}" \
-            --arg api_public_url_override "${API_PUBLIC_URL_OVERRIDE:-}" \
-            --arg web_public_url_override "${WEB_PUBLIC_URL_OVERRIDE:-}" \
-            --arg daily_biennium "${DAILY_BIENNIUM:-2025-26}" \
-            --arg daily_cron "${DAILY_CRON:-30 3 * * *}" \
+            --arg api_railway_subdomain "${EFFECTIVE_API_RAILWAY_SUBDOMAIN:-}" \
+            --arg web_railway_subdomain "${EFFECTIVE_WEB_RAILWAY_SUBDOMAIN:-}" \
+            --arg api_custom_domain "${EFFECTIVE_API_CUSTOM_DOMAIN:-}" \
+            --arg web_custom_domain "${EFFECTIVE_WEB_CUSTOM_DOMAIN:-}" \
+            --arg api_public_url_override "${EFFECTIVE_API_PUBLIC_URL_OVERRIDE:-}" \
+            --arg web_public_url_override "${EFFECTIVE_WEB_PUBLIC_URL_OVERRIDE:-}" \
+            --arg daily_biennium "${EFFECTIVE_DAILY_BIENNIUM}" \
+            --arg daily_cron "${EFFECTIVE_DAILY_CRON}" \
             '
             def empty_to_null: if . == "" then null else . end;
             {
+              project_name: $project_name,
+              environment_name: $environment_name,
               github_repo: $github_repo,
               github_branch: $github_branch,
               workspace_id: ($workspace_id | empty_to_null),
@@ -252,6 +284,5 @@ jobs:
         run: terraform plan -parallelism=1 -out=railway.tfplan
 
       - name: Terraform apply
-        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -parallelism=1 -auto-approve railway.tfplan
