@@ -18,7 +18,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs db-docs-open test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -83,15 +83,13 @@ seed-e2e-fixtures: ## Seed deterministic fixture data into an existing e2e/stagi
 	@test -n "$$WADD_E2E_DSN" || { echo "WADD_E2E_DSN is required"; exit 1; }
 	scripts/seed-test-fixtures.sh --dsn "$$WADD_E2E_DSN"
 
-db-docs: up-db ## Generate SchemaSpy HTML docs for the local Postgres schema
+db-docs: up-db ## Generate SchemaSpy HTML docs and open them in the default browser
 	@mkdir -p $(SCHEMASPY_OUT)
 	docker run --rm \
 		--network $(COMPOSE_NETWORK) \
 		-v "$(CURDIR)/$(SCHEMASPY_OUT):/output" \
 		-v "$(CURDIR)/docs/db/schemaspy.properties:/schemaspy.properties:ro" \
 		$(SCHEMASPY_IMAGE)
-
-db-docs-open: db-docs ## Generate and open SchemaSpy docs in the default browser
 	@xdg-open "$(CURDIR)/$(SCHEMASPY_OUT)/index.html" >/dev/null 2>&1 || echo "Open $(CURDIR)/$(SCHEMASPY_OUT)/index.html"
 
 test:         ## Run unit tests

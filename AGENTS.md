@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository.
 
 ## What this is
 
-A source-linked public graph of Washington State legislative activity — bills, hearings, testimony, video, transcripts, reviewed speakers, organizations, and public-record context — modeled on CalMatters Digital Democracy. The implementation tracks the completed public-beta plan in `~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md`. Long-form ingestion walkthrough lives at **`docs/ingestion.md`** — read that before making changes to anything in `internal/jobs/` or `internal/sources/`.
+A source-linked public graph of Washington State legislative activity — bills, hearings, testimony, video, transcripts, reviewed speakers, organizations, and public-record context — modeled on CalMatters Digital Democracy. Long-form ingestion walkthrough lives at **`docs/ingestion.md`** — read that before making changes to anything in `internal/jobs/` or `internal/sources/`.
 
 ## Architecture in one minute
 

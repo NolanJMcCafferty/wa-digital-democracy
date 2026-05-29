@@ -4,9 +4,6 @@ A source-linked public graph of Washington State legislative activity — bills,
 hearings, testimony, video, transcripts, reviewed speakers, organizations, and
 public-record context — modeled on CalMatters Digital Democracy.
 
-This repo implements the public-beta legislative/testimony product tracked in
-`~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md`.
-
 ## Stack
 
 Current stack:
@@ -15,8 +12,6 @@ Current stack:
 - **Frontend:** Next.js + React + TypeScript + Tailwind + shadcn-style components.
 - **Database:** Postgres with JSONB, `pg_trgm`, source records, and project-pinned Goose migrations.
 - **Raw storage:** local filesystem under `data/raw/` for immutable source responses.
-
-The page architecture is "Go assembles route-specific JSON page objects from Postgres; Next.js renders those page objects." Postgres is the source of truth; the frontend no longer reads generated snapshot files.
 
 ## Local dev
 
@@ -27,14 +22,12 @@ make migrate-up             # apply schema with project-pinned Goose
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
 make psql                   # open a shell against the local DB
-make db-docs                # generate SchemaSpy HTML docs for the local schema
+make db-docs                # generate SchemaSpy HTML docs and open them in a browser
 make analytics              # start optional Metabase analytics UI on :3001
 make api                    # run the HTTP API the Next.js frontend reads from (:8080)
 ```
 
 `INVINTUS_EMBEDDER_KEY` is required for TVW/Invintus caption ingestion.
-`SOCRATA_APP_TOKEN` is optional for data.wa.gov/PDC reads; leave it blank
-unless/until broader PDC ingestion starts hitting Socrata/Tyler throttling.
 
 The frontend reads from the API, so a full local loop is:
 
@@ -45,60 +38,13 @@ make api &                                  # Go API on :8080
 cd apps/web && WADD_INTERNAL_API_TOKEN=dev-change-me pnpm dev  # Next.js on :3000
 ```
 
-Override the API URL the frontend hits with `WADD_API_URL` (default
-`http://localhost:8080`) — useful when running the API on a non-default
-port or against a remote dev DB.
-
-All Go `/api/v1/*` endpoints require an internal bearer token. Set the same
-server-only `WADD_INTERNAL_API_TOKEN` value on both the Go API service and the
-Next.js web app. Server Components attach it directly; browser-originated
-`/api/v1/*` requests go through the Next.js route proxy so the token is never
-bundled into client-side JavaScript. `/healthz` and `/readyz` remain
-unauthenticated for platform health checks.
-
-Admin review pages and APIs also require Clerk user authentication. Configure
-Clerk for the web app with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
-`CLERK_SECRET_KEY`, then create a Clerk JWT template named `wadd-admin` with
-audience `wa-dd-admin`. Include the authenticated user's email/name and one role
-claim named `role`, `admin_role`, or `wadd_role`; accepted roles are `viewer`,
-`reviewer`, and `admin`. Set `CLERK_JWT_ISSUER` (or `CLERK_JWKS_URL`) on the Go
-API so `/api/v1/admin/*` can validate Clerk tokens independently of the Next.js
-route guards. `viewer` can read review queues; `reviewer` and `admin` can mutate
-review decisions. Every admin mutation writes an `admin_audit_log` record.
-
-## Railway deployment
-
-Railway is the first hosted demo target. The deploy contract is:
-
-- `infra/railway/terraform/` is the reproducible infra setup for Railway
-  services, variables, domains, cron, and the optional R2 bucket.
-- `.github/workflows/deploy-railway.yml` runs Terraform plan/apply from
-  GitHub Actions; pushes to `main` apply production infrastructure.
-- `apps/web/Dockerfile` for the Next.js web service.
-- root `Dockerfile` default Railway image for `wa-dd-api`, `wa-dd`, and
-  `goose`.
-- cron jobs use the same root image, with start command
-  `wa-dd daily --biennium 2025-26`.
-- migrations use the same root image, with `goose -dir /app/db/migrations ...`.
-- Cloudflare R2 via `OBJECT_STORE=s3` and `S3_*` variables for raw source
-  artifacts.
-
-See `infra/railway/README.md` and `infra/railway/variables.example.env` for
-the service layout and required variables. Hosted code accepts `DATABASE_URL`
-as the production alias for local `WADD_DSN`; the API also honors Railway's
-`PORT`.
-
 ### Database docs
 
-Generate browsable SchemaSpy documentation for the local Postgres schema:
+Generate browsable SchemaSpy documentation for the local Postgres schema and open it in the default browser:
 
 ```sh
 make db-docs
 ```
-
-Open `docs/db/schemaspy/index.html` after generation. The generated HTML is
-ignored by git; the committed config lives in `docs/db/schemaspy.properties`.
-Use `make db-docs-open` to generate and open the docs in the default browser.
 
 ### Local analytics
 
@@ -151,43 +97,41 @@ every upstream API at the configured rate.
 
 ```
 cmd/
-  wa-dd/                  # operator CLI (find-candidates, ingest-*, daily pipeline)
-  wa-dd-api/              # read-only HTTP API for the Next.js frontend
+  wa-dd/                  # operator CLI: ingest, discover, daily, backfill jobs
+  wa-dd-api/              # HTTP API for the Next.js frontend
+apps/
+  web/                    # Next.js frontend, admin review UI, API proxy routes
 internal/
-  sources/{lws,csi,committeeschedules,tvw,pdc,socrata,datawa,...}/
-                          # source connectors using Fetch / StoreRaw / Parse / Normalize patterns
-  sources/httpx/          # shared retry + rate-limit + raw-bytes hook
-  storage/{db,objectstore}/
-                          # pgx wrapper, source_record helpers, filesystem object store
+  candidate/              # candidate hearing finder
+  diarization/            # speaker diarization/evidence helpers
+  domain/                 # shared civic-domain value objects
+  entitymatch/            # organization/entity matching logic
+  jobs/                   # ingestion and enrichment pipeline steps
+  pageassembly/           # API response assemblers
+  sources/                # external source connectors
+  sources/httpx/          # shared HTTP retry/rate-limit/raw sink hook
+  storage/db/             # pgx store, source records, query helpers
+  storage/objectstore/    # local/S3 raw artifact storage
 db/
+  fixtures/               # deterministic test/e2e fixture data
   migrations/             # goose-style SQL migrations
 config/
   issue_keywords.yml
 infra/
-  docker-compose.yml
+  docker-compose.yml      # local services
+  railway/                # Railway Terraform/config/docs
+scripts/
+  seed-test-fixtures.sh
+tools/
+  goose/                  # project-pinned goose module
 data/
   raw/                    # immutable raw API responses (gitignored)
   processed/              # run summaries and derived artifacts (gitignored)
 docs/
-  ingestion.md                    # canonical implementation/operator walkthrough
-  phase0-spike-report.md          # preserved feasibility findings
-  written-testimony-source-note.md # written-testimony access note
+  db/                     # SchemaSpy config and database docs notes
+  ingestion.md            # canonical implementation/operator walkthrough
+  testing.md              # test strategy and commands
+  *.md                    # feature/source/operator notes
+DEPLOYMENT.md             # hosted deployment overview
+VERIFICATION.md           # verification checklist/status
 ```
-
-## Architectural ground rules
-
-From the wiki Recommended Tech Stack §"Key architectural decisions":
-
-1. Postgres owns truth; search and AI summaries are rebuildable.
-2. Raw source records are immutable.
-3. Every public fact needs provenance (`source_url` + `fetched_at`).
-4. Confidence is a first-class field.
-5. Manual review is a feature, not a failure.
-6. Start static, grow dynamic.
-
-The schema in `db/migrations/0001_initial.sql` enforces #2 and #3 by requiring
-every normalized row to point at an immutable `source_record`.
-
-## License
-
-TBD.

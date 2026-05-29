@@ -6,8 +6,8 @@ Generate browsable SchemaSpy documentation for the local Postgres schema:
 make db-docs
 ```
 
-Output is written to `docs/db/schemaspy/` and is intentionally gitignored.
-Open `docs/db/schemaspy/index.html` in a browser to inspect tables, columns,
+Output is written to `docs/db/schemaspy/`, opened in the default browser, and
+intentionally gitignored. Inspect the generated docs for tables, columns,
 indexes, relationships, and ER diagrams.
 
 Requirements:
