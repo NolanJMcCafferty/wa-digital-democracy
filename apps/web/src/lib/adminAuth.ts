@@ -2,6 +2,7 @@ import "server-only";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { notFound, redirect } from "next/navigation";
+import { absoluteSiteURL } from "./siteUrl";
 
 export type AdminRole = "viewer" | "reviewer" | "admin";
 
@@ -35,7 +36,7 @@ export function hasAdminRole(role: AdminRole | null, minimum: AdminRole): boolea
 export async function requireAdminRole(minimum: AdminRole = "viewer"): Promise<{ role: AdminRole; userId: string }> {
   const session = await auth();
   if (!session.userId) {
-    redirect(`/sign-in?redirect_url=${encodeURIComponent("/admin/review/speakers")}`);
+    redirect(`/sign-in?redirect_url=${encodeURIComponent(absoluteSiteURL("/admin/review/speakers"))}`);
   }
 
   const user = await currentUser();
