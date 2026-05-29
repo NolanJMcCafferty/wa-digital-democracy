@@ -130,6 +130,7 @@ resource "railway_custom_domain" "api" {
   count = var.api_custom_domain == null ? 0 : 1
 
   domain         = var.api_custom_domain
+  target_port    = var.api_port
   environment_id = local.environment_id
   service_id     = railway_service.api.id
 }
@@ -138,6 +139,7 @@ resource "railway_custom_domain" "web" {
   count = var.web_custom_domain == null ? 0 : 1
 
   domain         = var.web_custom_domain
+  target_port    = var.web_port
   environment_id = local.environment_id
   service_id     = railway_service.web.id
 }
