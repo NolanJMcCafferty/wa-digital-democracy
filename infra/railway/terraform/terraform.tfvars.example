@@ -13,6 +13,7 @@ postgis_password = "replace-with-a-long-random-password"
 api_railway_subdomain = "wa-dd-api"
 web_railway_subdomain = "wa-dd-web"
 api_port              = 8080
+web_port              = 3000
 
 # Optional custom domains. Leave null unless DNS is ready.
 api_custom_domain = null

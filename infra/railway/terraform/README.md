@@ -77,7 +77,12 @@ For custom domains, set:
 ```hcl
 api_custom_domain = "api.example.org"
 web_custom_domain = "example.org"
+api_port          = 8080
+web_port          = 3000
 ```
+
+`api_port` and `web_port` are passed to Railway as custom-domain target ports.
+Keep them as plain integer ports, not `$PORT` or a URL.
 
 Then use `terraform output custom_domain_dns` to retrieve DNS records and add
 them in your DNS provider.
