@@ -83,6 +83,8 @@ jobs:
       INVINTUS_EMBEDDER_KEY: ${{ secrets.INVINTUS_EMBEDDER_KEY }}
       SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
       WADD_INTERNAL_API_TOKEN: ${{ secrets.WADD_INTERNAL_API_TOKEN }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
 
       R2_BUCKET_RAW: ${{ vars.R2_BUCKET_RAW }}
       R2_BUCKET_LOCATION: ${{ vars.R2_BUCKET_LOCATION }}
@@ -124,6 +126,7 @@ jobs:
             R2_SECRET_ACCESS_KEY
             INVINTUS_EMBEDDER_KEY
             WADD_INTERNAL_API_TOKEN
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
             CLERK_SECRET_KEY
           )
 
@@ -187,7 +190,7 @@ jobs:
             --arg invintus_embedder_key "${INVINTUS_EMBEDDER_KEY}" \
             --arg socrata_app_token "${SOCRATA_APP_TOKEN:-}" \
             --arg internal_api_token "${WADD_INTERNAL_API_TOKEN}" \
-            --arg clerk_publishable_key "${CLERK_PUBLISHABLE_KEY:-}" \
+            --arg clerk_publishable_key "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" \
             --arg clerk_secret_key "${CLERK_SECRET_KEY}" \
             --arg clerk_jwt_issuer "${CLERK_JWT_ISSUER:-}" \
             --arg clerk_jwks_url "${CLERK_JWKS_URL:-}" \
