@@ -13,6 +13,7 @@ const mode = argv.find((arg) => !arg.startsWith("--")) || "apply";
 const dryRun = argv.includes("--dry-run");
 const deploy = argv.includes("--deploy") || mode === "deploy";
 const skipDeploy = argv.includes("--skip-deploy");
+const deployCommitSha = env("RAILWAY_DEPLOY_COMMIT_SHA") || env("GITHUB_SHA") || "";
 
 if (["-h", "--help", "help"].includes(mode)) {
   printHelp();
@@ -573,10 +574,10 @@ async function deployEnvironment(railwayEnv, services) {
   for (const name of ["postgis", "api", "web", "daily"]) {
     const service = services.get(name);
     const deploymentId = await gql(
-      `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
-        serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+      `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String) {
+        serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha)
       }`,
-      { serviceId: service.id, environmentId: railwayEnv.id },
+      { serviceId: service.id, environmentId: railwayEnv.id, commitSha: deployCommitSha || null },
       "serviceInstanceDeployV2",
     );
     console.log(`  ${name}: deployment triggered (${deploymentId})`);
