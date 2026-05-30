@@ -13,7 +13,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -2250,11 +2249,8 @@ func runAudioCache(args []string) int {
 		eventID    = fs.String("event-id", "", "TVW/Invintus event ID to cache audio for")
 		dsn        = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		outDir     = fs.String("out-dir", "data/audio", "audio cache output root")
-		rawDir     = fs.String("raw-dir", "data/raw", "filesystem root for raw TVW/Invintus API responses")
 		rateLimit  = fs.Float64("rate", 4.0, "max requests/sec for media download host")
 		keepSource = fs.Bool("keep-source", true, "keep downloaded original media next to normalized WAV")
-		printTVW   = fs.Bool("print-tvw-response", true, "print the stored TVW/Invintus Event/getDetailed response before selecting media")
-		printLimit = fs.Int("tvw-response-bytes", 65536, "maximum raw TVW/Invintus response bytes to print")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -2272,12 +2268,6 @@ func runAudioCache(args []string) int {
 		return 1
 	}
 	defer store.Close()
-
-	if *printTVW {
-		if err := printStoredTVWResponse(ctx, store, *eventID, *rawDir, *printLimit); err != nil {
-			fmt.Fprintf(os.Stderr, "audio-cache: print tvw response: %v\n", err)
-		}
-	}
 
 	candidates, err := store.ListTVWAudioSourceCandidates(ctx, *eventID)
 	if err != nil {
@@ -2344,62 +2334,6 @@ func runAudioCache(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "cached audio_asset_id=%d\noriginal=%s\nnormalized=%s\nsha256=%s\n", id, origPath, wavPath, hash)
 	return 0
-}
-
-func printStoredTVWResponse(ctx context.Context, store *db.Store, eventID, rawDir string, limit int) error {
-	const q = `
-SELECT sr.id, sr.source_system, sr.source_endpoint, sr.source_url, sr.raw_path,
-       COALESCE(sr.content_type, ''), sr.fetched_at
-  FROM tvw_event te
-  JOIN source_record sr ON sr.id = te.source_record_id
- WHERE te.tvw_event_id = $1;`
-	var (
-		sourceRecordID int64
-		system         string
-		endpoint       string
-		sourceURL      string
-		rawPath        string
-		contentType    string
-		fetchedAt      time.Time
-	)
-	if err := store.Pool.QueryRow(ctx, q, eventID).Scan(
-		&sourceRecordID, &system, &endpoint, &sourceURL, &rawPath, &contentType, &fetchedAt,
-	); err != nil {
-		return err
-	}
-
-	objs, err := objectstore.NewConfigured(ctx, rawDir)
-	if err != nil {
-		return fmt.Errorf("objectstore: %w", err)
-	}
-	body, err := objs.Get(ctx, rawPath)
-	if err != nil {
-		return fmt.Errorf("read raw object %s: %w", rawPath, err)
-	}
-
-	fmt.Fprintf(os.Stderr, "==> stored TVW/Invintus response for event %s\n", eventID)
-	fmt.Fprintf(os.Stderr, "  source_record_id=%d system=%s endpoint=%s fetched_at=%s\n",
-		sourceRecordID, system, endpoint, fetchedAt.Format(time.RFC3339))
-	fmt.Fprintf(os.Stderr, "  source_url=%s\n", sourceURL)
-	fmt.Fprintf(os.Stderr, "  raw_path=%s content_type=%s bytes=%d\n", rawPath, contentType, len(body))
-
-	printBody := body
-	truncated := false
-	if limit > 0 && len(printBody) > limit {
-		printBody = printBody[:limit]
-		truncated = true
-	}
-
-	var pretty bytes.Buffer
-	if json.Valid(printBody) && json.Indent(&pretty, printBody, "", "  ") == nil {
-		fmt.Fprintln(os.Stderr, pretty.String())
-	} else {
-		fmt.Fprintln(os.Stderr, string(printBody))
-	}
-	if truncated {
-		fmt.Fprintf(os.Stderr, "  ... truncated raw response at %d of %d bytes; increase --tvw-response-bytes to print more\n", limit, len(body))
-	}
-	return nil
 }
 
 func runDiarizeEvent(args []string) int {
