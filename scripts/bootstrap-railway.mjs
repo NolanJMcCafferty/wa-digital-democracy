@@ -574,14 +574,18 @@ function buildVariables(envSpec, domains) {
 async function deployEnvironment(railwayEnv, services) {
   for (const name of ["postgis", "api", "web", "daily"]) {
     const service = services.get(name);
-    const deploymentId = await gql(
-      `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String) {
-        serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha)
-      }`,
-      { serviceId: service.id, environmentId: railwayEnv.id, commitSha: deployCommitSha || null },
-      "serviceInstanceDeployV2",
-    );
-    console.log(`  ${name}: deployment triggered (${deploymentId})`);
+    try {
+      const deploymentId = await gql(
+        `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String) {
+          serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha)
+        }`,
+        { serviceId: service.id, environmentId: railwayEnv.id, commitSha: deployCommitSha || null },
+        "serviceInstanceDeployV2",
+      );
+      console.log(`  ${name}: deployment triggered (${deploymentId})`);
+    } catch (error) {
+      console.warn(`  ${name}: explicit deploy skipped (${error.message}); GitHub branch trigger will deploy on push`);
+    }
   }
 }
 
