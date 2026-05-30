@@ -158,7 +158,6 @@ async function main() {
 
     for (const serviceSpec of serviceSpecs) {
       const service = services.get(serviceSpec.name);
-      await connectService(service);
       await updateServiceInstance(service, railwayEnv, serviceSpec);
       await ensureDeploymentTrigger(project, railwayEnv, service, envSpec.branch);
     }
@@ -279,25 +278,6 @@ async function listServices(projectId) {
     { id: projectId },
   );
   return data.project.services.edges.map((edge) => edge.node);
-}
-
-async function connectService(service) {
-  try {
-    await gql(
-      `mutation serviceConnect($id: String!, $input: ServiceConnectInput!) {
-        serviceConnect(id: $id, input: $input) { id }
-      }`,
-      { id: service.id, input: { repo: REPO } },
-      "serviceConnect",
-    );
-    console.log(`  ${service.name}: connected to ${REPO}`);
-  } catch (error) {
-    if (isAlreadyConnected(error)) {
-      console.log(`  ${service.name}: repo connection already present`);
-      return;
-    }
-    throw error;
-  }
 }
 
 async function ensureDeploymentTrigger(project, railwayEnv, service, branch) {
@@ -623,11 +603,6 @@ function requiredEnv(...names) {
 
 function emptyToNull(value) {
   return value && value.trim() !== "" ? value : null;
-}
-
-function isAlreadyConnected(error) {
-  const message = error?.message || String(error);
-  return message.includes("already") && (message.includes("connected") || message.includes("source"));
 }
 
 function fail(message) {
