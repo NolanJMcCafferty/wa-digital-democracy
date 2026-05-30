@@ -421,18 +421,30 @@ async function ensureDomains(project, railwayEnv, services) {
     const existing = await listDomains(project.id, railwayEnv.id, service.id);
     let domain = existing.serviceDomains?.[0]?.domain || null;
     if (!domain) {
-      console.log(`  ${spec.name}: creating Railway service domain`);
-      const created = await gql(
-        `mutation serviceDomainCreate($input: ServiceDomainCreateInput!) {
-          serviceDomainCreate(input: $input) { id domain }
-        }`,
-        { input: { serviceId: service.id, environmentId: railwayEnv.id, targetPort: spec.targetPort } },
-        "serviceDomainCreate",
-      );
-      domain = created.domain;
+      const configuredDomain = configuredRailwayDomain(railwayEnv.name, spec.name);
+      if (configuredDomain) {
+        domain = configuredDomain;
+      }
     }
-    console.log(`  ${spec.name}: public domain ${domain}`);
-    result.set(spec.name, `https://${domain}`);
+    if (!domain) {
+      console.log(`  ${spec.name}: creating Railway service domain`);
+      try {
+        const created = await gql(
+          `mutation serviceDomainCreate($input: ServiceDomainCreateInput!) {
+            serviceDomainCreate(input: $input) { id domain }
+          }`,
+          { input: { serviceId: service.id, environmentId: railwayEnv.id, targetPort: spec.targetPort } },
+          "serviceDomainCreate",
+        );
+        domain = created.domain;
+      } catch (error) {
+        console.warn(`  ${spec.name}: could not create Railway service domain (${error.message}); continuing without generated domain`);
+      }
+    }
+    if (domain) {
+      console.log(`  ${spec.name}: public domain ${domain}`);
+      result.set(spec.name, domain.startsWith("http") ? domain : `https://${domain}`);
+    }
 
     const customDomain = customDomainFor(railwayEnv.name, spec.name);
     if (customDomain && !existing.customDomains?.some((entry) => entry.domain === customDomain)) {
@@ -575,6 +587,16 @@ function customDomainFor(environmentName, serviceName) {
   const envPrefix = environmentName.toUpperCase();
   const servicePrefix = serviceName.toUpperCase();
   return env(`${envPrefix}_${servicePrefix}_CUSTOM_DOMAIN`) || env(`${servicePrefix}_CUSTOM_DOMAIN`) || "";
+}
+
+function configuredRailwayDomain(environmentName, serviceName) {
+  const envPrefix = environmentName.toUpperCase();
+  const servicePrefix = serviceName.toUpperCase();
+  const direct = env(`${envPrefix}_${servicePrefix}_RAILWAY_DOMAIN`) || env(`${servicePrefix}_RAILWAY_DOMAIN`);
+  if (direct) return direct;
+  const subdomain = env(`${envPrefix}_${servicePrefix}_RAILWAY_SUBDOMAIN`) || env(`${servicePrefix}_RAILWAY_SUBDOMAIN`);
+  if (!subdomain) return "";
+  return subdomain.includes(".") ? subdomain : `${subdomain}.up.railway.app`;
 }
 
 async function gql(query, variables = {}, pick = null) {
