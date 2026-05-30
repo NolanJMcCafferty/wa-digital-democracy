@@ -7,6 +7,7 @@ const PROJECT_NAME = env("RAILWAY_PROJECT_NAME") || "wa-digital-democracy";
 const PROJECT_DESCRIPTION = env("RAILWAY_PROJECT_DESCRIPTION") || "Washington Digital Democracy hosted demo";
 const WORKSPACE_ID = emptyToNull(env("RAILWAY_WORKSPACE_ID"));
 const token = env("RAILWAY_API_TOKEN") || env("RAILWAY_TOKEN");
+const deployCommitSha = emptyToNull(env("RAILWAY_DEPLOY_COMMIT_SHA") || env("GITHUB_SHA"));
 
 const argv = process.argv.slice(2);
 const mode = argv.find((arg) => !arg.startsWith("--")) || "apply";
@@ -621,15 +622,20 @@ async function deployEnvironment(railwayEnv, services) {
   const failures = [];
   for (const name of ["postgis", "migrate", "api", "web", "daily"]) {
     const service = services.get(name);
+    const variables = {
+      serviceId: service.id,
+      environmentId: railwayEnv.id,
+      commitSha: deployCommitSha,
+    };
     try {
       const deploymentId = await gql(
-        `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
-          serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+        `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String) {
+          serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha)
         }`,
-        { serviceId: service.id, environmentId: railwayEnv.id },
+        variables,
         "serviceInstanceDeployV2",
       );
-      console.log(`  ${name}: deployment triggered (${deploymentId})`);
+      console.log(`  ${name}: deployment triggered (${deploymentId}${deployCommitSha ? ` @ ${deployCommitSha}` : ""})`);
     } catch (error) {
       console.error(`  ${name}: explicit deploy failed (${error.message})`);
       failures.push(`${name}: ${error.message}`);

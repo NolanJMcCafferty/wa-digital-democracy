@@ -82,6 +82,7 @@ jobs:
       RAILWAY_PRODUCTION_BRANCH: main
       RAILWAY_STAGING_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || 'staging' }}
       RAILWAY_ENVIRONMENT_FILTER: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/staging') && 'staging' || 'production' }}
+      RAILWAY_DEPLOY_COMMIT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       POSTGIS_PASSWORD: ${{ secrets.POSTGIS_PASSWORD }}
       POSTGIS_PASSWORD_PRODUCTION: ${{ secrets.POSTGIS_PASSWORD_PRODUCTION }}
@@ -160,17 +161,4 @@ jobs:
             echo "Missing RAILWAY_API_TOKEN or RAILWAY_TOKEN repository secret" >&2
             exit 1
           fi
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # Staging (PR) uses serviceInstanceDeployV2, which works for the
-            # staging environment and is needed because PR branches don't have
-            # standing Railway branch triggers.
-            node scripts/bootstrap-railway.mjs apply --deploy
-          else
-            # Production (push to main, or workflow_dispatch) deploys via
-            # Railway's GitHub branch triggers, which the reconcile step keeps
-            # in sync. We skip serviceInstanceDeployV2 because that API path
-            # is not reliable for this production project (returns
-            # "Deployment not found"). To force a redeploy without a code push,
-            # use `git commit --allow-empty` on main or click Deploy in Railway.
-            node scripts/bootstrap-railway.mjs apply --skip-deploy
-          fi
+          node scripts/bootstrap-railway.mjs apply --deploy
