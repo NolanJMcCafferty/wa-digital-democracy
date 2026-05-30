@@ -105,7 +105,6 @@ const serviceSpecs = [
     name: "migrate",
     source: { repo: REPO },
     branchByEnv: true,
-    deploymentTrigger: false,
     config: {
       rootDirectory: "/",
       dockerfilePath: "Dockerfile",
