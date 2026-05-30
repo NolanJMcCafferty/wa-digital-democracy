@@ -39,7 +39,9 @@ export async function requireAdminRole(minimum: AdminRole = "viewer"): Promise<{
     const headerList = await headers();
     const pathname = headerList.get("x-pathname") || "/admin/review/speakers";
     const search = headerList.get("x-search") || "";
-    redirect(`/sign-in?redirect_url=${encodeURIComponent(`${pathname}${search}`)}`);
+    const origin = headerList.get("x-public-origin") || "";
+    const redirectURL = origin ? new URL(`${pathname}${search}`, origin).toString() : `${pathname}${search}`;
+    redirect(`/sign-in?redirect_url=${encodeURIComponent(redirectURL)}`);
   }
 
   const user = await currentUser();
