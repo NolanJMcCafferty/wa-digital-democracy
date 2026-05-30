@@ -8,6 +8,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -80,27 +81,62 @@ func (s *S3) Put(ctx context.Context, system, hash, contentType string, body []b
 	}
 	key := s.key(system, hash+extFor(contentType))
 
+	if exists, err := s.exists(ctx, key); err != nil {
+		return "", err
+	} else if exists {
+		return key, nil
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:      aws.String(s.bucket),
+			Key:         aws.String(key),
+			Body:        bytes.NewReader(body),
+			ContentType: aws.String(contentType),
+		})
+		if err == nil {
+			return key, nil
+		}
+
+		lastErr = err
+		if !isRetryablePut(err) {
+			return "", fmt.Errorf("s3 put %s: %w", key, err)
+		}
+
+		// Content-addressed writes are idempotent. If another worker won the race
+		// while R2 throttled this PutObject, treat the existing object as success.
+		if exists, headErr := s.exists(ctx, key); headErr == nil && exists {
+			return key, nil
+		} else if headErr != nil && !isRetryablePut(headErr) {
+			return "", headErr
+		}
+
+		if err := sleepBackoff(ctx, attempt); err != nil {
+			return "", err
+		}
+	}
+
+	if exists, err := s.exists(ctx, key); err == nil && exists {
+		return key, nil
+	} else if err != nil && !isRetryablePut(err) {
+		return "", err
+	}
+	return "", fmt.Errorf("s3 put %s after retries: %w", key, lastErr)
+}
+
+func (s *S3) exists(ctx context.Context, key string) (bool, error) {
 	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
 	if err == nil {
-		return key, nil
+		return true, nil
 	}
-	if err != nil && !isNotFound(err) {
-		return "", fmt.Errorf("s3 head %s: %w", key, err)
+	if isNotFound(err) {
+		return false, nil
 	}
-
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(key),
-		Body:        bytes.NewReader(body),
-		ContentType: aws.String(contentType),
-	})
-	if err != nil {
-		return "", fmt.Errorf("s3 put %s: %w", key, err)
-	}
-	return key, nil
+	return false, fmt.Errorf("s3 head %s: %w", key, err)
 }
 
 func (s *S3) Get(ctx context.Context, relPath string) ([]byte, error) {
@@ -133,6 +169,35 @@ func isNotFound(err error) bool {
 		}
 	}
 	return false
+}
+
+func isRetryablePut(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "ServiceUnavailable", "SlowDown", "TooManyRequests", "Throttling", "ThrottlingException", "RequestTimeout", "RequestTimeoutException":
+			return true
+		}
+		msg := strings.ToLower(apiErr.ErrorMessage())
+		if strings.Contains(msg, "reduce your concurrent request rate") || strings.Contains(msg, "rate") || strings.Contains(msg, "thrott") || strings.Contains(msg, "temporar") {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "429") || strings.Contains(msg, "reduce your concurrent request rate") || strings.Contains(msg, "serviceunavailable") || strings.Contains(msg, "slowdown") || strings.Contains(msg, "thrott") || strings.Contains(msg, "temporar")
+}
+
+func sleepBackoff(ctx context.Context, attempt int) error {
+	delay := time.Duration(250*(1<<attempt)) * time.Millisecond
+	if delay > 4*time.Second {
+		delay = 4 * time.Second
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+		return nil
+	}
 }
 
 func (s *S3) key(system, filename string) string {
