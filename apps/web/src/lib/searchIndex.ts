@@ -5,8 +5,6 @@ import {
   listLegislators,
   listBills,
   listOrganizations,
-  loadBillDetail,
-  type BillDetailResponse,
 } from "./api";
 
 export type SearchResult = {
@@ -26,22 +24,15 @@ export async function buildSearchIndex(): Promise<SearchResult[]> {
     listOrganizations(),
     listLegislators(),
   ]);
-  const billPages = (
-    await Promise.all(
-      bills.map((b) => loadBillDetail(b.biennium, b.billPrefix, b.billNumber))
-    )
-  ).filter((b): b is BillDetailResponse => Boolean(b));
 
   return [
-    ...billPages.map((b) =>
+    ...bills.map((b) =>
       withSearchText({
         type: "Bill" as const,
-        title: `${b.bill.bill_id} — ${b.bill.title ?? "Untitled bill"}`,
-        subtitle: `${b.bill.biennium} · ${b.status.current ?? "Status unavailable"}`,
-        href: `/bills/${b.bill.biennium}/${b.bill.bill_id.replace(/\s+/g, "")}`,
-        keywords: `${b.bill.description ?? ""} ${(b.bill.sponsors ?? [])
-          .map((s) => s.name)
-          .join(" ")}`,
+        title: `${b.billId} — ${b.title || "Untitled bill"}`,
+        subtitle: `${b.biennium} · ${b.currentStatus ?? "Status unavailable"}`,
+        href: `/bills/${b.biennium}/${b.billId.replace(/\s+/g, "")}`,
+        keywords: b.leadSponsor ?? "",
       })
     ),
     ...hearings.map((h) =>

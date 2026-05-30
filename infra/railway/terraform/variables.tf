@@ -157,6 +157,12 @@ variable "api_port" {
   default     = 8080
 }
 
+variable "web_port" {
+  description = "HTTP port exposed by the Next.js web service container. Used for custom-domain target_port."
+  type        = number
+  default     = 3000
+}
+
 variable "api_railway_subdomain" {
   description = "Optional Railway-provided API subdomain. Leave null to skip Railway service-domain creation."
   type        = string

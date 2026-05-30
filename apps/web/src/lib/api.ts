@@ -832,12 +832,18 @@ function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
   };
 }
 
-export async function listOrganizations(): Promise<OrganizationListEntry[]> {
-  const res = await apiFetch(`${API_BASE}/api/v1/organizations`, {
-    cache: "no-store",
-  });
+export async function listOrganizations(
+  topicKeywords: string[] = [],
+): Promise<OrganizationListEntry[]> {
+  const params = new URLSearchParams();
+  for (const k of topicKeywords) {
+    if (k) params.append("topic_keyword", k);
+  }
+  const qs = params.toString();
+  const url = `${API_BASE}/api/v1/organizations${qs ? `?${qs}` : ""}`;
+  const res = await apiFetch(url, { cache: "no-store" });
   if (!res.ok) {
-    throw new Error(`listOrganizations: ${API_BASE}/api/v1/organizations returned ${res.status}`);
+    throw new Error(`listOrganizations: ${url} returned ${res.status}`);
   }
   const items = (await res.json()) as orgListItem[];
   return items.map(mapOrganizationListItem);

@@ -112,6 +112,23 @@ test("home page exposes basic accessibility landmarks", async ({ page }) => {
   expect(results.violations).toEqual([]);
 });
 
+test("home page search box surfaces fixture bill from prebuilt index", async ({ page }) => {
+  // Regression: the search index used to fan out one /api/v1/bills/.../page
+  // call per bill to populate keywords. It now builds entries straight from
+  // the bill list. This test asserts the fixture bill is still indexed so a
+  // user typing its number gets a Bill suggestion that links to its detail.
+  await page.goto("/");
+  const searchInput = page.getByPlaceholder(/HB 1501/);
+  await searchInput.fill("HB 9001");
+
+  const billSuggestion = page.getByRole("link", {
+    name: /HB 9001.*Fixture Housing Stability Act/i,
+  });
+  await expect(billSuggestion).toBeVisible();
+  await billSuggestion.click();
+  await expect(page).toHaveURL(/\/bills\/2099-00\/HB9001$/);
+});
+
 test("invalid bill slug renders through the frontend without leaking backend auth", async ({ page }) => {
   const response = await page.goto("/bills/2025-26/not-a-bill");
   expect(response?.status()).toBe(404);

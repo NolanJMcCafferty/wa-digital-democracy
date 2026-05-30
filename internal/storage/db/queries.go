@@ -1363,9 +1363,40 @@ type OrganizationAggregate struct {
 }
 
 // ListOrganizations returns every organization with aggregated testifier
-// position counts.
-func (s *Store) ListOrganizations(ctx context.Context) ([]OrganizationAggregate, error) {
-	const q = `
+// position counts. When topicKeywords is non-empty, aggregation is scoped to
+// testifiers whose agenda item is on a bill matching any keyword (matched
+// against bill number/title/description, agenda item label, or committee
+// name) and organizations with no qualifying testifiers are dropped.
+func (s *Store) ListOrganizations(ctx context.Context, topicKeywords []string) ([]OrganizationAggregate, error) {
+	keywords := nonEmptyStrings(topicKeywords)
+	args := []any{}
+	push := func(v any) int { args = append(args, v); return len(args) }
+
+	testifierWhere := ""
+	if len(keywords) > 0 {
+		ors := make([]string, 0, len(keywords))
+		for _, kw := range keywords {
+			idx := push(kw)
+			ors = append(ors, fmt.Sprintf(`(
+		b.bill_number ILIKE '%%' || $%d || '%%'
+		OR b.title ILIKE '%%' || $%d || '%%'
+		OR COALESCE(b.description, '') ILIKE '%%' || $%d || '%%'
+		OR a.label ILIKE '%%' || $%d || '%%'
+		OR h.committee_name ILIKE '%%' || $%d || '%%'
+)`, idx, idx, idx, idx, idx))
+		}
+		testifierWhere = `
+       AND EXISTS (
+         SELECT 1
+           FROM agenda_item a
+           JOIN hearing  h ON h.id = a.hearing_id
+           LEFT JOIN bill b ON b.id = a.bill_id
+          WHERE a.id = t.agenda_item_id
+            AND (` + strings.Join(ors, " OR ") + `)
+       )`
+	}
+
+	q := `
 SELECT o.id, o.canonical_name, o.aliases,
        o.match_confidence::text, COALESCE(o.match_notes, ''),
        COUNT(DISTINCT t.id) AS testifier_count,
@@ -1374,10 +1405,14 @@ SELECT o.id, o.canonical_name, o.aliases,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Other') AS other_count,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Unknown') AS unknown_count
   FROM organization o
-  LEFT JOIN testifier t ON t.normalized_org_id = o.id
- GROUP BY o.id
- ORDER BY o.canonical_name;`
-	rows, err := s.Pool.Query(ctx, q)
+  LEFT JOIN testifier t ON t.normalized_org_id = o.id` + testifierWhere + `
+ GROUP BY o.id`
+	if len(keywords) > 0 {
+		q += "\nHAVING COUNT(DISTINCT t.id) > 0"
+	}
+	q += "\n ORDER BY o.canonical_name;"
+
+	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list organizations: %w", err)
 	}

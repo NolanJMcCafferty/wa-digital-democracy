@@ -1258,7 +1258,8 @@ func listOrganizationsHandler(store *db.Store) http.HandlerFunc {
 		Positions       map[string]int `json:"positions"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
-		orgs, err := store.ListOrganizations(req.Context())
+		topicKeywords := req.URL.Query()["topic_keyword"]
+		orgs, err := store.ListOrganizations(req.Context(), topicKeywords)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -1330,7 +1331,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		slug := chi.URLParam(req, "slug")
-		orgs, err := store.ListOrganizations(req.Context())
+		orgs, err := store.ListOrganizations(req.Context(), nil)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
