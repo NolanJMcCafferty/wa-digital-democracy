@@ -383,6 +383,9 @@ async function listDeploymentTriggers(projectId, environmentId, serviceId) {
 
 async function updateServiceInstance(service, railwayEnv, spec) {
   const input = Object.fromEntries(Object.entries(spec.config).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+  if (spec.source?.repo) {
+    input.source = { repo: spec.source.repo };
+  }
   try {
     await gql(
       `mutation serviceInstanceUpdate($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
