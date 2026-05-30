@@ -288,38 +288,44 @@ async function ensureDeploymentTrigger(project, railwayEnv, service, branch) {
     return existing;
   }
 
-  for (const trigger of triggers.filter((item) => item.provider === "GITHUB" || item.repository === REPO)) {
-    if (trigger.repository === REPO && trigger.branch !== branch) {
+  for (const trigger of triggers.filter((item) => item.repository === REPO && item.branch !== branch)) {
+    try {
       await gql(
-        `mutation deploymentTriggerUpdate($id: String!, $input: DeploymentTriggerUpdateInput!) {
-          deploymentTriggerUpdate(id: $id, input: $input) { id branch repository }
+        `mutation deploymentTriggerDelete($id: String!) {
+          deploymentTriggerDelete(id: $id)
         }`,
-        { id: trigger.id, input: { branch, repository: REPO, provider: "GITHUB" } },
-        "deploymentTriggerUpdate",
+        { id: trigger.id },
+        "deploymentTriggerDelete",
       );
-      console.log(`  ${service.name}: deploy trigger updated to ${branch}`);
-      return { ...trigger, branch };
+      console.log(`  ${service.name}: removed stale deploy trigger for ${trigger.branch}`);
+    } catch (error) {
+      console.warn(`  ${service.name}: could not remove stale deploy trigger for ${trigger.branch} (${error.message})`);
     }
   }
 
-  const created = await gql(
-    `mutation deploymentTriggerCreate($input: DeploymentTriggerCreateInput!) {
-      deploymentTriggerCreate(input: $input) { id branch repository provider }
-    }`,
-    {
-      input: {
-        projectId: project.id,
-        environmentId: railwayEnv.id,
-        serviceId: service.id,
-        repository: REPO,
-        branch,
-        provider: "GITHUB",
+  try {
+    const created = await gql(
+      `mutation deploymentTriggerCreate($input: DeploymentTriggerCreateInput!) {
+        deploymentTriggerCreate(input: $input) { id branch repository provider }
+      }`,
+      {
+        input: {
+          projectId: project.id,
+          environmentId: railwayEnv.id,
+          serviceId: service.id,
+          repository: REPO,
+          branch,
+          provider: "GITHUB",
+        },
       },
-    },
-    "deploymentTriggerCreate",
-  );
-  console.log(`  ${service.name}: deploy trigger created for ${branch}`);
-  return created;
+      "deploymentTriggerCreate",
+    );
+    console.log(`  ${service.name}: deploy trigger created for ${branch}`);
+    return created;
+  } catch (error) {
+    console.warn(`  ${service.name}: could not create deploy trigger for ${branch} (${error.message}); continuing`);
+    return null;
+  }
 }
 
 async function listDeploymentTriggers(projectId, environmentId, serviceId) {
