@@ -11,7 +11,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "/bin/sh -c 'goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up'",
+    "startCommand": "/bin/sh -c 'for i in $(seq 1 60); do goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up && exit 0; echo \"goose migration attempt $i failed; retrying in 5s\" >&2; sleep 5; done; goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up'",
     "restartPolicyType": "NEVER"
   }
 }
