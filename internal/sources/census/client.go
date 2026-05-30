@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -16,6 +17,14 @@ const (
 	SystemName     = "census"
 	DefaultBaseURL = "https://api.census.gov/data"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "U.S. Census Bureau ACS API",
+}
+
+func init() { connector.Register(descriptor) }
 
 type Client struct {
 	HTTP    *httpx.Client
@@ -26,6 +35,9 @@ type Client struct {
 func New(h *httpx.Client, apiKey string) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultBaseURL, APIKey: apiKey}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type Query struct {
 	Year      string

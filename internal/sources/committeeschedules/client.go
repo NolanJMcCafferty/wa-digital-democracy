@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -28,6 +29,14 @@ const (
 	SystemName     = "committee_schedules"
 	DefaultBaseURL = "https://app.leg.wa.gov/committeeschedules"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "WA Legislature Committee Schedules ASP.NET app (enrichment)",
+}
+
+func init() { connector.Register(descriptor) }
 
 // Client wraps an httpx.Client.
 type Client struct {
@@ -39,6 +48,9 @@ type Client struct {
 func New(h *httpx.Client) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultBaseURL}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 // FormatSearchDate is the MMDDYYYY string the search form expects.
 func FormatSearchDate(t time.Time) string { return t.Format("01022006") }

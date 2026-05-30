@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -25,12 +26,23 @@ const (
 	VendorPaymentsPath      = "/Spending/VendorPayments2527.xlsx"
 )
 
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "fiscal.wa.gov budget + spending datasets",
+}
+
+func init() { connector.Register(descriptor) }
+
 type Client struct {
 	HTTP    *httpx.Client
 	BaseURL string
 }
 
 func New(h *httpx.Client) *Client { return &Client{HTTP: h, BaseURL: DefaultBaseURL} }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type VendorPayment struct {
 	SourceDatasetID string

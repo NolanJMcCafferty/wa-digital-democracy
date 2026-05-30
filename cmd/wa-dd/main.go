@@ -60,6 +60,7 @@ USAGE:
   wa-dd <subcommand> [flags]
 
 SUBCOMMANDS:
+  sources            List registered source connectors (system, base URL, description)
   find-candidates    Score candidate bill/hearing pairs for a given issue
   inspect-candidate  Print joined source state for a single candidate
   ingest-bill        Pull LWS bill metadata into Postgres
@@ -127,6 +128,8 @@ func main() {
 	switch cmd {
 	case "version":
 		fmt.Println(version)
+	case "sources":
+		os.Exit(runListSources(args))
 	case "find-candidates":
 		os.Exit(runFindCandidates(args))
 	case "inspect-candidate":

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -26,6 +27,14 @@ const (
 	SystemName     = "csi"
 	DefaultBaseURL = "https://app.leg.wa.gov/csi"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "Washington Legislature Committee Sign In (read-only HTML scrape)",
+}
+
+func init() { connector.Register(descriptor) }
 
 // Client wraps an httpx.Client with CSI configuration.
 type Client struct {
@@ -37,6 +46,9 @@ type Client struct {
 func New(h *httpx.Client) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultBaseURL}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 // Chamber values valid in CSI URLs.
 var validChambers = map[string]bool{

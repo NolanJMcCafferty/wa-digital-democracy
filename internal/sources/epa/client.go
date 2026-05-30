@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -13,6 +14,14 @@ const (
 	SystemName         = "epa"
 	DefaultECHOBaseURL = "https://echodata.epa.gov/echo"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultECHOBaseURL,
+	Description: "EPA ECHO facility search",
+}
+
+func init() { connector.Register(descriptor) }
 
 type Client struct {
 	HTTP        *httpx.Client
@@ -22,6 +31,9 @@ type Client struct {
 func New(h *httpx.Client) *Client {
 	return &Client{HTTP: h, ECHOBaseURL: DefaultECHOBaseURL}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type FacilityRecord map[string]any
 

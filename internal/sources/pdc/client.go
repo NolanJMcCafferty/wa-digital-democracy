@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -36,6 +37,14 @@ const (
 	DefaultBaseURL = "https://data.wa.gov"
 	defaultPage    = 50000
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "Washington Public Disclosure Commission via data.wa.gov Socrata",
+}
+
+func init() { connector.Register(descriptor) }
 
 // Dataset IDs for the first-page pipeline.
 const (
@@ -59,6 +68,9 @@ type Client struct {
 func New(h *httpx.Client, appToken string) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultBaseURL, AppToken: appToken}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 // Query is a single SoQL query against a dataset.
 type Query struct {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 )
@@ -19,6 +20,14 @@ const (
 	SystemName     = "datawa_socrata"
 	DefaultBaseURL = "https://data.wa.gov"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "data.wa.gov general datasets (DES contracts, statewide overlays)",
+}
+
+func init() { connector.Register(descriptor) }
 
 const (
 	DatasetAgencyContractsFY2025 = "6fx9-ncas"
@@ -52,6 +61,9 @@ type Client struct{ *socrata.Client }
 func New(h *httpx.Client, appToken string) *Client {
 	return &Client{Client: socrata.New(h, SystemName, DefaultBaseURL, appToken)}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type Contract struct {
 	SourceDatasetID      string

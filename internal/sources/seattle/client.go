@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 )
@@ -17,6 +18,14 @@ const (
 	SystemName     = "seattle_socrata"
 	DefaultBaseURL = "https://data.seattle.gov"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "Seattle Open Data (Socrata)",
+}
+
+func init() { connector.Register(descriptor) }
 
 const (
 	DatasetBuildingPermitMap           = "5rc4-5s78"
@@ -36,6 +45,9 @@ type Client struct{ *socrata.Client }
 func New(h *httpx.Client, appToken string) *Client {
 	return &Client{Client: socrata.New(h, SystemName, DefaultBaseURL, appToken)}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type Permit struct {
 	SourceDatasetID string

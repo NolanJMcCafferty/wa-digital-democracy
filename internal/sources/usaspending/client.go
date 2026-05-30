@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -18,12 +19,23 @@ const (
 	DefaultBaseURL = "https://api.usaspending.gov/api/v2"
 )
 
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "USAspending federal awards API v2",
+}
+
+func init() { connector.Register(descriptor) }
+
 type Client struct {
 	HTTP    *httpx.Client
 	BaseURL string
 }
 
 func New(h *httpx.Client) *Client { return &Client{HTTP: h, BaseURL: DefaultBaseURL} }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type AwardSearchRequest struct {
 	Filters map[string]any `json:"filters"`

@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -45,6 +46,24 @@ const (
 	defaultClientID    = "9375922947"
 	defaultEmbedderTag = "embedder"
 )
+
+var (
+	wpDescriptor = connector.Descriptor{
+		System:      SystemName,
+		BaseURL:     WPBase,
+		Description: "TVW WordPress REST (schedule + Invintus video archive)",
+	}
+	invintusDescriptor = connector.Descriptor{
+		System:      InvintusSystemName,
+		BaseURL:     InvintusBase,
+		Description: "Invintus REST (event detail + WebVTT captions)",
+	}
+)
+
+func init() {
+	connector.Register(wpDescriptor)
+	connector.Register(invintusDescriptor)
+}
 
 // Client wraps an httpx.Client with TVW + Invintus configuration.
 type Client struct {
@@ -68,6 +87,10 @@ func New(h *httpx.Client, embedderKey string) *Client {
 		EmbedderAuthName: defaultEmbedderTag,
 	}
 }
+
+// Descriptor implements connector.Source. It returns the TVW WordPress
+// descriptor; Invintus is registered separately under "invintus".
+func (c *Client) Descriptor() connector.Descriptor { return wpDescriptor }
 
 // FetchSchedule returns the "currently-airing" schedule list. Date params
 // are accepted but ignored by the upstream API — see Phase 0 findings.

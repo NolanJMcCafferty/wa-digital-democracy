@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -19,12 +20,23 @@ const (
 	DatasetDisasterDeclarations = "DisasterDeclarationsSummaries"
 )
 
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "OpenFEMA API v2",
+}
+
+func init() { connector.Register(descriptor) }
+
 type Client struct {
 	HTTP    *httpx.Client
 	BaseURL string
 }
 
 func New(h *httpx.Client) *Client { return &Client{HTTP: h, BaseURL: DefaultBaseURL} }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type Query struct {
 	Entity  string

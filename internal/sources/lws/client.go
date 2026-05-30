@@ -32,6 +32,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -40,6 +41,14 @@ const (
 	DefaultBaseURL = "https://wslwebservices.leg.wa.gov"
 	SOAPNamespace  = "http://WSLWebServices.leg.wa.gov/"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "Washington Legislative Web Services (SOAP/XML)",
+}
+
+func init() { connector.Register(descriptor) }
 
 // Client wraps an httpx.Client.
 type Client struct {
@@ -51,6 +60,9 @@ type Client struct {
 func New(h *httpx.Client) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultBaseURL}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 // soapEnvelope is rendered around any operation body. The {{.Inner}} block
 // is the operation element with parameters.

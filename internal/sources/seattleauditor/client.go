@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -18,6 +19,14 @@ const (
 	DefaultS3BaseURL   = "https://s3-recommendation-dashboard-production.s3-us-west-2.amazonaws.com"
 	DefaultReportsURL  = "https://www.seattle.gov/cityauditor/reports"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultReportsURL,
+	Description: "Seattle City Auditor reports + Missionmark dashboard",
+}
+
+func init() { connector.Register(descriptor) }
 
 type Client struct {
 	HTTP        *httpx.Client
@@ -29,6 +38,9 @@ type Client struct {
 func New(h *httpx.Client) *Client {
 	return &Client{HTTP: h, DashboardID: DefaultDashboardID, S3BaseURL: DefaultS3BaseURL, ReportsURL: DefaultReportsURL}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type Dashboard struct {
 	Title       string

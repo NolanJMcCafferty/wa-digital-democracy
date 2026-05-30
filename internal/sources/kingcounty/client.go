@@ -4,6 +4,7 @@ package kingcounty
 import (
 	"context"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 )
@@ -12,6 +13,14 @@ const (
 	SystemName     = "kingcounty_socrata"
 	DefaultBaseURL = "https://data.kingcounty.gov"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "King County open data (Socrata)",
+}
+
+func init() { connector.Register(descriptor) }
 
 const (
 	DatasetParcelViewer                 = "2kfd-2c3u"
@@ -29,6 +38,9 @@ type Client struct{ *socrata.Client }
 func New(h *httpx.Client, appToken string) *Client {
 	return &Client{Client: socrata.New(h, SystemName, DefaultBaseURL, appToken)}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type Parcel struct {
 	SourceDatasetID string

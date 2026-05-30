@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
@@ -15,6 +16,14 @@ const (
 	SystemName     = "bls"
 	DefaultBaseURL = "https://api.bls.gov/publicAPI/v2"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultBaseURL,
+	Description: "Bureau of Labor Statistics public API v2",
+}
+
+func init() { connector.Register(descriptor) }
 
 type Client struct {
 	HTTP            *httpx.Client
@@ -25,6 +34,9 @@ type Client struct {
 func New(h *httpx.Client, registrationKey string) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultBaseURL, RegistrationKey: registrationKey}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 type TimeSeriesRequest struct {
 	SeriesID        []string `json:"seriesid"`

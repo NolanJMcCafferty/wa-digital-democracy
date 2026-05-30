@@ -16,13 +16,22 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 )
 
 const (
-	SystemName     = "irs_bmf"
+	SystemName      = "irs_bmf"
 	DefaultStateURL = "https://www.irs.gov/pub/irs-soi/eo_wa.csv"
 )
+
+var descriptor = connector.Descriptor{
+	System:      SystemName,
+	BaseURL:     DefaultStateURL,
+	Description: "IRS Exempt Organization Business Master File (WA extract)",
+}
+
+func init() { connector.Register(descriptor) }
 
 // Row is a single decoded BMF record. Field names mirror the published header
 // (https://www.irs.gov/pub/irs-soi/eo_info.pdf). Numeric fields are parsed
@@ -67,6 +76,9 @@ type Client struct {
 func New(h *httpx.Client) *Client {
 	return &Client{HTTP: h, BaseURL: DefaultStateURL}
 }
+
+// Descriptor implements connector.Source.
+func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 // Fetch downloads the WA extract and returns the raw CSV bytes plus the
 // httpx.RawFetch metadata so callers can persist a source_record for it.
