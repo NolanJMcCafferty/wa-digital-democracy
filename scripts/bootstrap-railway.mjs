@@ -57,7 +57,6 @@ const serviceSpecs = [
       restartPolicyMaxRetries: 10,
     },
     volume: {
-      name: "postgis-data-v2",
       mountPath: "/var/lib/postgresql/data",
     },
     publicDomain: false,
@@ -366,14 +365,13 @@ async function updateServiceInstance(service, railwayEnv, spec) {
 }
 
 async function ensurePostgisVolume(project, railwayEnv, service, spec, envSpec) {
-  const volumeName = `${spec.volume.name}-${envSpec.name}`;
   const volumes = await listVolumes(project.id);
-  const existing = volumes.find((volume) => volume.name === volumeName);
+  const existing = volumes.find((volume) => volume.environmentId === railwayEnv.id && volume.serviceId === service.id);
   if (existing) {
     console.log(`  postgis: volume exists (${existing.id})`);
     return existing;
   }
-  console.log(`  postgis: creating volume ${volumeName}`);
+  console.log(`  postgis: creating volume`);
   return gql(
     `mutation volumeCreate($input: VolumeCreateInput!) {
       volumeCreate(input: $input) { id name }
@@ -383,7 +381,6 @@ async function ensurePostgisVolume(project, railwayEnv, service, spec, envSpec) 
         projectId: project.id,
         environmentId: railwayEnv.id,
         serviceId: service.id,
-        name: volumeName,
         mountPath: spec.volume.mountPath,
       },
     },
@@ -395,12 +392,26 @@ async function listVolumes(projectId) {
   const data = await gql(
     `query project($id: String!) {
       project(id: $id) {
-        volumes { edges { node { id name } } }
+        volumes {
+          edges {
+            node {
+              id
+              name
+              volumeInstances {
+                edges { node { id environmentId serviceId mountPath } }
+              }
+            }
+          }
+        }
       }
     }`,
     { id: projectId },
   );
-  return data.project.volumes.edges.map((edge) => edge.node);
+  return data.project.volumes.edges.flatMap((edge) => {
+    const volume = edge.node;
+    const instances = volume.volumeInstances?.edges?.map((instanceEdge) => instanceEdge.node) || [];
+    return instances.map((instance) => ({ ...volume, ...instance, volumeId: volume.id, volumeName: volume.name }));
+  });
 }
 
 async function ensureDomains(project, railwayEnv, services) {
