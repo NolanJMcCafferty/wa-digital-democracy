@@ -81,8 +81,7 @@ jobs:
       RAILWAY_GITHUB_REPO: ${{ github.repository }}
       RAILWAY_PRODUCTION_BRANCH: main
       RAILWAY_STAGING_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || 'staging' }}
-      RAILWAY_ENVIRONMENT_FILTER: ${{ github.event_name == 'pull_request' && 'staging' || '' }}
-      RAILWAY_DEPLOY_COMMIT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      RAILWAY_ENVIRONMENT_FILTER: ${{ github.event_name == 'pull_request' && 'staging' || 'production' }}
 
       POSTGIS_PASSWORD: ${{ secrets.POSTGIS_PASSWORD }}
       POSTGIS_PASSWORD_PRODUCTION: ${{ secrets.POSTGIS_PASSWORD_PRODUCTION }}
