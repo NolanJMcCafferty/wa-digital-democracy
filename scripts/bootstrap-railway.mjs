@@ -13,7 +13,6 @@ const mode = argv.find((arg) => !arg.startsWith("--")) || "apply";
 const dryRun = argv.includes("--dry-run");
 const deploy = argv.includes("--deploy") || mode === "deploy";
 const skipDeploy = argv.includes("--skip-deploy");
-const deployCommitSha = env("RAILWAY_DEPLOY_COMMIT_SHA") || env("GITHUB_SHA") || "";
 const environmentFilter = new Set((env("RAILWAY_ENVIRONMENT_FILTER") || "").split(",").map((value) => value.trim()).filter(Boolean));
 
 if (["-h", "--help", "help"].includes(mode)) {
@@ -174,6 +173,8 @@ async function main() {
       await updateServiceInstance(service, railwayEnv, serviceSpec);
       if (serviceSpec.deploymentTrigger === false) {
         await removeDeploymentTriggers(project, railwayEnv, service);
+      } else if (deploy && !skipDeploy) {
+        await resetDeploymentTrigger(project, railwayEnv, service, envSpec.branch);
       } else {
         await ensureDeploymentTrigger(project, railwayEnv, service, envSpec.branch);
       }
@@ -313,6 +314,11 @@ async function removeDeploymentTriggers(project, railwayEnv, service) {
       console.warn(`  ${service.name}: could not remove deploy trigger for ${trigger.branch} (${error.message})`);
     }
   }
+}
+
+async function resetDeploymentTrigger(project, railwayEnv, service, branch) {
+  await removeDeploymentTriggers(project, railwayEnv, service);
+  await ensureDeploymentTrigger(project, railwayEnv, service, branch);
 }
 
 async function ensureDeploymentTrigger(project, railwayEnv, service, branch) {
@@ -613,20 +619,26 @@ function buildVariables(envSpec, domains) {
 }
 
 async function deployEnvironment(railwayEnv, services) {
+  const failures = [];
   for (const name of ["postgis", "migrate", "api", "web", "daily"]) {
     const service = services.get(name);
     try {
       const deploymentId = await gql(
-        `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!, $commitSha: String) {
-          serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha)
+        `mutation serviceInstanceDeployV2($serviceId: String!, $environmentId: String!) {
+          serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
         }`,
-        { serviceId: service.id, environmentId: railwayEnv.id, commitSha: deployCommitSha || null },
+        { serviceId: service.id, environmentId: railwayEnv.id },
         "serviceInstanceDeployV2",
       );
       console.log(`  ${name}: deployment triggered (${deploymentId})`);
     } catch (error) {
-      console.warn(`  ${name}: explicit deploy skipped (${error.message}); GitHub branch trigger will deploy on push`);
+      console.error(`  ${name}: explicit deploy failed (${error.message})`);
+      failures.push(`${name}: ${error.message}`);
     }
+    await sleep(2_000);
+  }
+  if (failures.length > 0) {
+    throw new Error(`Explicit Railway deploy failed for ${failures.length} service(s): ${failures.join("; ")}`);
   }
 }
 
