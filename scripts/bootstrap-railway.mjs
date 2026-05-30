@@ -508,6 +508,7 @@ async function upsertEnvironmentVariables(project, railwayEnv, envSpec, domains,
       "variableCollectionUpsert",
     );
     console.log(`  ${serviceName}: upserted ${Object.keys(cleanVariables).length} variables`);
+    await sleep(2_000);
   }
 }
 
@@ -601,26 +602,47 @@ function configuredRailwayDomain(environmentName, serviceName) {
 }
 
 async function gql(query, variables = {}, pick = null) {
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const text = await response.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(`Railway API returned non-JSON HTTP ${response.status}: ${text.slice(0, 500)}`);
+  const attempts = 5;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query, variables }),
+      });
+      const text = await response.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        const error = new Error(`Railway API returned non-JSON HTTP ${response.status}: ${text.slice(0, 500)}`);
+        error.retryable = response.status === 429 || response.status >= 500;
+        throw error;
+      }
+      if (!response.ok || json.errors?.length) {
+        const messages = json.errors?.map((error) => error.message).join("; ") || text;
+        const error = new Error(`Railway API error: ${messages}`);
+        error.retryable = response.status === 429 || response.status >= 500 || /timeout|timed out|rate|temporar|try again/i.test(messages);
+        throw error;
+      }
+      return pick ? json.data[pick] : json.data;
+    } catch (error) {
+      lastError = error;
+      if (!error.retryable || attempt === attempts) break;
+      const delayMs = Math.min(45_000, 2_000 * 2 ** (attempt - 1));
+      console.warn(`Railway API call failed (${error.message}); retrying in ${delayMs / 1000}s [${attempt}/${attempts}]`);
+      await sleep(delayMs);
+    }
   }
-  if (!response.ok || json.errors?.length) {
-    const messages = json.errors?.map((error) => error.message).join("; ") || text;
-    throw new Error(`Railway API error: ${messages}`);
-  }
-  return pick ? json.data[pick] : json.data;
+  throw lastError;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function env(name) {
