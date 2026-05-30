@@ -162,6 +162,12 @@ jobs:
           fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.deploy }}" != "true" ]; then
             node scripts/bootstrap-railway.mjs apply --skip-deploy
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # Production services deploy from Railway's branch triggers. The
+            # workflow reconciles config/triggers after the push, but does not
+            # call serviceInstanceDeployV2 because that API path is not reliable
+            # for this production project (it returns "Deployment not found").
+            node scripts/bootstrap-railway.mjs apply --skip-deploy
           else
             node scripts/bootstrap-railway.mjs apply --deploy
           fi
