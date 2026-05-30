@@ -14,6 +14,7 @@ const dryRun = argv.includes("--dry-run");
 const deploy = argv.includes("--deploy") || mode === "deploy";
 const skipDeploy = argv.includes("--skip-deploy");
 const deployCommitSha = env("RAILWAY_DEPLOY_COMMIT_SHA") || env("GITHUB_SHA") || "";
+const environmentFilter = new Set((env("RAILWAY_ENVIRONMENT_FILTER") || "").split(",").map((value) => value.trim()).filter(Boolean));
 
 if (["-h", "--help", "help"].includes(mode)) {
   printHelp();
@@ -26,7 +27,7 @@ if (!token && !dryRun) {
   fail("Set RAILWAY_API_TOKEN or RAILWAY_TOKEN to a Railway account/workspace token.");
 }
 
-const envSpecs = [
+const allEnvSpecs = [
   {
     name: "production",
     branch: env("RAILWAY_PRODUCTION_BRANCH") || "main",
@@ -44,6 +45,11 @@ const envSpecs = [
     siteUrlDefault: env("STAGING_WEB_PUBLIC_URL") || "",
   },
 ];
+
+const envSpecs = environmentFilter.size > 0 ? allEnvSpecs.filter((spec) => environmentFilter.has(spec.name)) : allEnvSpecs;
+if (envSpecs.length === 0) {
+  fail(`RAILWAY_ENVIRONMENT_FILTER did not match any known environment: ${Array.from(environmentFilter).join(", ")}`);
+}
 
 const serviceSpecs = [
   {
@@ -100,11 +106,12 @@ const serviceSpecs = [
     name: "migrate",
     source: { repo: REPO },
     branchByEnv: true,
+    deploymentTrigger: false,
     config: {
       rootDirectory: "/",
       dockerfilePath: "Dockerfile",
       railwayConfigFile: "/infra/railway/config/migrate.railway.json",
-      startCommand: "/bin/sh -c 'goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up'",
+      startCommand: "/bin/sh -c 'for i in $(seq 1 60); do goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up && exit 0; echo \"goose migration attempt $i failed; retrying in 5s\" >&2; sleep 5; done; goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up'",
       restartPolicyType: "NEVER",
     },
     publicDomain: false,
@@ -142,9 +149,15 @@ async function main() {
   }
 
   const project = await ensureProject();
-  const production = await ensureEnvironment(project, envSpecs[0]);
-  const staging = await ensureEnvironment(project, envSpecs[1], production.id);
-  const environments = new Map([[production.name, production], [staging.name, staging]]);
+  const productionSpec = allEnvSpecs.find((spec) => spec.name === "production");
+  const production = await ensureEnvironment(project, productionSpec);
+  let staging = null;
+  if (envSpecs.some((spec) => spec.name === "staging")) {
+    const stagingSpec = allEnvSpecs.find((spec) => spec.name === "staging");
+    staging = await ensureEnvironment(project, stagingSpec, production.id);
+  }
+  const environments = new Map([[production.name, production]]);
+  if (staging) environments.set(staging.name, staging);
 
   const services = new Map();
   for (const spec of serviceSpecs) {
@@ -159,7 +172,11 @@ async function main() {
     for (const serviceSpec of serviceSpecs) {
       const service = services.get(serviceSpec.name);
       await updateServiceInstance(service, railwayEnv, serviceSpec);
-      await ensureDeploymentTrigger(project, railwayEnv, service, envSpec.branch);
+      if (serviceSpec.deploymentTrigger === false) {
+        await removeDeploymentTriggers(project, railwayEnv, service);
+      } else {
+        await ensureDeploymentTrigger(project, railwayEnv, service, envSpec.branch);
+      }
     }
 
     await ensurePostgisVolume(project, railwayEnv, services.get("postgis"), serviceSpecs[0], envSpec);
@@ -278,6 +295,24 @@ async function listServices(projectId) {
     { id: projectId },
   );
   return data.project.services.edges.map((edge) => edge.node);
+}
+
+async function removeDeploymentTriggers(project, railwayEnv, service) {
+  const triggers = await listDeploymentTriggers(project.id, railwayEnv.id, service.id);
+  for (const trigger of triggers.filter((item) => item.repository === REPO)) {
+    try {
+      await gql(
+        `mutation deploymentTriggerDelete($id: String!) {
+          deploymentTriggerDelete(id: $id)
+        }`,
+        { id: trigger.id },
+        "deploymentTriggerDelete",
+      );
+      console.log(`  ${service.name}: removed deploy trigger for ${trigger.branch}`);
+    } catch (error) {
+      console.warn(`  ${service.name}: could not remove deploy trigger for ${trigger.branch} (${error.message})`);
+    }
+  }
 }
 
 async function ensureDeploymentTrigger(project, railwayEnv, service, branch) {
@@ -578,7 +613,7 @@ function buildVariables(envSpec, domains) {
 }
 
 async function deployEnvironment(railwayEnv, services) {
-  for (const name of ["postgis", "api", "web", "daily"]) {
+  for (const name of ["postgis", "migrate", "api", "web", "daily"]) {
     const service = services.get(name);
     try {
       const deploymentId = await gql(

@@ -45,7 +45,7 @@ COPY --from=goose-build /out/goose /usr/local/bin/goose
 COPY db/migrations /app/db/migrations
 RUN useradd --system --uid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin nonroot
 USER nonroot
-CMD ["sh", "-c", "goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up"]
+CMD ["sh", "-c", "for i in $(seq 1 60); do goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up && exit 0; echo \"goose migration attempt $i failed; retrying in 5s\" >&2; sleep 5; done; goose -dir /app/db/migrations postgres \"$DATABASE_URL\" up"]
 
 FROM debian:bookworm-slim AS railway
 WORKDIR /app

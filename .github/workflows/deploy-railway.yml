@@ -6,6 +6,11 @@ on:
       - main
       - staging
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
     paths:
       - ".github/workflows/deploy-railway.yml"
       - "scripts/bootstrap-railway.mjs"
@@ -28,8 +33,8 @@ on:
         type: boolean
 
 concurrency:
-  group: railway-${{ github.ref_name }}
-  cancel-in-progress: false
+  group: railway-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
@@ -66,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: validate
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     permissions:
       contents: read
     env:
@@ -75,7 +80,9 @@ jobs:
       RAILWAY_PROJECT_NAME: ${{ vars.RAILWAY_PROJECT_NAME }}
       RAILWAY_GITHUB_REPO: ${{ github.repository }}
       RAILWAY_PRODUCTION_BRANCH: main
-      RAILWAY_STAGING_BRANCH: staging
+      RAILWAY_STAGING_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || 'staging' }}
+      RAILWAY_ENVIRONMENT_FILTER: ${{ github.event_name == 'pull_request' && 'staging' || '' }}
+      RAILWAY_DEPLOY_COMMIT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       POSTGIS_PASSWORD: ${{ secrets.POSTGIS_PASSWORD }}
       POSTGIS_PASSWORD_PRODUCTION: ${{ secrets.POSTGIS_PASSWORD_PRODUCTION }}
@@ -140,6 +147,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
