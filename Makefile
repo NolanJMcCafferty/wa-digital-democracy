@@ -18,7 +18,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web railway-bootstrap railway-deploy vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -131,6 +131,13 @@ docker-build-railway: ## Build the default Railway root container
 
 docker-build-web: ## Build the production Next.js web container
 	docker build -t wa-dd-web:local apps/web
+
+
+railway-bootstrap: ## Reconcile Railway project/environments/services/variables without deploying
+	node scripts/bootstrap-railway.mjs apply --skip-deploy
+
+railway-deploy: ## Reconcile Railway and trigger deployments
+	node scripts/bootstrap-railway.mjs apply --deploy
 
 
 vet:

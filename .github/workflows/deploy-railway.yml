@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - staging
   pull_request:
     paths:
       - ".github/workflows/deploy-railway.yml"
+      - "scripts/bootstrap-railway.mjs"
       - "railway.json"
       - "Dockerfile"
       - "infra/railway/config/postgis.railway.json"
@@ -15,243 +17,137 @@ on:
       - "cmd/**"
       - "internal/**"
       - "db/migrations/**"
-      - "infra/railway/**"
       - "go.mod"
       - "go.sum"
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Trigger Railway deployments after reconciling config"
+        required: true
+        default: true
+        type: boolean
 
 concurrency:
-  group: railway-production
+  group: railway-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   validate:
-    name: Validate Terraform
+    name: Validate Railway bootstrap
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read
-    env:
-      TF_IN_AUTOMATION: "true"
-      TF_INPUT: "false"
-      TF_CLI_ARGS: "-no-color"
-      TF_WORKING_DIR: infra/railway/terraform
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          terraform_version: 1.15.4
-          terraform_wrapper: false
+          node-version: 24
 
-      - name: Terraform init without backend
-        run: terraform -chdir="${TF_WORKING_DIR}" init -backend=false
+      - name: Check bootstrap script syntax
+        run: node --check scripts/bootstrap-railway.mjs
 
-      - name: Terraform validate
-        run: terraform -chdir="${TF_WORKING_DIR}" validate
+      - name: Validate Railway config JSON
+        run: |
+          jq . railway.json >/dev/null
+          jq . apps/web/railway.json >/dev/null
+          jq . infra/railway/config/postgis.railway.json >/dev/null
+          jq . infra/railway/config/migrate.railway.json >/dev/null
+          jq . infra/railway/config/daily.railway.json >/dev/null
+
+      - name: Dry-run desired Railway topology
+        run: node scripts/bootstrap-railway.mjs apply --dry-run
 
   deploy:
-    name: Apply Railway Terraform
+    name: Reconcile and deploy Railway
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: validate
-    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name != 'pull_request' }}
     permissions:
       contents: read
     env:
-      TF_IN_AUTOMATION: "true"
-      TF_INPUT: "false"
-      TF_CLI_ARGS: "-no-color"
-      TF_WORKING_DIR: infra/railway/terraform
-
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-      TF_STATE_R2_BUCKET: ${{ secrets.TF_STATE_R2_BUCKET }}
-      TF_STATE_R2_KEY: ${{ secrets.TF_STATE_R2_KEY }}
-      TF_STATE_R2_ACCESS_KEY_ID: ${{ secrets.TF_STATE_R2_ACCESS_KEY_ID }}
-      TF_STATE_R2_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_R2_SECRET_ACCESS_KEY }}
-
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN || secrets.RAILWAY_TOKEN }}
       RAILWAY_WORKSPACE_ID: ${{ vars.RAILWAY_WORKSPACE_ID }}
+      RAILWAY_PROJECT_NAME: ${{ vars.RAILWAY_PROJECT_NAME }}
+      RAILWAY_GITHUB_REPO: ${{ github.repository }}
+      RAILWAY_PRODUCTION_BRANCH: main
+      RAILWAY_STAGING_BRANCH: staging
 
       POSTGIS_PASSWORD: ${{ secrets.POSTGIS_PASSWORD }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      INVINTUS_EMBEDDER_KEY: ${{ secrets.INVINTUS_EMBEDDER_KEY }}
-      SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+      POSTGIS_PASSWORD_PRODUCTION: ${{ secrets.POSTGIS_PASSWORD_PRODUCTION }}
+      POSTGIS_PASSWORD_STAGING: ${{ secrets.POSTGIS_PASSWORD_STAGING }}
+
       WADD_INTERNAL_API_TOKEN: ${{ secrets.WADD_INTERNAL_API_TOKEN }}
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      WADD_INTERNAL_API_TOKEN_PRODUCTION: ${{ secrets.WADD_INTERNAL_API_TOKEN_PRODUCTION }}
+      WADD_INTERNAL_API_TOKEN_STAGING: ${{ secrets.WADD_INTERNAL_API_TOKEN_STAGING }}
+
+      INVINTUS_EMBEDDER_KEY: ${{ secrets.INVINTUS_EMBEDDER_KEY }}
+      INVINTUS_EMBEDDER_KEY_PRODUCTION: ${{ secrets.INVINTUS_EMBEDDER_KEY_PRODUCTION }}
+      INVINTUS_EMBEDDER_KEY_STAGING: ${{ secrets.INVINTUS_EMBEDDER_KEY_STAGING }}
+      SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+      SOCRATA_APP_TOKEN_PRODUCTION: ${{ secrets.SOCRATA_APP_TOKEN_PRODUCTION }}
+      SOCRATA_APP_TOKEN_STAGING: ${{ secrets.SOCRATA_APP_TOKEN_STAGING }}
+
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      CLERK_SECRET_KEY_PRODUCTION: ${{ secrets.CLERK_SECRET_KEY_PRODUCTION }}
+      CLERK_SECRET_KEY_STAGING: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY_PRODUCTION: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY_PRODUCTION }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY_STAGING: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY_STAGING }}
       CLERK_JWT_ISSUER: ${{ secrets.CLERK_JWT_ISSUER }}
+      CLERK_JWT_ISSUER_PRODUCTION: ${{ secrets.CLERK_JWT_ISSUER_PRODUCTION }}
+      CLERK_JWT_ISSUER_STAGING: ${{ secrets.CLERK_JWT_ISSUER_STAGING }}
       CLERK_JWKS_URL: ${{ secrets.CLERK_JWKS_URL }}
+      CLERK_JWKS_URL_PRODUCTION: ${{ secrets.CLERK_JWKS_URL_PRODUCTION }}
+      CLERK_JWKS_URL_STAGING: ${{ secrets.CLERK_JWKS_URL_STAGING }}
 
-      R2_BUCKET_RAW: ${{ vars.R2_BUCKET_RAW }}
-      R2_BUCKET_LOCATION: ${{ vars.R2_BUCKET_LOCATION }}
-      R2_BUCKET_JURISDICTION: ${{ vars.R2_BUCKET_JURISDICTION }}
-      R2_BUCKET_STORAGE_CLASS: ${{ vars.R2_BUCKET_STORAGE_CLASS }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      S3_ACCESS_KEY_ID_PRODUCTION: ${{ secrets.S3_ACCESS_KEY_ID_PRODUCTION || secrets.R2_ACCESS_KEY_ID_PRODUCTION }}
+      S3_ACCESS_KEY_ID_STAGING: ${{ secrets.S3_ACCESS_KEY_ID_STAGING || secrets.R2_ACCESS_KEY_ID_STAGING }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      S3_SECRET_ACCESS_KEY_PRODUCTION: ${{ secrets.S3_SECRET_ACCESS_KEY_PRODUCTION || secrets.R2_SECRET_ACCESS_KEY_PRODUCTION }}
+      S3_SECRET_ACCESS_KEY_STAGING: ${{ secrets.S3_SECRET_ACCESS_KEY_STAGING || secrets.R2_SECRET_ACCESS_KEY_STAGING }}
+      S3_BUCKET_RAW: ${{ vars.S3_BUCKET_RAW }}
+      S3_BUCKET_RAW_PRODUCTION: ${{ vars.S3_BUCKET_RAW_PRODUCTION }}
+      S3_BUCKET_RAW_STAGING: ${{ vars.S3_BUCKET_RAW_STAGING }}
+      S3_PREFIX: ${{ vars.S3_PREFIX }}
+      S3_PREFIX_PRODUCTION: ${{ vars.S3_PREFIX_PRODUCTION }}
+      S3_PREFIX_STAGING: ${{ vars.S3_PREFIX_STAGING }}
 
-      API_RAILWAY_SUBDOMAIN: ${{ vars.API_RAILWAY_SUBDOMAIN }}
-      WEB_RAILWAY_SUBDOMAIN: ${{ vars.WEB_RAILWAY_SUBDOMAIN }}
-      API_CUSTOM_DOMAIN: ${{ vars.API_CUSTOM_DOMAIN }}
-      WEB_CUSTOM_DOMAIN: ${{ vars.WEB_CUSTOM_DOMAIN }}
-      API_PUBLIC_URL_OVERRIDE: ${{ vars.API_PUBLIC_URL_OVERRIDE }}
-      WEB_PUBLIC_URL_OVERRIDE: ${{ vars.WEB_PUBLIC_URL_OVERRIDE }}
+      PRODUCTION_WEB_PUBLIC_URL: ${{ vars.PRODUCTION_WEB_PUBLIC_URL }}
+      STAGING_WEB_PUBLIC_URL: ${{ vars.STAGING_WEB_PUBLIC_URL }}
+      PRODUCTION_API_PUBLIC_URL: ${{ vars.PRODUCTION_API_PUBLIC_URL }}
+      STAGING_API_PUBLIC_URL: ${{ vars.STAGING_API_PUBLIC_URL }}
+      PRODUCTION_WEB_CUSTOM_DOMAIN: ${{ vars.PRODUCTION_WEB_CUSTOM_DOMAIN }}
+      STAGING_WEB_CUSTOM_DOMAIN: ${{ vars.STAGING_WEB_CUSTOM_DOMAIN }}
+      PRODUCTION_API_CUSTOM_DOMAIN: ${{ vars.PRODUCTION_API_CUSTOM_DOMAIN }}
+      STAGING_API_CUSTOM_DOMAIN: ${{ vars.STAGING_API_CUSTOM_DOMAIN }}
 
       DAILY_BIENNIUM: ${{ vars.DAILY_BIENNIUM }}
       DAILY_CRON: ${{ vars.DAILY_CRON }}
+      WADD_ADMIN_JWT_AUDIENCE: ${{ vars.WADD_ADMIN_JWT_AUDIENCE }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          terraform_version: 1.15.4
-          terraform_wrapper: false
+          node-version: 24
 
-      - name: Validate required deployment inputs
+      - name: Reconcile Railway project, environments, services, variables, and domains
         run: |
-          set -euo pipefail
-
-          required=(
-            RAILWAY_TOKEN
-            CLOUDFLARE_ACCOUNT_ID
-            TF_STATE_R2_BUCKET
-            TF_STATE_R2_KEY
-            TF_STATE_R2_ACCESS_KEY_ID
-            TF_STATE_R2_SECRET_ACCESS_KEY
-            POSTGIS_PASSWORD
-            R2_ACCESS_KEY_ID
-            R2_SECRET_ACCESS_KEY
-            INVINTUS_EMBEDDER_KEY
-            WADD_INTERNAL_API_TOKEN
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-            CLERK_SECRET_KEY
-            CLERK_JWT_ISSUER
-          )
-
-          required+=(CLOUDFLARE_API_TOKEN)
-
-          for name in "${required[@]}"; do
-            trimmed="$(printf '%s' "${!name:-}" | tr -d '[:space:]')"
-            if [ -z "$trimmed" ]; then
-              echo "Missing required GitHub secret or variable: ${name}" >&2
-              exit 1
-            fi
-          done
-
-          if [ -z "${API_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${API_CUSTOM_DOMAIN:-}" ] && [ -z "${API_PUBLIC_URL_OVERRIDE:-}" ]; then
-            echo "Set API_RAILWAY_SUBDOMAIN, API_CUSTOM_DOMAIN, or API_PUBLIC_URL_OVERRIDE." >&2
+          if [ -z "${RAILWAY_API_TOKEN:-}" ]; then
+            echo "Missing RAILWAY_API_TOKEN or RAILWAY_TOKEN repository secret" >&2
             exit 1
           fi
-
-          if [ -z "${WEB_RAILWAY_SUBDOMAIN:-}" ] && [ -z "${WEB_CUSTOM_DOMAIN:-}" ] && [ -z "${WEB_PUBLIC_URL_OVERRIDE:-}" ]; then
-            echo "Set WEB_RAILWAY_SUBDOMAIN, WEB_CUSTOM_DOMAIN, or WEB_PUBLIC_URL_OVERRIDE." >&2
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.deploy }}" != "true" ]; then
+            node scripts/bootstrap-railway.mjs apply --skip-deploy
+          else
+            node scripts/bootstrap-railway.mjs apply --deploy
           fi
-
-      - name: Write Terraform backend config
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          set -euo pipefail
-
-          cat > backend.hcl <<EOF
-          bucket                      = "${TF_STATE_R2_BUCKET}"
-          key                         = "${TF_STATE_R2_KEY}"
-          region                      = "auto"
-          endpoints                   = { s3 = "https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" }
-          access_key                  = "${TF_STATE_R2_ACCESS_KEY_ID}"
-          secret_key                  = "${TF_STATE_R2_SECRET_ACCESS_KEY}"
-          skip_credentials_validation = true
-          skip_region_validation      = true
-          skip_requesting_account_id  = true
-          skip_metadata_api_check     = true
-          skip_s3_checksum            = true
-          use_lockfile                = true
-          EOF
-
-      - name: Write Terraform variable config
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          set -euo pipefail
-
-          jq -n \
-            --arg github_repo "${GITHUB_REPOSITORY}" \
-            --arg github_branch "main" \
-            --arg workspace_id "${RAILWAY_WORKSPACE_ID:-}" \
-            --arg postgis_password "${POSTGIS_PASSWORD}" \
-            --arg cloudflare_account_id "${CLOUDFLARE_ACCOUNT_ID}" \
-            --arg r2_bucket_raw "${R2_BUCKET_RAW:-wa-dd-raw-prod}" \
-            --arg r2_bucket_location "${R2_BUCKET_LOCATION:-}" \
-            --arg r2_bucket_jurisdiction "${R2_BUCKET_JURISDICTION:-}" \
-            --arg r2_bucket_storage_class "${R2_BUCKET_STORAGE_CLASS:-Standard}" \
-            --arg r2_access_key_id "${R2_ACCESS_KEY_ID}" \
-            --arg r2_secret_access_key "${R2_SECRET_ACCESS_KEY}" \
-            --arg invintus_embedder_key "${INVINTUS_EMBEDDER_KEY}" \
-            --arg socrata_app_token "${SOCRATA_APP_TOKEN:-}" \
-            --arg internal_api_token "${WADD_INTERNAL_API_TOKEN}" \
-            --arg clerk_publishable_key "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" \
-            --arg clerk_secret_key "${CLERK_SECRET_KEY}" \
-            --arg clerk_jwt_issuer "${CLERK_JWT_ISSUER:-}" \
-            --arg clerk_jwks_url "${CLERK_JWKS_URL:-}" \
-            --arg admin_jwt_audience "${WADD_ADMIN_JWT_AUDIENCE:-wa-dd-admin}" \
-            --arg api_railway_subdomain "${API_RAILWAY_SUBDOMAIN:-}" \
-            --arg web_railway_subdomain "${WEB_RAILWAY_SUBDOMAIN:-}" \
-            --arg api_custom_domain "${API_CUSTOM_DOMAIN:-}" \
-            --arg web_custom_domain "${WEB_CUSTOM_DOMAIN:-}" \
-            --arg api_public_url_override "${API_PUBLIC_URL_OVERRIDE:-}" \
-            --arg web_public_url_override "${WEB_PUBLIC_URL_OVERRIDE:-}" \
-            --arg daily_biennium "${DAILY_BIENNIUM:-2025-26}" \
-            --arg daily_cron "${DAILY_CRON:-30 3 * * *}" \
-            '
-            def empty_to_null: if . == "" then null else . end;
-            {
-              github_repo: $github_repo,
-              github_branch: $github_branch,
-              workspace_id: ($workspace_id | empty_to_null),
-              postgis_password: $postgis_password,
-              cloudflare_account_id: $cloudflare_account_id,
-              r2_bucket_raw: $r2_bucket_raw,
-              r2_bucket_location: ($r2_bucket_location | empty_to_null),
-              r2_bucket_jurisdiction: ($r2_bucket_jurisdiction | empty_to_null),
-              r2_bucket_storage_class: $r2_bucket_storage_class,
-              r2_access_key_id: $r2_access_key_id,
-              r2_secret_access_key: $r2_secret_access_key,
-              invintus_embedder_key: $invintus_embedder_key,
-              socrata_app_token: $socrata_app_token,
-              internal_api_token: $internal_api_token,
-              clerk_publishable_key: $clerk_publishable_key,
-              clerk_secret_key: $clerk_secret_key,
-              clerk_jwt_issuer: $clerk_jwt_issuer,
-              clerk_jwks_url: $clerk_jwks_url,
-              admin_jwt_audience: $admin_jwt_audience,
-              api_railway_subdomain: ($api_railway_subdomain | empty_to_null),
-              web_railway_subdomain: ($web_railway_subdomain | empty_to_null),
-              api_custom_domain: ($api_custom_domain | empty_to_null),
-              web_custom_domain: ($web_custom_domain | empty_to_null),
-              api_public_url_override: ($api_public_url_override | empty_to_null),
-              web_public_url_override: ($web_public_url_override | empty_to_null),
-              daily_biennium: $daily_biennium,
-              daily_cron: $daily_cron
-            }
-            ' > ci.auto.tfvars.json
-
-      - name: Terraform init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -backend-config=backend.hcl
-
-      - name: Terraform validate
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform validate
-
-      - name: Terraform plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform plan -parallelism=1 -out=railway.tfplan
-
-      - name: Terraform apply
-        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -parallelism=1 -auto-approve railway.tfplan
