@@ -119,7 +119,7 @@ config/
   issue_keywords.yml
 infra/
   docker-compose.yml      # local services
-  railway/                # Railway Terraform/config/docs
+  railway/                # Railway bootstrap config and deployment docs
 scripts/
   seed-test-fixtures.sh
 tools/

@@ -3,7 +3,7 @@
 Railway is the hosted demo target. The deploy setup is intentionally simple and
 repeatable: a checked-in bootstrap script reconciles Railway's native project,
 environments, services, variables, domains, and deploy triggers through the
-Railway GraphQL API. Terraform is no longer the source of truth for Railway.
+Railway GraphQL API.
 
 ## Target Topology
 
@@ -157,5 +157,3 @@ Prefer environment-specific secrets for production/staging isolation.
   intentionally when applying schema migrations.
 - The bootstrap script intentionally uses Railway native environments rather
   than separate Railway projects.
-- The old Terraform directory is retained only for historical reference and
-  should not be used as the Railway source of truth.

@@ -75,10 +75,11 @@ curl -fsS https://wa-dd-api-init.up.railway.app/readyz
 curl -fsS 'https://wa-dd-api-init.up.railway.app/api/v1/bills?limit=1'
 ```
 
-Then open the production web URL:
+Then open the production web URL. The current public domains are managed by
+`scripts/bootstrap-railway.mjs`; print them with:
 
 ```sh
-terraform -chdir=infra/railway/terraform output -raw web_public_url
+railway domain --service web
 ```
 
 ## Troubleshooting
