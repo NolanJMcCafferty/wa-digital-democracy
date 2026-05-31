@@ -1,0 +1,573 @@
+package db
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+type UpsertHearingParams struct {
+	BillID                    *int64
+	CommitteeName             string
+	CommitteeAcronym          string
+	Chamber                   string
+	MeetingDateTime           time.Time
+	Location                  string
+	LWSMeetingID              string
+	CommitteeScheduleAgendaID string
+	CommitteeScheduleVideoID  string
+	TVWEventID                string
+	OfficialAgendaURL         string
+	TVWURL                    string
+	SourceRecordID            int64
+}
+
+// UpsertHearing inserts a hearing; uses (chamber, meeting_datetime,
+// committee_name) as a soft uniqueness key via WHERE-on-update.
+func (s *Store) UpsertHearing(ctx context.Context, p UpsertHearingParams) (int64, error) {
+	// Find existing first; if none, insert.
+	const findQ = `
+SELECT id FROM hearing
+ WHERE chamber = $1 AND committee_name = $2 AND meeting_datetime = $3
+ LIMIT 1;`
+	var id int64
+	err := s.Pool.QueryRow(ctx, findQ, p.Chamber, p.CommitteeName, p.MeetingDateTime).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		const insQ = `
+INSERT INTO hearing (bill_id, committee_name, committee_acronym, chamber, meeting_datetime,
+                     location, lws_meeting_id, committee_schedule_agenda_id,
+                     committee_schedule_video_id, tvw_event_id, official_agenda_url,
+                     tvw_url, source_record_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+RETURNING id;`
+		err = s.Pool.QueryRow(ctx, insQ,
+			p.BillID, p.CommitteeName, strOrNull(p.CommitteeAcronym),
+			p.Chamber, p.MeetingDateTime, strOrNull(p.Location),
+			strOrNull(p.LWSMeetingID), strOrNull(p.CommitteeScheduleAgendaID),
+			strOrNull(p.CommitteeScheduleVideoID), strOrNull(p.TVWEventID),
+			strOrNull(p.OfficialAgendaURL), strOrNull(p.TVWURL),
+			p.SourceRecordID,
+		).Scan(&id)
+		if err != nil {
+			return 0, fmt.Errorf("insert hearing: %w", err)
+		}
+		return id, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find hearing: %w", err)
+	}
+	const updQ = `
+UPDATE hearing SET
+  bill_id = COALESCE($2, bill_id),
+  committee_acronym = COALESCE($3, committee_acronym),
+  location = COALESCE($4, location),
+  lws_meeting_id = COALESCE($5, lws_meeting_id),
+  committee_schedule_agenda_id = COALESCE($6, committee_schedule_agenda_id),
+  committee_schedule_video_id  = COALESCE($7, committee_schedule_video_id),
+  tvw_event_id = COALESCE($8, tvw_event_id),
+  official_agenda_url = COALESCE($9, official_agenda_url),
+  tvw_url = COALESCE($10, tvw_url),
+  updated_at = NOW()
+WHERE id = $1;`
+	_, err = s.Pool.Exec(ctx, updQ, id,
+		p.BillID, strOrNull(p.CommitteeAcronym), strOrNull(p.Location),
+		strOrNull(p.LWSMeetingID), strOrNull(p.CommitteeScheduleAgendaID),
+		strOrNull(p.CommitteeScheduleVideoID), strOrNull(p.TVWEventID),
+		strOrNull(p.OfficialAgendaURL), strOrNull(p.TVWURL),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("update hearing: %w", err)
+	}
+	return id, nil
+}
+
+type UpsertAgendaItemParams struct {
+	HearingID             int64
+	BillID                *int64
+	Label                 string
+	CSIMeetingFamilyID    string
+	CSIAgendaItemFamilyID string
+	CSIAgendaItemID       string
+	OrderIndex            int
+	SourceRecordID        int64
+}
+
+// UpsertAgendaItem inserts/updates keyed on csi_agenda_item_id.
+func (s *Store) UpsertAgendaItem(ctx context.Context, p UpsertAgendaItemParams) (int64, error) {
+	const q = `
+INSERT INTO agenda_item (hearing_id, bill_id, label, csi_meeting_family_id,
+                         csi_agenda_item_family_id, csi_agenda_item_id,
+                         order_index, source_record_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT (csi_agenda_item_id) DO UPDATE SET
+  hearing_id = EXCLUDED.hearing_id,
+  bill_id    = EXCLUDED.bill_id,
+  label      = EXCLUDED.label,
+  csi_meeting_family_id     = EXCLUDED.csi_meeting_family_id,
+  csi_agenda_item_family_id = EXCLUDED.csi_agenda_item_family_id,
+  order_index               = EXCLUDED.order_index,
+  source_record_id          = EXCLUDED.source_record_id
+RETURNING id;`
+	var id int64
+	err := s.Pool.QueryRow(ctx, q,
+		p.HearingID, p.BillID, p.Label,
+		strOrNull(p.CSIMeetingFamilyID), strOrNull(p.CSIAgendaItemFamilyID),
+		p.CSIAgendaItemID, p.OrderIndex, p.SourceRecordID,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("upsert agenda_item: %w", err)
+	}
+	return id, nil
+}
+
+type InsertTestifierParams struct {
+	AgendaItemID    int64
+	RawName         string
+	RawOrganization string
+	Position        string // testifier_position enum value
+	Testified       bool
+	TimeSignedIn    time.Time
+	SourceRecordID  int64
+}
+
+// ReplaceTestifiersForAgenda is the idempotent upsert pattern: delete the
+// agenda's current testifier rows and re-insert the fresh batch. CSI is the
+// authoritative source for the *current* state; preserving stale rows would
+// drift.
+func (s *Store) ReplaceTestifiersForAgenda(ctx context.Context, agendaItemID int64, rows []InsertTestifierParams) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM testifier WHERE agenda_item_id = $1`, agendaItemID); err != nil {
+		return fmt.Errorf("delete testifiers: %w", err)
+	}
+	const insQ = `
+INSERT INTO testifier (agenda_item_id, raw_name, raw_organization, position,
+                       testified, time_signed_in, source_record_id)
+VALUES ($1, $2, $3, $4::testifier_position, $5, $6, $7);`
+	for _, r := range rows {
+		if _, err := tx.Exec(ctx, insQ,
+			r.AgendaItemID, r.RawName, strOrNull(r.RawOrganization),
+			r.Position, r.Testified, timeOrNull(r.TimeSignedIn), r.SourceRecordID,
+		); err != nil {
+			return fmt.Errorf("insert testifier: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// tvw_event + transcript_segment
+// ---------------------------------------------------------------------------
+
+// HearingAgendaItemAggregate is one agenda item/bill associated with a hearing.
+type HearingAgendaItemAggregate struct {
+	CSIAgendaItemID string
+	AgendaItemLabel string
+	Biennium        string
+	BillID          string
+	BillPrefix      string
+	BillNumber      int
+	TestifierCount  int
+	TestifiedCount  int
+}
+
+// HearingAggregate is the row shape ListHearings returns: one row per
+// hearing/committee meeting, with agenda items nested under it.
+type HearingAggregate struct {
+	HearingID       int64
+	CommitteeName   string
+	Chamber         string
+	MeetingDateTime time.Time
+	Location        string
+	TVWURL          string
+	TVWEventID      string
+	AgendaItems     []HearingAgendaItemAggregate
+	HasTVW          bool
+}
+
+// ListHearings returns every hearing with a TVW event mapping, ordered by
+// meeting datetime descending. Agenda items are nested under each hearing.
+func (s *Store) ListHearings(ctx context.Context) ([]HearingAggregate, error) {
+	hits, _, err := s.SearchHearings(ctx, HearingSearchParams{Limit: 100000, Offset: 0})
+	return hits, err
+}
+
+// HearingSearchParams are the filter knobs SearchHearings accepts. Empty
+// strings/slices are no-ops. The handler is responsible for clamping
+// limit and offset to safe ranges.
+type HearingSearchParams struct {
+	Committee     string   // ILIKE match on hearing.committee_name
+	Bill          string   // ILIKE match on bill.bill_number or bill.title
+	Speaker       string   // ILIKE match on testifier.raw_name
+	Chambers      []string // OR-set of hearing.chamber values
+	TopicKeywords []string // OR-set of ILIKE keywords matched against bill title/desc, agenda label, committee name
+	Biennium      string   // exact match on bill.biennium
+	Limit         int
+	Offset        int
+}
+
+// HearingSearchFacets carries the distinct values we render in the
+// hearings sidebar so the UI doesn't hard-code lists.
+type HearingSearchFacets struct {
+	Chambers   []string
+	Committees []string
+	Biennia    []string
+}
+
+// SearchHearings is the paginated, filtered query backing /api/v1/hearings.
+// Returns (hits, total, err). The returned hits are hearing-level rows;
+// filters that refer to bills, speakers, or topic keywords match if any
+// agenda item under the hearing matches.
+func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]HearingAggregate, int, error) {
+	if p.Limit <= 0 {
+		p.Limit = 50
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+
+	args := []any{}
+	where := []string{"h.tvw_event_id IS NOT NULL"}
+	push := func(v any) int {
+		args = append(args, v)
+		return len(args)
+	}
+	if c := strings.TrimSpace(p.Committee); c != "" {
+		idx := push(c)
+		where = append(where, fmt.Sprintf("h.committee_name ILIKE '%%' || $%d || '%%'", idx))
+	}
+	if bq := strings.TrimSpace(p.Bill); bq != "" {
+		idx := push(bq)
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM agenda_item a
+			JOIN bill b ON b.id = a.bill_id
+			WHERE a.hearing_id = h.id
+			  AND (b.bill_number ILIKE '%%' || $%d || '%%' OR b.title ILIKE '%%' || $%d || '%%')
+		)`, idx, idx))
+	}
+	if sp := strings.TrimSpace(p.Speaker); sp != "" {
+		idx := push(sp)
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM agenda_item a
+			JOIN testifier t ON t.agenda_item_id = a.id
+			WHERE a.hearing_id = h.id
+			  AND t.raw_name ILIKE '%%' || $%d || '%%'
+		)`, idx))
+	}
+	if chambers := nonEmptyStrings(p.Chambers); len(chambers) > 0 {
+		placeholders := make([]string, 0, len(chambers))
+		for _, c := range chambers {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", push(c)))
+		}
+		where = append(where, "h.chamber IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if keywords := nonEmptyStrings(p.TopicKeywords); len(keywords) > 0 {
+		ors := make([]string, 0, len(keywords))
+		for _, kw := range keywords {
+			idx := push(kw)
+			ors = append(ors, fmt.Sprintf(`(
+				h.committee_name ILIKE '%%' || $%d || '%%'
+				OR EXISTS (
+					SELECT 1 FROM agenda_item a
+					JOIN bill b ON b.id = a.bill_id
+					WHERE a.hearing_id = h.id
+					  AND (b.title ILIKE '%%' || $%d || '%%' OR COALESCE(b.description,'') ILIKE '%%' || $%d || '%%' OR a.label ILIKE '%%' || $%d || '%%')
+				)
+			)`, idx, idx, idx, idx))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if p.Biennium != "" {
+		idx := push(p.Biennium)
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM agenda_item a
+			JOIN bill b ON b.id = a.bill_id
+			WHERE a.hearing_id = h.id AND b.biennium = $%d
+		)`, idx))
+	}
+	whereSQL := strings.Join(where, " AND ")
+
+	countQ := "SELECT COUNT(*) FROM hearing h WHERE " + whereSQL
+	var total int
+	if err := s.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count hearings: %w", err)
+	}
+
+	args = append(args, p.Limit, p.Offset)
+	q := `
+SELECT h.id, h.committee_name, h.chamber, h.meeting_datetime,
+       COALESCE(h.location, ''), COALESCE(h.tvw_url, ''), COALESCE(h.tvw_event_id, ''),
+       (h.tvw_event_id IS NOT NULL) AS has_tvw
+  FROM hearing h
+ WHERE ` + whereSQL + `
+ ORDER BY h.meeting_datetime DESC
+ LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
+	rows, err := s.Pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search hearings: %w", err)
+	}
+	defer rows.Close()
+	out := []HearingAggregate{}
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var hh HearingAggregate
+		if err := rows.Scan(&hh.HearingID, &hh.CommitteeName, &hh.Chamber, &hh.MeetingDateTime,
+			&hh.Location, &hh.TVWURL, &hh.TVWEventID, &hh.HasTVW); err != nil {
+			return nil, 0, fmt.Errorf("scan hearing: %w", err)
+		}
+		ids = append(ids, hh.HearingID)
+		out = append(out, hh)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(ids) > 0 {
+		itemsByHearing, err := s.listAgendaItemsForHearings(ctx, ids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for i := range out {
+			out[i].AgendaItems = itemsByHearing[out[i].HearingID]
+		}
+	}
+	return out, total, nil
+}
+
+func (s *Store) listAgendaItemsForHearings(ctx context.Context, hearingIDs []int64) (map[int64][]HearingAgendaItemAggregate, error) {
+	rows, err := s.Pool.Query(ctx, `
+SELECT a.hearing_id, COALESCE(a.csi_agenda_item_id, ''), a.label,
+       COALESCE(b.biennium, ''), COALESCE(b.bill_number, ''), COALESCE(b.prefix, ''), COALESCE(b.number, 0),
+       COUNT(t.id) AS testifier_count,
+       COUNT(t.id) FILTER (WHERE t.testified) AS testified_count
+  FROM agenda_item a
+  LEFT JOIN bill b ON b.id = a.bill_id
+  LEFT JOIN testifier t ON t.agenda_item_id = a.id
+ WHERE a.hearing_id = ANY($1)
+ GROUP BY a.hearing_id, a.id, b.biennium, b.bill_number, b.prefix, b.number
+ ORDER BY a.hearing_id, a.order_index NULLS LAST, a.id`, hearingIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list hearing agenda items: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]HearingAgendaItemAggregate, len(hearingIDs))
+	for rows.Next() {
+		var hearingID int64
+		var item HearingAgendaItemAggregate
+		if err := rows.Scan(&hearingID, &item.CSIAgendaItemID, &item.AgendaItemLabel,
+			&item.Biennium, &item.BillID, &item.BillPrefix, &item.BillNumber,
+			&item.TestifierCount, &item.TestifiedCount); err != nil {
+			return nil, fmt.Errorf("scan hearing agenda item: %w", err)
+		}
+		out[hearingID] = append(out[hearingID], item)
+	}
+	return out, rows.Err()
+}
+
+// GetHearing returns one hearing/committee meeting by internal hearing ID,
+// with all agenda items nested under it.
+func (s *Store) GetHearing(ctx context.Context, hearingID int64) (*HearingAggregate, error) {
+	const q = `
+SELECT h.id, h.committee_name, h.chamber, h.meeting_datetime,
+       COALESCE(h.location, ''), COALESCE(h.tvw_url, ''), COALESCE(h.tvw_event_id, ''),
+       (h.tvw_event_id IS NOT NULL) AS has_tvw
+  FROM hearing h
+ WHERE h.id = $1
+   AND h.tvw_event_id IS NOT NULL
+ LIMIT 1;`
+	var h HearingAggregate
+	if err := s.Pool.QueryRow(ctx, q, hearingID).Scan(&h.HearingID, &h.CommitteeName, &h.Chamber,
+		&h.MeetingDateTime, &h.Location, &h.TVWURL, &h.TVWEventID, &h.HasTVW); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, pgx.ErrNoRows
+		}
+		return nil, fmt.Errorf("get hearing: %w", err)
+	}
+	itemsByHearing, err := s.listAgendaItemsForHearings(ctx, []int64{hearingID})
+	if err != nil {
+		return nil, err
+	}
+	h.AgendaItems = itemsByHearing[hearingID]
+	return &h, nil
+}
+
+// ListHearingSearchFacets returns the distinct chamber/committee/biennium
+// values present in hearings with a TVW event mapping, for the sidebar.
+func (s *Store) ListHearingSearchFacets(ctx context.Context) (HearingSearchFacets, error) {
+	var f HearingSearchFacets
+
+	rows, err := s.Pool.Query(ctx, `
+SELECT DISTINCT h.chamber
+  FROM hearing h
+ WHERE h.tvw_event_id IS NOT NULL
+   AND h.chamber IS NOT NULL AND h.chamber <> ''
+ ORDER BY h.chamber`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing chamber: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Chambers = append(f.Chambers, v)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `
+SELECT DISTINCT h.committee_name
+  FROM hearing h
+ WHERE h.tvw_event_id IS NOT NULL
+   AND h.committee_name IS NOT NULL AND h.committee_name <> ''
+ ORDER BY h.committee_name`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing committee: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Committees = append(f.Committees, v)
+	}
+	rows.Close()
+
+	rows, err = s.Pool.Query(ctx, `
+SELECT DISTINCT b.biennium
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE h.tvw_event_id IS NOT NULL
+   AND b.biennium <> ''
+ ORDER BY b.biennium DESC`)
+	if err != nil {
+		return f, fmt.Errorf("facets hearing biennium: %w", err)
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return f, err
+		}
+		f.Biennia = append(f.Biennia, v)
+	}
+	rows.Close()
+
+	return f, nil
+}
+
+// HearingForDiscovery is one row to feed into the Discoverer. We hand
+// out only the fields we need to match against CSI/TVW and the
+// hearing.id we'll write back into.
+type HearingForDiscovery struct {
+	HearingID        int64
+	BillID           int64
+	BillPrefix       string
+	BillNumber       int
+	CommitteeName    string
+	CommitteeAcronym string
+	Chamber          string
+	MeetingDateTime  time.Time
+	SourceRecordID   int64 // reused for the discovery-driven UpsertHearing call
+}
+
+// ListHearingsForDiscovery returns hearings whose CSI/TVW IDs are still
+// blank for bills in the given biennium. These are the candidates for
+// auto-discovery. Hearings already enriched (have either a TVW event ID
+// or a Committee Schedules agenda ID) are skipped. Gubernatorial
+// appointments (SGA) are also skipped: LWS stores them as bill-like rows,
+// but CSI does not expose them as testimony agenda items in the data this
+// pipeline ingests.
+func (s *Store) ListHearingsForDiscovery(ctx context.Context, biennium string) ([]HearingForDiscovery, error) {
+	const q = `
+SELECT h.id, b.id, b.prefix, b.number,
+       h.committee_name, COALESCE(h.committee_acronym, ''), h.chamber,
+       h.meeting_datetime, h.source_record_id
+  FROM hearing h
+  JOIN bill b ON b.id = h.bill_id
+ WHERE b.biennium = $1
+   AND h.tvw_event_id IS NULL
+   AND h.committee_schedule_agenda_id IS NULL
+   AND b.prefix <> 'SGA'
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := s.Pool.Query(ctx, q, biennium)
+	if err != nil {
+		return nil, fmt.Errorf("list hearings for discovery: %w", err)
+	}
+	defer rows.Close()
+	out := []HearingForDiscovery{}
+	for rows.Next() {
+		var h HearingForDiscovery
+		if err := rows.Scan(
+			&h.HearingID, &h.BillID, &h.BillPrefix, &h.BillNumber,
+			&h.CommitteeName, &h.CommitteeAcronym, &h.Chamber,
+			&h.MeetingDateTime, &h.SourceRecordID,
+		); err != nil {
+			return nil, fmt.Errorf("scan hearing: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// DiscoveredAgendaItemRow is one (agenda_item, bill) pair that
+// auto-discovery has populated and is ready for full pipeline ingestion
+// (CSI testifiers + TVW captions + segments + speakers + PDC).
+type DiscoveredAgendaItemRow struct {
+	CSIAgendaItemID string
+	Biennium        string
+	BillPrefix      string
+	BillNumber      int
+}
+
+// ListDiscoveredAgendaItems returns agenda_item rows where (a) the
+// hearing has a tvw_event_id (so transcript ingest can run) and (b) the
+// full ingest pipeline has not yet succeeded end-to-end for that agenda
+// item. The terminal step is `pdc-context`: a `succeeded` ingestion_run
+// row tagged with this agenda's csi_agenda_item_id proves all 6 steps
+// ran. Items that died mid-pipeline (e.g. testifiers ingested but
+// transcript segmentation failed) come back into the work list for a
+// retry. Used by `wa-dd ingest-hearings` to feed buildOne.
+func (s *Store) ListDiscoveredAgendaItems(ctx context.Context, biennium string) ([]DiscoveredAgendaItemRow, error) {
+	const q = `
+SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill    b ON b.id = a.bill_id
+ WHERE b.biennium = $1
+   AND h.tvw_event_id IS NOT NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM ingestion_run r
+      WHERE r.job = 'pdc-context'
+        AND r.status = 'succeeded'
+        AND r.args ->> 'agenda_item_id' = a.csi_agenda_item_id
+   )
+ ORDER BY h.meeting_datetime DESC;`
+	rows, err := s.Pool.Query(ctx, q, biennium)
+	if err != nil {
+		return nil, fmt.Errorf("list discovered agenda items: %w", err)
+	}
+	defer rows.Close()
+	out := []DiscoveredAgendaItemRow{}
+	for rows.Next() {
+		var r DiscoveredAgendaItemRow
+		if err := rows.Scan(&r.CSIAgendaItemID, &r.Biennium, &r.BillPrefix, &r.BillNumber); err != nil {
+			return nil, fmt.Errorf("scan agenda item: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Transcript full-text search — backs `/api/v1/search/transcripts`.
+// ---------------------------------------------------------------------------
