@@ -21,21 +21,14 @@
 package pdc
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/url"
-	"strconv"
-
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/connector"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 )
 
 const (
 	SystemName     = "pdc_socrata"
 	DefaultBaseURL = "https://data.wa.gov"
-	defaultPage    = 50000
 )
 
 var descriptor = connector.Descriptor{
@@ -53,178 +46,23 @@ const (
 	DatasetContributions        = "2jwd-akfb"
 )
 
-// Row is a single Socrata row as returned by the JSON endpoint. We use a
-// generic map so dataset additions don't break the connector.
-type Row map[string]any
+// Row and Query are re-exports of the shared Socrata types.
+type (
+	Row   = socrata.Row
+	Query = socrata.Query
+)
 
-// Client wraps an httpx.Client with Socrata configuration.
-type Client struct {
-	HTTP     *httpx.Client
-	BaseURL  string
-	AppToken string // optional; sent as $$app_token query param when throttling requires it
-}
+// ParseRows is re-exported for tests and callers that previously imported it
+// from this package.
+var ParseRows = socrata.ParseRows
+
+// Client wraps the shared socrata.Client with PDC-specific defaults.
+type Client struct{ *socrata.Client }
 
 // New returns a Client.
 func New(h *httpx.Client, appToken string) *Client {
-	return &Client{HTTP: h, BaseURL: DefaultBaseURL, AppToken: appToken}
+	return &Client{Client: socrata.New(h, SystemName, DefaultBaseURL, appToken)}
 }
 
 // Descriptor implements connector.Source.
 func (c *Client) Descriptor() connector.Descriptor { return descriptor }
-
-// Query is a single SoQL query against a dataset.
-type Query struct {
-	Select string // $select
-	Where  string // $where
-	Order  string // $order; defaults to ":id" for stable iteration
-	Limit  int    // $limit; defaults to 50000
-	Offset int    // $offset
-	Extra  url.Values
-}
-
-// FetchPage fetches one page of rows.
-func (c *Client) FetchPage(ctx context.Context, datasetID string, q Query) ([]Row, error) {
-	rows, _, err := c.FetchPageWithSource(ctx, datasetID, q)
-	return rows, err
-}
-
-// FetchPageWithSource fetches one page of rows and returns the exact raw fetch
-// metadata recorded for this request. Callers that persist normalized rows
-// should thread fetch.SourceRecordID into their provenance FK.
-func (c *Client) FetchPageWithSource(ctx context.Context, datasetID string, q Query) ([]Row, httpx.RawFetch, error) {
-	u, err := c.url(datasetID, q)
-	if err != nil {
-		return nil, httpx.RawFetch{}, err
-	}
-	headers := http.Header{}
-	headers.Set("Accept", "application/json")
-
-	fetch, err := c.HTTP.Do(ctx, httpx.Request{
-		System:   SystemName,
-		Endpoint: "resource." + datasetID,
-		URL:      u,
-		Headers:  headers,
-	})
-	if err != nil {
-		return nil, fetch, err
-	}
-	rows, err := ParseRows(fetch.Body)
-	if err != nil {
-		return nil, fetch, err
-	}
-	return rows, fetch, nil
-}
-
-// PageAll iterates the dataset in $limit-sized chunks. Caller terminates
-// early by returning false from yield.
-func (c *Client) PageAll(ctx context.Context, datasetID string, q Query, yield func(Row) bool) error {
-	if q.Limit <= 0 {
-		q.Limit = defaultPage
-	}
-	if q.Order == "" {
-		q.Order = ":id"
-	}
-	for {
-		page, err := c.FetchPage(ctx, datasetID, q)
-		if err != nil {
-			return err
-		}
-		for _, row := range page {
-			if !yield(row) {
-				return nil
-			}
-		}
-		if len(page) < q.Limit {
-			return nil
-		}
-		q.Offset += q.Limit
-	}
-}
-
-// Count runs a $select=count(*) query.
-func (c *Client) Count(ctx context.Context, datasetID, where string) (int64, error) {
-	rows, err := c.FetchPage(ctx, datasetID, Query{
-		Select: "count(*)",
-		Where:  where,
-		Limit:  1,
-	})
-	if err != nil {
-		return 0, err
-	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	switch v := rows[0]["count"].(type) {
-	case string:
-		n, _ := strconv.ParseInt(v, 10, 64)
-		return n, nil
-	case float64:
-		return int64(v), nil
-	default:
-		return 0, fmt.Errorf("pdc: unexpected count type %T", v)
-	}
-}
-
-// Metadata fetches /api/views/<dataset_id>.
-func (c *Client) Metadata(ctx context.Context, datasetID string) ([]byte, error) {
-	u := c.BaseURL + "/api/views/" + url.PathEscape(datasetID)
-	if c.AppToken != "" {
-		u += "?$$app_token=" + url.QueryEscape(c.AppToken)
-	}
-	headers := http.Header{}
-	headers.Set("Accept", "application/json")
-
-	fetch, err := c.HTTP.Do(ctx, httpx.Request{
-		System:   SystemName,
-		Endpoint: "api.views." + datasetID,
-		URL:      u,
-		Headers:  headers,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return fetch.Body, nil
-}
-
-func (c *Client) url(datasetID string, q Query) (string, error) {
-	if datasetID == "" {
-		return "", fmt.Errorf("pdc: datasetID required")
-	}
-	v := url.Values{}
-	if q.Select != "" {
-		v.Set("$select", q.Select)
-	}
-	if q.Where != "" {
-		v.Set("$where", q.Where)
-	}
-	if q.Order != "" {
-		v.Set("$order", q.Order)
-	}
-	if q.Limit > 0 {
-		v.Set("$limit", strconv.Itoa(q.Limit))
-	}
-	if q.Offset > 0 {
-		v.Set("$offset", strconv.Itoa(q.Offset))
-	}
-	for k, vs := range q.Extra {
-		for _, val := range vs {
-			v.Add(k, val)
-		}
-	}
-	if c.AppToken != "" {
-		v.Set("$$app_token", c.AppToken)
-	}
-	return c.BaseURL + "/resource/" + url.PathEscape(datasetID) + ".json?" + v.Encode(), nil
-}
-
-// ParseRows decodes a Socrata array response.
-func ParseRows(body []byte) ([]Row, error) {
-	if len(body) == 0 {
-		return nil, nil
-	}
-	var rows []Row
-	if err := json.Unmarshal(body, &rows); err != nil {
-		return nil, fmt.Errorf("pdc decode rows: %w", err)
-	}
-	return rows, nil
-}
