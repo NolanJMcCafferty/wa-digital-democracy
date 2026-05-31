@@ -22,6 +22,14 @@ import (
 	_ "github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/seattleauditor"
 )
 
+func init() {
+	register(Command{
+		Name:     "sources",
+		Synopsis: "List registered source connectors (system, base URL, description)",
+		Run:      runListSources,
+	})
+}
+
 func runListSources(args []string) int {
 	fs := flag.NewFlagSet("sources", flag.ContinueOnError)
 	fs.Usage = func() {
