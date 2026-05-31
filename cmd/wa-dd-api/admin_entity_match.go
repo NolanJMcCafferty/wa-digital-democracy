@@ -11,6 +11,11 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/review/entities/candidates", Scope: scopeAdminViewer, Store: adminListEntityMatchCandidatesHandler})
+	registerRoute(route{Method: "POST", Path: "/review/entities/candidates/{candidateId}/decide", Scope: scopeAdminReviewer, Store: adminDecideEntityMatchHandler})
+}
+
 func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 	type segment struct {
 		StartMS      int    `json:"start_ms"`

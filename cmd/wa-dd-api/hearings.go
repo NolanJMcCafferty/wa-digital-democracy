@@ -14,6 +14,11 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/hearings", Scope: scopeAPI, Store: listHearingsHandler})
+	registerRoute(route{Method: "GET", Path: "/hearings/{hearingId}", Scope: scopeAPI, Store: getHearingHandler})
+}
+
 const (
 	hearingsDefaultLimit = 50
 	hearingsMaxLimit     = 100

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,8 +15,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
 func main() {
@@ -53,46 +52,16 @@ func main() {
 	}
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(apiAuth)
-		api.Get("/addresses/suggest", suggestAddressesHandler())
-		api.Get("/bills", withStore(stores, listBillsHandler))
-		api.Get("/bills/{biennium}/{billNumber}/page", withStore(stores, billPageHandler))
-		// Back-compat alias for older frontend/code paths. Returns the same
-		// page-level shape as /page; despite the historical name, this is no
-		// longer a generic legacy snapshot endpoint.
-		api.Get("/bills/{biennium}/{billNumber}/first-page", withStore(stores, billPageHandler))
-		api.Get("/legislators", withStore(stores, listLegislatorsHandler))
-		api.Get("/legislators/lookup", withStore(stores, lookupLegislatorsByAddressHandler))
-		api.Get("/legislators/{slug}", withStore(stores, getLegislatorHandler))
-		api.Get("/organizations", withStore(stores, listOrganizationsHandler))
-		api.Get("/organizations/{slug}", withStore(stores, getOrganizationHandler))
-		api.Get("/hearings", withStore(stores, listHearingsHandler))
-		api.Get("/hearings/{hearingId}", withStore(stores, getHearingHandler))
-		api.Get("/sources", withStore(stores, listSourcesHandler))
-		api.Get("/search/transcripts", withStore(stores, searchTranscriptsHandler))
+		mountRoutes(api, scopeAPI, stores)
 		api.Route("/admin", func(admin chi.Router) {
 			admin.Use(adminAuth)
 			admin.Group(func(view chi.Router) {
 				view.Use(requireAdminRole(adminRoleViewer))
-				view.Get("/review/speakers", withStore(stores, adminListSpeakerReviewTasksHandler))
-				view.Get("/review/speakers/events", withStore(stores, adminListSpeakerReviewEventsHandler))
-				view.Get("/review/speakers/events/{tvwEventId}", withStore(stores, adminGetSpeakerReviewEventHandler))
-				view.Get("/review/speakers/clusters/{clusterId}", withStore(stores, adminGetSpeakerClusterReviewHandler))
-				view.Get("/review/speakers/{taskId}", withStore(stores, adminGetSpeakerReviewTaskHandler))
-				view.Get("/review/entities/candidates", withStore(stores, adminListEntityMatchCandidatesHandler))
+				mountRoutes(view, scopeAdminViewer, stores)
 			})
 			admin.Group(func(write chi.Router) {
 				write.Use(requireAdminRole(adminRoleReviewer))
-				write.Post("/review/speakers/clusters/{clusterId}/assign", withStore(stores, adminManualAssignSpeakerClusterHandler))
-				write.Post("/review/speakers/{taskId}/accept", withStore(stores, func(store *db.Store) http.HandlerFunc {
-					return adminSpeakerReviewDecisionHandler(store, "accept")
-				}))
-				write.Post("/review/speakers/{taskId}/reject", withStore(stores, func(store *db.Store) http.HandlerFunc {
-					return adminSpeakerReviewDecisionHandler(store, "reject")
-				}))
-				write.Post("/review/speakers/{taskId}/needs-more-evidence", withStore(stores, func(store *db.Store) http.HandlerFunc {
-					return adminSpeakerReviewDecisionHandler(store, "needs_more_evidence")
-				}))
-				write.Post("/review/entities/candidates/{candidateId}/decide", withStore(stores, adminDecideEntityMatchHandler))
+				mountRoutes(write, scopeAdminReviewer, stores)
 			})
 		})
 	})
@@ -115,5 +84,33 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+}
+
+func mountRoutes(r chi.Router, scope routeScope, stores *storeProvider) {
+	for _, rt := range routeRegistry {
+		if rt.Scope != scope {
+			continue
+		}
+		var h http.HandlerFunc
+		if rt.Plain != nil {
+			h = rt.Plain()
+		} else {
+			h = withStore(stores, rt.Store)
+		}
+		switch rt.Method {
+		case "GET":
+			r.Get(rt.Path, h)
+		case "POST":
+			r.Post(rt.Path, h)
+		case "PUT":
+			r.Put(rt.Path, h)
+		case "DELETE":
+			r.Delete(rt.Path, h)
+		case "PATCH":
+			r.Patch(rt.Path, h)
+		default:
+			panic(fmt.Sprintf("mountRoutes: unsupported method %q for %s", rt.Method, rt.Path))
+		}
 	}
 }

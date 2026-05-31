@@ -9,6 +9,11 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/organizations", Scope: scopeAPI, Store: listOrganizationsHandler})
+	registerRoute(route{Method: "GET", Path: "/organizations/{slug}", Scope: scopeAPI, Store: getOrganizationHandler})
+}
+
 func listOrganizationsHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
 		Slug            string         `json:"slug"`

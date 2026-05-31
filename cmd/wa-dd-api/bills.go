@@ -20,6 +20,15 @@ const (
 	billsMaxLimit     = 100
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/bills", Scope: scopeAPI, Store: listBillsHandler})
+	registerRoute(route{Method: "GET", Path: "/bills/{biennium}/{billNumber}/page", Scope: scopeAPI, Store: billPageHandler})
+	// Back-compat alias for older frontend/code paths. Returns the same
+	// page-level shape as /page; despite the historical name, this is no
+	// longer a generic legacy snapshot endpoint.
+	registerRoute(route{Method: "GET", Path: "/bills/{biennium}/{billNumber}/first-page", Scope: scopeAPI, Store: billPageHandler})
+}
+
 func listBillsHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
 		Biennium      string    `json:"biennium"`

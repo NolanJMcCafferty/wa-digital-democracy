@@ -12,6 +12,25 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/review/speakers", Scope: scopeAdminViewer, Store: adminListSpeakerReviewTasksHandler})
+	registerRoute(route{Method: "GET", Path: "/review/speakers/events", Scope: scopeAdminViewer, Store: adminListSpeakerReviewEventsHandler})
+	registerRoute(route{Method: "GET", Path: "/review/speakers/events/{tvwEventId}", Scope: scopeAdminViewer, Store: adminGetSpeakerReviewEventHandler})
+	registerRoute(route{Method: "GET", Path: "/review/speakers/clusters/{clusterId}", Scope: scopeAdminViewer, Store: adminGetSpeakerClusterReviewHandler})
+	registerRoute(route{Method: "GET", Path: "/review/speakers/{taskId}", Scope: scopeAdminViewer, Store: adminGetSpeakerReviewTaskHandler})
+
+	registerRoute(route{Method: "POST", Path: "/review/speakers/clusters/{clusterId}/assign", Scope: scopeAdminReviewer, Store: adminManualAssignSpeakerClusterHandler})
+	registerRoute(route{Method: "POST", Path: "/review/speakers/{taskId}/accept", Scope: scopeAdminReviewer, Store: func(s *db.Store) http.HandlerFunc {
+		return adminSpeakerReviewDecisionHandler(s, "accept")
+	}})
+	registerRoute(route{Method: "POST", Path: "/review/speakers/{taskId}/reject", Scope: scopeAdminReviewer, Store: func(s *db.Store) http.HandlerFunc {
+		return adminSpeakerReviewDecisionHandler(s, "reject")
+	}})
+	registerRoute(route{Method: "POST", Path: "/review/speakers/{taskId}/needs-more-evidence", Scope: scopeAdminReviewer, Store: func(s *db.Store) http.HandlerFunc {
+		return adminSpeakerReviewDecisionHandler(s, "needs_more_evidence")
+	}})
+}
+
 func adminListSpeakerReviewTasksHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		status := strings.TrimSpace(req.URL.Query().Get("status"))

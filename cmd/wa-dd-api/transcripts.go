@@ -13,6 +13,10 @@ const (
 	searchMaxLimit     = 50
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/search/transcripts", Scope: scopeAPI, Store: searchTranscriptsHandler})
+}
+
 func searchTranscriptsHandler(store *db.Store) http.HandlerFunc {
 	type hit struct {
 		ID              int64     `json:"id"`

@@ -11,6 +11,13 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/addresses/suggest", Scope: scopeAPI, Plain: suggestAddressesHandler})
+	registerRoute(route{Method: "GET", Path: "/legislators", Scope: scopeAPI, Store: listLegislatorsHandler})
+	registerRoute(route{Method: "GET", Path: "/legislators/lookup", Scope: scopeAPI, Store: lookupLegislatorsByAddressHandler})
+	registerRoute(route{Method: "GET", Path: "/legislators/{slug}", Scope: scopeAPI, Store: getLegislatorHandler})
+}
+
 func listLegislatorsHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
 		Slug         string `json:"slug"`

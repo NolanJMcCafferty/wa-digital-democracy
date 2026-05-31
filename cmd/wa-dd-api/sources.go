@@ -7,6 +7,10 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+func init() {
+	registerRoute(route{Method: "GET", Path: "/sources", Scope: scopeAPI, Store: listSourcesHandler})
+}
+
 func listSourcesHandler(store *db.Store) http.HandlerFunc {
 	type item struct {
 		System          string    `json:"system"`
