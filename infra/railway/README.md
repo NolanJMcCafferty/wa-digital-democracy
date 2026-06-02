@@ -152,8 +152,12 @@ Prefer environment-specific secrets for production/staging isolation.
 ## Operational Notes
 
 - `production` deploys from `main`; `staging` deploys from `staging`.
-- `migrate` is configured as a `NEVER` restart one-shot service and is reconciled
-  by the bootstrap script, but the script does not auto-deploy it. Trigger it
-  intentionally when applying schema migrations.
+- `migrate` is configured as a `NEVER` restart one-shot service. It runs the
+  project-pinned Goose binary against `db/migrations` and exits, rather than
+  staying up as an app service.
+- In deploy mode, the bootstrap script explicitly triggers deployments for
+  `postgis`, `migrate`, `api`, `web`, and `daily`. Because `migrate` is a
+  one-shot service, each deploy applies pending migrations and then stops.
+  Trigger it intentionally before relying on services that require new schema.
 - The bootstrap script intentionally uses Railway native environments rather
   than separate Railway projects.
