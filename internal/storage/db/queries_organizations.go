@@ -67,6 +67,12 @@ UPDATE testifier SET normalized_org_id = $1
 	if err != nil {
 		return 0, err
 	}
+	if tag.RowsAffected() == 0 {
+		return 0, nil
+	}
+	if err := s.BackfillCSITestifierPersonAffiliationsForRawOrganizations(ctx, rawOrgNames); err != nil {
+		return 0, err
+	}
 	return tag.RowsAffected(), nil
 }
 

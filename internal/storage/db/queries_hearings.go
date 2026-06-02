@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -145,22 +146,246 @@ func (s *Store) ReplaceTestifiersForAgenda(ctx context.Context, agendaItemID int
 	}
 	defer tx.Rollback(ctx)
 
+	// ReplaceTestifiersForAgenda deletes and re-inserts testifier rows. Clean up
+	// the derived person mention/affiliation rows tied to the old testifier IDs
+	// first so repeated CSI ingest does not accumulate stale person facts.
+	if _, err := tx.Exec(ctx, `
+DELETE FROM person_organization_affiliation
+ WHERE source_kind = 'csi_testifier'
+   AND source_table = 'testifier'
+   AND source_pk IN (SELECT id FROM testifier WHERE agenda_item_id = $1);`, agendaItemID); err != nil {
+		return fmt.Errorf("delete CSI person affiliations: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM person_source_mention
+ WHERE source_kind = 'csi_testifier'
+   AND source_table = 'testifier'
+   AND source_pk IN (SELECT id FROM testifier WHERE agenda_item_id = $1);`, agendaItemID); err != nil {
+		return fmt.Errorf("delete CSI person mentions: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM testifier WHERE agenda_item_id = $1`, agendaItemID); err != nil {
 		return fmt.Errorf("delete testifiers: %w", err)
 	}
 	const insQ = `
 INSERT INTO testifier (agenda_item_id, raw_name, raw_organization, position,
                        testified, time_signed_in, source_record_id)
-VALUES ($1, $2, $3, $4::testifier_position, $5, $6, $7);`
+VALUES ($1, $2, $3, $4::testifier_position, $5, $6, $7)
+RETURNING id;`
 	for _, r := range rows {
-		if _, err := tx.Exec(ctx, insQ,
+		var testifierID int64
+		if err := tx.QueryRow(ctx, insQ,
 			r.AgendaItemID, r.RawName, strOrNull(r.RawOrganization),
 			r.Position, r.Testified, timeOrNull(r.TimeSignedIn), r.SourceRecordID,
-		); err != nil {
+		).Scan(&testifierID); err != nil {
 			return fmt.Errorf("insert testifier: %w", err)
+		}
+		if err := insertCSIPersonMentionAndAffiliation(ctx, tx, testifierID, r); err != nil {
+			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func insertCSIPersonMentionAndAffiliation(ctx context.Context, tx pgx.Tx, testifierID int64, r InsertTestifierParams) error {
+	return upsertCSITestifierPersonAffiliation(ctx, tx, csiPersonAffiliationInput{
+		TestifierID:     testifierID,
+		AgendaItemID:    r.AgendaItemID,
+		RawName:         r.RawName,
+		RawOrganization: r.RawOrganization,
+		Position:        r.Position,
+		Testified:       r.Testified,
+		TimeSignedIn:    r.TimeSignedIn,
+		SourceRecordID:  r.SourceRecordID,
+	})
+}
+
+type csiPersonAffiliationInput struct {
+	TestifierID     int64
+	AgendaItemID    int64
+	RawName         string
+	RawOrganization string
+	Position        string
+	Testified       bool
+	TimeSignedIn    time.Time
+	SourceRecordID  int64
+}
+
+func upsertCSITestifierPersonAffiliation(ctx context.Context, tx pgx.Tx, in csiPersonAffiliationInput) error {
+	rawName := strings.TrimSpace(in.RawName)
+	if rawName == "" {
+		return nil
+	}
+	normalizedName := strings.TrimSpace(normalizePersonName(rawName))
+	if normalizedName == "" {
+		normalizedName = rawName
+	}
+
+	contextJSON, err := json.Marshal(map[string]any{
+		"agenda_item_id": in.AgendaItemID,
+		"testifier_id":   in.TestifierID,
+		"position":       in.Position,
+		"testified":      in.Testified,
+		"time_signed_in": zeroTimeToNil(in.TimeSignedIn),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal person mention context: %w", err)
+	}
+
+	const personQ = `
+INSERT INTO person (display_name, normalized_name, match_confidence, match_notes)
+VALUES ($1, $2, 'possible', 'Auto-seeded from CSI testifier sign-in; same-name identity is not reviewed.')
+ON CONFLICT (display_name) DO UPDATE SET
+  normalized_name = COALESCE(person.normalized_name, EXCLUDED.normalized_name),
+  updated_at = NOW()
+RETURNING id;`
+	var personID int64
+	if err := tx.QueryRow(ctx, personQ, rawName, normalizedName).Scan(&personID); err != nil {
+		return fmt.Errorf("upsert CSI person: %w", err)
+	}
+
+	const mentionQ = `
+INSERT INTO person_source_mention (
+  person_id, source_kind, source_table, source_pk, source_name, normalized_name,
+  source_role, context, confidence, review_status, source_record_id
+)
+VALUES ($1, 'csi_testifier', 'testifier', $2, $3, $4,
+        'testifier', $5, 'possible', 'auto', $6)
+ON CONFLICT (source_kind, source_table, source_pk, source_row_id, source_name) DO UPDATE SET
+  person_id = COALESCE(person_source_mention.person_id, EXCLUDED.person_id),
+  normalized_name = COALESCE(person_source_mention.normalized_name, EXCLUDED.normalized_name),
+  context = EXCLUDED.context,
+  source_record_id = COALESCE(EXCLUDED.source_record_id, person_source_mention.source_record_id),
+  last_seen_at = NOW()
+RETURNING id;`
+	var mentionID int64
+	if err := tx.QueryRow(ctx, mentionQ, personID, in.TestifierID, rawName, normalizedName, contextJSON, in.SourceRecordID).Scan(&mentionID); err != nil {
+		return fmt.Errorf("upsert CSI person mention: %w", err)
+	}
+
+	rawOrg := strings.TrimSpace(in.RawOrganization)
+	var orgID *int64
+	if rawOrg != "" {
+		const orgQ = `
+SELECT id
+  FROM organization
+ WHERE lower(trim(canonical_name)) = lower(trim($1))
+    OR lower(trim($1)) = ANY(
+         SELECT lower(trim(alias)) FROM unnest(COALESCE(aliases, ARRAY[]::text[])) AS alias
+       )
+ ORDER BY CASE WHEN lower(trim(canonical_name)) = lower(trim($1)) THEN 0 ELSE 1 END, id
+ LIMIT 1;`
+		var id int64
+		err := tx.QueryRow(ctx, orgQ, rawOrg).Scan(&id)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("lookup CSI organization for affiliation: %w", err)
+		}
+		if err == nil {
+			orgID = &id
+		}
+	}
+
+	relationshipType := "signed_in_for"
+	if in.Testified {
+		relationshipType = "testified_for"
+	}
+	const affQ = `
+INSERT INTO person_organization_affiliation (
+  person_id, person_mention_id, organization_id, raw_person_name, raw_organization_name,
+  relationship_type, role_title, source_kind, source_table, source_pk, source_record_id,
+  context, confidence, review_status, evidence
+)
+VALUES ($1, $2, $3, $4, $5,
+        $6::person_org_affiliation_type, 'testifier', 'csi_testifier', 'testifier', $7, $8,
+        $9, 'possible', 'auto', $10)
+ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
+  person_mention_id = COALESCE(person_organization_affiliation.person_mention_id, EXCLUDED.person_mention_id),
+  organization_id = COALESCE(person_organization_affiliation.organization_id, EXCLUDED.organization_id),
+  context = EXCLUDED.context,
+  source_record_id = COALESCE(EXCLUDED.source_record_id, person_organization_affiliation.source_record_id),
+  evidence = EXCLUDED.evidence,
+  updated_at = NOW();`
+	evidenceJSON, err := json.Marshal([]string{
+		fmt.Sprintf("CSI testifier %q signed in as %s for agenda_item_id=%d", rawName, defaultStr(rawOrg, "<no organization>"), in.AgendaItemID),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal affiliation evidence: %w", err)
+	}
+	if _, err := tx.Exec(ctx, affQ,
+		personID, mentionID, orgID, rawName, strOrNull(rawOrg),
+		relationshipType, in.TestifierID, in.SourceRecordID,
+		contextJSON, evidenceJSON,
+	); err != nil {
+		return fmt.Errorf("upsert CSI person affiliation: %w", err)
+	}
+	return nil
+}
+
+// BackfillCSITestifierPersonAffiliationsForRawOrganizations refreshes person
+// mentions and affiliations for existing testifier rows whose organization link
+// may have been set after the testifier was first ingested by PopulateOrganizations.
+func (s *Store) BackfillCSITestifierPersonAffiliationsForRawOrganizations(ctx context.Context, rawOrgNames []string) error {
+	if len(rawOrgNames) == 0 {
+		return nil
+	}
+	lowers := make([]string, len(rawOrgNames))
+	for i, n := range rawOrgNames {
+		lowers[i] = lowerTrim(n)
+	}
+	const q = `
+SELECT id, agenda_item_id, raw_name, COALESCE(raw_organization, ''), position::text,
+       testified, time_signed_in, source_record_id
+  FROM testifier
+ WHERE lower(trim(raw_organization)) = ANY($1);`
+	rows, err := s.Pool.Query(ctx, q, lowers)
+	if err != nil {
+		return fmt.Errorf("list CSI testifiers for person affiliation backfill: %w", err)
+	}
+	defer rows.Close()
+
+	inputs := []csiPersonAffiliationInput{}
+	for rows.Next() {
+		var in csiPersonAffiliationInput
+		var signedAt *time.Time
+		if err := rows.Scan(&in.TestifierID, &in.AgendaItemID, &in.RawName, &in.RawOrganization, &in.Position, &in.Testified, &signedAt, &in.SourceRecordID); err != nil {
+			return fmt.Errorf("scan CSI testifier for person affiliation backfill: %w", err)
+		}
+		if signedAt != nil {
+			in.TimeSignedIn = *signedAt
+		}
+		inputs = append(inputs, in)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(inputs) == 0 {
+		return nil
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, in := range inputs {
+		if err := upsertCSITestifierPersonAffiliation(ctx, tx, in); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func normalizePersonName(s string) string {
+	fields := strings.Fields(strings.ToUpper(strings.TrimSpace(s)))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, " ")
+}
+
+func zeroTimeToNil(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
 }
 
 // ---------------------------------------------------------------------------
