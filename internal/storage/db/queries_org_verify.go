@@ -3,8 +3,12 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type UpsertIRSBMFParams struct {
@@ -92,6 +96,19 @@ type UpsertPDCEmployerParams struct {
 	SourceRecordID     int64
 }
 
+type UpsertPDCLobbyistAffiliationParams struct {
+	ReportNumber     string
+	LobbyistID       string
+	LobbyistName     string
+	EmployerID       string
+	EmployerName     string
+	EmploymentYear   string
+	EmploymentURL    string
+	EmploymentPeriod string
+	Raw              map[string]any
+	SourceRecordID   int64
+}
+
 func (s *Store) UpsertPDCEmployer(ctx context.Context, p UpsertPDCEmployerParams) error {
 	rawJSON, err := json.Marshal(p.Raw)
 	if err != nil {
@@ -118,6 +135,99 @@ ON CONFLICT (employer_id) DO UPDATE SET
 	)
 	if err != nil {
 		return fmt.Errorf("upsert pdc_employer: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpsertPDCLobbyistAffiliation(ctx context.Context, p UpsertPDCLobbyistAffiliationParams) error {
+	lobbyistName := strings.TrimSpace(p.LobbyistName)
+	if p.LobbyistID == "" || lobbyistName == "" || p.EmployerID == "" || p.EmployerName == "" {
+		return nil
+	}
+	rawJSON, err := json.Marshal(p.Raw)
+	if err != nil {
+		return fmt.Errorf("marshal pdc lobbyist affiliation raw: %w", err)
+	}
+	contextJSON, err := json.Marshal(map[string]any{
+		"report_number":     p.ReportNumber,
+		"lobbyist_id":       p.LobbyistID,
+		"lobbyist_name":     p.LobbyistName,
+		"employer_id":       p.EmployerID,
+		"employer_name":     p.EmployerName,
+		"employment_year":   p.EmploymentYear,
+		"employment_url":    p.EmploymentURL,
+		"employment_period": p.EmploymentPeriod,
+		"raw":               json.RawMessage(rawJSON),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal pdc lobbyist affiliation context: %w", err)
+	}
+	evidenceJSON, err := json.Marshal([]string{
+		fmt.Sprintf("PDC lobbyist employment row: lobbyist_id=%s employer_id=%s year=%s report=%s", p.LobbyistID, p.EmployerID, p.EmploymentYear, p.ReportNumber),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal pdc lobbyist affiliation evidence: %w", err)
+	}
+
+	const personQ = `
+INSERT INTO person (display_name, normalized_name, pdc_lobbyist_id, match_confidence, match_notes)
+VALUES ($1, $2, $3, 'probable', 'Auto-seeded from PDC lobbyist_id; PDC source identity is stable within PDC.')
+ON CONFLICT (pdc_lobbyist_id) WHERE pdc_lobbyist_id IS NOT NULL DO UPDATE SET
+  display_name = EXCLUDED.display_name,
+  normalized_name = COALESCE(person.normalized_name, EXCLUDED.normalized_name),
+  updated_at = NOW()
+RETURNING id;`
+	var personID int64
+	if err := s.Pool.QueryRow(ctx, personQ, lobbyistName, normalizePersonName(lobbyistName), p.LobbyistID).Scan(&personID); err != nil {
+		return fmt.Errorf("upsert PDC lobbyist person: %w", err)
+	}
+
+	var orgID *int64
+	const orgQ = `
+SELECT id
+  FROM organization
+ WHERE pdc_lobbyist_employer_id = $1
+    OR lower(trim(canonical_name)) = lower(trim($2))
+    OR lower(trim($2)) = ANY(
+         SELECT lower(trim(alias)) FROM unnest(COALESCE(aliases, ARRAY[]::text[])) AS alias
+       )
+ ORDER BY CASE WHEN pdc_lobbyist_employer_id = $1 THEN 0 ELSE 1 END, id
+ LIMIT 1;`
+	var foundOrgID int64
+	err = s.Pool.QueryRow(ctx, orgQ, p.EmployerID, p.EmployerName).Scan(&foundOrgID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lookup PDC employer organization: %w", err)
+	}
+	if err == nil {
+		orgID = &foundOrgID
+	}
+
+	recordYear := 0
+	if y, err := strconv.Atoi(strings.TrimSpace(p.EmploymentYear)); err == nil {
+		recordYear = y
+	}
+	sourceRowID := strings.Join([]string{p.ReportNumber, p.LobbyistID, p.EmployerID, p.EmploymentYear}, "|")
+	const affQ = `
+INSERT INTO person_organization_affiliation (
+  person_id, organization_id, raw_person_name, raw_organization_name,
+  relationship_type, role_title, record_year, source_kind, source_table,
+  source_row_id, source_record_id, context, confidence, review_status, evidence
+)
+VALUES ($1, $2, $3, $4,
+        'lobbyist_for', 'lobbyist', NULLIF($5,0), 'pdc_lobbyist_employment', 'data.wa.gov:xhn7-64im',
+        $6, NULLIF($7,0), $8, 'probable', 'auto', $9)
+ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
+  organization_id = COALESCE(EXCLUDED.organization_id, person_organization_affiliation.organization_id),
+  record_year = COALESCE(EXCLUDED.record_year, person_organization_affiliation.record_year),
+  source_record_id = COALESCE(EXCLUDED.source_record_id, person_organization_affiliation.source_record_id),
+  context = EXCLUDED.context,
+  evidence = EXCLUDED.evidence,
+  updated_at = NOW();`
+	if _, err := s.Pool.Exec(ctx, affQ,
+		personID, orgID, lobbyistName, p.EmployerName,
+		recordYear, sourceRowID, p.SourceRecordID, contextJSON, evidenceJSON,
+	); err != nil {
+		return fmt.Errorf("upsert PDC lobbyist affiliation: %w", err)
 	}
 	return nil
 }

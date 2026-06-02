@@ -96,6 +96,7 @@ func runIngestPDCEmployers(args []string) int {
 			if normalized == "" {
 				continue
 			}
+			raw := map[string]any(r)
 			if err := store.UpsertPDCEmployer(ctx, db.UpsertPDCEmployerParams{
 				EmployerID:         emRow.EmployerID,
 				Name:               emRow.EmployerName,
@@ -103,10 +104,25 @@ func runIngestPDCEmployers(args []string) int {
 				LastEmploymentYear: emRow.EmploymentYear,
 				LastReportNumber:   emRow.ReportNumber,
 				LastEmploymentURL:  emRow.EmploymentURL,
-				Raw:                map[string]any(r),
+				Raw:                raw,
 				SourceRecordID:     fetch.SourceRecordID,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: upsert %s: %v\n", emRow.EmployerID, err)
+				return 1
+			}
+			if err := store.UpsertPDCLobbyistAffiliation(ctx, db.UpsertPDCLobbyistAffiliationParams{
+				ReportNumber:     emRow.ReportNumber,
+				LobbyistID:       emRow.LobbyistID,
+				LobbyistName:     emRow.LobbyistName,
+				EmployerID:       emRow.EmployerID,
+				EmployerName:     emRow.EmployerName,
+				EmploymentYear:   emRow.EmploymentYear,
+				EmploymentURL:    emRow.EmploymentURL,
+				EmploymentPeriod: emRow.EmploymentPeriod,
+				Raw:              raw,
+				SourceRecordID:   fetch.SourceRecordID,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: upsert lobbyist affiliation %s/%s: %v\n", emRow.LobbyistID, emRow.EmployerID, err)
 				return 1
 			}
 			seen[emRow.EmployerID] = &emp{id: emRow.EmployerID, row: emRow, raw: r}
