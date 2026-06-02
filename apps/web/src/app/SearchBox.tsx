@@ -81,9 +81,6 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
     abortRef.current?.abort();
 
     if (!queryActive) {
-      setTranscript(null);
-      setTranscriptLoading(false);
-      setTranscriptError(null);
       return;
     }
 
@@ -179,9 +176,9 @@ export function SearchBox({ results }: { results: SearchResult[] }) {
       <TranscriptResults
         trimmed={trimmed}
         active={queryActive}
-        response={transcript}
-        loading={transcriptLoading}
-        error={transcriptError}
+        response={queryActive ? transcript : null}
+        loading={queryActive && transcriptLoading}
+        error={queryActive ? transcriptError : null}
       />
     </section>
   );

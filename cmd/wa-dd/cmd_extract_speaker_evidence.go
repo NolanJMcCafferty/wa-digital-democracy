@@ -45,20 +45,32 @@ func runExtractSpeakerEvidence(args []string) int {
 	}
 	defer store.Close()
 
-	segments, err := loadDiarizedSegmentsForEvidence(ctx, store, *jobID, *eventID, *limit)
+	scanned, evidence, tasks, err := extractSpeakerEvidenceForJob(ctx, store, *jobID, *eventID, *limit)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "extract-speaker-evidence: load segments: %v\n", err)
+		fmt.Fprintf(os.Stderr, "extract-speaker-evidence: %v\n", err)
 		return 1
+	}
+	fmt.Fprintf(os.Stderr, "extract-speaker-evidence: scanned %d segments, upserted %d evidence rows and %d review tasks\n", scanned, evidence, tasks)
+	return 0
+}
+
+// extractSpeakerEvidenceForJob runs the self-introduction extractor over every
+// diarized segment for (jobID, eventID) and upserts evidence + review tasks.
+// Returns (segmentsScanned, evidenceRowsUpserted, reviewTasksUpserted, err).
+func extractSpeakerEvidenceForJob(ctx context.Context, store *db.Store, jobID int64, eventID string, limit int) (int, int, int, error) {
+	segments, err := loadDiarizedSegmentsForEvidence(ctx, store, jobID, eventID, limit)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("load segments: %w", err)
 	}
 	createdEvidence, createdTasks := 0, 0
 	for _, seg := range segments {
 		cands := diarization.ExtractSpeakerEvidence(seg.Text)
 		for _, cand := range cands {
-			kind, candidateID, label, conf := resolveSpeakerCandidate(ctx, store, cand.Kind, cand.Label, *eventID, cand.Confidence)
-			evidenceKey := fmt.Sprintf("job:%d:seg:%d:%s:%d:%s", *jobID, seg.ID, kind, candidateID, strings.ToLower(label))
+			kind, candidateID, label, conf := resolveSpeakerCandidate(ctx, store, cand.Kind, cand.Label, eventID, cand.Confidence)
+			evidenceKey := fmt.Sprintf("job:%d:seg:%d:%s:%d:%s", jobID, seg.ID, kind, candidateID, strings.ToLower(label))
 			eid, err := store.UpsertSpeakerIdentityEvidence(ctx, db.SpeakerIdentityEvidenceParams{
 				EvidenceKey:             evidenceKey,
-				DiarizationJobID:        *jobID,
+				DiarizationJobID:        jobID,
 				SpeakerClusterID:        seg.SpeakerClusterID,
 				DiarizedSpeechSegmentID: seg.ID,
 				EvidenceType:            cand.EvidenceType,
@@ -75,8 +87,7 @@ func runExtractSpeakerEvidence(args []string) int {
 				},
 			})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "extract-speaker-evidence: store evidence: %v\n", err)
-				return 1
+				return len(segments), createdEvidence, createdTasks, fmt.Errorf("store evidence: %w", err)
 			}
 			createdEvidence++
 			priority := 100
@@ -87,7 +98,7 @@ func runExtractSpeakerEvidence(args []string) int {
 				priority += 25
 			}
 			if _, err := store.UpsertSpeakerReviewTask(ctx, db.SpeakerReviewTaskParams{
-				DiarizationJobID: *jobID,
+				DiarizationJobID: jobID,
 				SpeakerClusterID: seg.SpeakerClusterID,
 				Priority:         priority,
 				CandidateKind:    kind,
@@ -96,14 +107,12 @@ func runExtractSpeakerEvidence(args []string) int {
 				Confidence:       conf,
 				EvidenceIDs:      []int64{eid},
 			}); err != nil {
-				fmt.Fprintf(os.Stderr, "extract-speaker-evidence: store review task: %v\n", err)
-				return 1
+				return len(segments), createdEvidence, createdTasks, fmt.Errorf("store review task: %w", err)
 			}
 			createdTasks++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "extract-speaker-evidence: scanned %d segments, upserted %d evidence rows and %d review tasks\n", len(segments), createdEvidence, createdTasks)
-	return 0
+	return len(segments), createdEvidence, createdTasks, nil
 }
 
 type diarizedSegmentForEvidence struct {

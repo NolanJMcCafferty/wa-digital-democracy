@@ -66,6 +66,7 @@ services:
   web:
     build:
       context: ../apps/web
+      target: web-dev
     container_name: wa-dd-web
     depends_on:
       - api

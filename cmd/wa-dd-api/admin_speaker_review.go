@@ -12,6 +12,11 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
+const (
+	adminSpeakerReviewDefaultLimit = 50
+	adminSpeakerReviewMaxLimit     = 200
+)
+
 func init() {
 	registerRoute(route{Method: "GET", Path: "/review/speakers", Scope: scopeAdminViewer, Store: adminListSpeakerReviewTasksHandler})
 	registerRoute(route{Method: "GET", Path: "/review/speakers/events", Scope: scopeAdminViewer, Store: adminListSpeakerReviewEventsHandler})
@@ -51,18 +56,33 @@ func adminListSpeakerReviewTasksHandler(store *db.Store) http.HandlerFunc {
 
 func adminListSpeakerReviewEventsHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		limit := 50
-		if v := req.URL.Query().Get("limit"); v != "" {
+		q := req.URL.Query()
+		limit := adminSpeakerReviewDefaultLimit
+		if v := q.Get("limit"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				limit = n
 			}
 		}
-		events, err := store.ListSpeakerReviewEvents(req.Context(), limit)
+		if limit > adminSpeakerReviewMaxLimit {
+			limit = adminSpeakerReviewMaxLimit
+		}
+		offset := 0
+		if v := q.Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+		events, total, err := store.ListSpeakerReviewEvents(req.Context(), limit, offset)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"events": events})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"events": events,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
 	}
 }
 

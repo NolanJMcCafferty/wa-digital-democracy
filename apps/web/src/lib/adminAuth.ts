@@ -15,6 +15,12 @@ const ROLE_RANK: Record<AdminRole, number> = {
 export const ADMIN_TOKEN_HEADER = "X-WADD-Admin-Auth";
 export const CLERK_ADMIN_JWT_TEMPLATE = "wadd-admin";
 
+// Local development bypass: when running outside production, skip the Clerk
+// sign-in flow and treat every request as a full admin. The Go API has a
+// matching bypass that injects a stub admin user when Clerk is not
+// configured, so admin mutations work end-to-end without Clerk locally.
+export const ADMIN_AUTH_BYPASSED = process.env.NODE_ENV !== "production";
+
 type ClerkMetadata = Record<string, unknown> | null | undefined;
 
 export function normalizeAdminRole(value: unknown): AdminRole | null {
@@ -34,6 +40,9 @@ export function hasAdminRole(role: AdminRole | null, minimum: AdminRole): boolea
 }
 
 export async function requireAdminRole(minimum: AdminRole = "viewer"): Promise<{ role: AdminRole; userId: string }> {
+  if (ADMIN_AUTH_BYPASSED) {
+    return { role: "admin", userId: "local-dev" };
+  }
   const session = await auth();
   if (!session.userId) {
     const headerList = await headers();
@@ -53,6 +62,9 @@ export async function requireAdminRole(minimum: AdminRole = "viewer"): Promise<{
 }
 
 export async function clerkAdminAuthHeader(): Promise<Record<string, string>> {
+  if (ADMIN_AUTH_BYPASSED) {
+    return { [ADMIN_TOKEN_HEADER]: "Bypass local-dev" };
+  }
   const session = await auth();
   if (!session.userId) {
     throw new Error("Clerk admin session is required for admin API requests");

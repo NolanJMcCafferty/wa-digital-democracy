@@ -43,12 +43,11 @@ func main() {
 	apiAuth := internalAPIAuthMiddleware(env("WADD_INTERNAL_API_TOKEN", ""))
 	adminAuth, err := newAdminAuthenticator(ctx, adminAuthConfigFromEnv())
 	if err != nil {
-		log.Printf("admin auth disabled: %v", err)
-		adminAuth = func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "admin authentication is not configured"})
-			})
-		}
+		// Local dev: no Clerk config means we treat every admin request
+		// as a fully-privileged local admin so the /admin pages work
+		// without going through Clerk sign-in.
+		log.Printf("admin auth disabled, using local-dev bypass: %v", err)
+		adminAuth = localDevAdminBypass()
 	}
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(apiAuth)

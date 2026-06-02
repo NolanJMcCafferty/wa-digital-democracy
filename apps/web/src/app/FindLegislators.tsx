@@ -57,14 +57,15 @@ export function FindLegislators({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const suggestAbortRef = useRef<AbortController | null>(null);
+  const canSuggest = !selectedMagicKey && address.trim().length >= MIN_SUGGEST_LENGTH;
+  const visibleSuggestions = canSuggest ? suggestions : [];
+  const isSuggestionsOpen = canSuggest && suggestionsOpen;
+  const isSuggestionsLoading = canSuggest && suggestionsLoading;
 
   useEffect(() => {
     suggestAbortRef.current?.abort();
     const trimmed = address.trim();
     if (selectedMagicKey || trimmed.length < MIN_SUGGEST_LENGTH) {
-      setSuggestions([]);
-      setSuggestionsOpen(false);
-      setSuggestionsLoading(false);
       return;
     }
 
@@ -172,22 +173,22 @@ export function FindLegislators({
                   value={address}
                   onChange={(event) => onAddressChange(event.target.value)}
                   onFocus={() => {
-                    if (suggestions.length > 0) setSuggestionsOpen(true);
+                    if (visibleSuggestions.length > 0) setSuggestionsOpen(true);
                   }}
                   placeholder="600 4th Ave, Seattle, WA 98104"
                   autoComplete="street-address"
                   role="combobox"
                   aria-autocomplete="list"
                   aria-controls="address-suggestions"
-                  aria-expanded={suggestionsOpen}
+                  aria-expanded={isSuggestionsOpen}
                   className="w-full rounded border border-stone-300 bg-stone-50 px-3 py-2 text-stone-900 placeholder:text-stone-400 focus:border-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-300"
                 />
-                {suggestionsOpen ? (
+                {isSuggestionsOpen ? (
                   <ul
                     id="address-suggestions"
                     className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded border border-stone-300 bg-white shadow-lg"
                   >
-                    {suggestions.map((suggestion) => (
+                    {visibleSuggestions.map((suggestion) => (
                       <li key={`${suggestion.text}-${suggestion.magic_key ?? ""}`}>
                         <button
                           type="button"
@@ -213,7 +214,7 @@ export function FindLegislators({
               </button>
             </div>
           </label>
-          {suggestionsLoading ? (
+          {isSuggestionsLoading ? (
             <div className="text-xs text-stone-500">Finding address matches...</div>
           ) : null}
         </form>

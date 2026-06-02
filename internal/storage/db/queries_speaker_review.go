@@ -230,9 +230,30 @@ type SpeakerReviewEvent struct {
 	TotalSpeechMS          int
 }
 
-func (s *Store) ListSpeakerReviewEvents(ctx context.Context, limit int) ([]SpeakerReviewEvent, error) {
+func (s *Store) ListSpeakerReviewEvents(ctx context.Context, limit, offset int) ([]SpeakerReviewEvent, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	const countQ = `
+SELECT COUNT(*)
+  FROM (
+    SELECT sc.tvw_event_id
+      FROM speaker_cluster sc
+      JOIN diarization_job j ON j.id = sc.diarization_job_id
+     WHERE j.status = 'succeeded'
+       AND j.id = (
+         SELECT id FROM diarization_job
+          WHERE tvw_event_id = sc.tvw_event_id AND status = 'succeeded'
+          ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1
+       )
+     GROUP BY sc.tvw_event_id
+  ) events;`
+	var total int
+	if err := s.Pool.QueryRow(ctx, countQ).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count speaker review events: %w", err)
 	}
 	const q = `
 SELECT sc.tvw_event_id,
@@ -256,21 +277,21 @@ SELECT sc.tvw_event_id,
    )
  GROUP BY sc.tvw_event_id
  ORDER BY pending_task_count DESC, unresolved_cluster_count DESC, total_speech_ms DESC
- LIMIT $1;`
-	rows, err := s.Pool.Query(ctx, q, limit)
+ LIMIT $1 OFFSET $2;`
+	rows, err := s.Pool.Query(ctx, q, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("list speaker review events: %w", err)
+		return nil, 0, fmt.Errorf("list speaker review events: %w", err)
 	}
 	defer rows.Close()
 	out := []SpeakerReviewEvent{}
 	for rows.Next() {
 		var ev SpeakerReviewEvent
 		if err := rows.Scan(&ev.TVWEventID, &ev.ClusterCount, &ev.AssignedCount, &ev.PendingTaskCount, &ev.UnresolvedClusterCount, &ev.TotalSpeechMS); err != nil {
-			return nil, fmt.Errorf("scan speaker review event: %w", err)
+			return nil, 0, fmt.Errorf("scan speaker review event: %w", err)
 		}
 		out = append(out, ev)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 type SpeakerClusterReview struct {
@@ -324,15 +345,83 @@ SELECT sc.id, sc.diarization_job_id, sc.tvw_event_id, sc.cluster_label,
 	}
 	defer rows.Close()
 	out := []SpeakerClusterReview{}
+	idx := map[int64]int{}
 	for rows.Next() {
 		var c SpeakerClusterReview
 		if err := rows.Scan(&c.ClusterID, &c.DiarizationJobID, &c.TVWEventID, &c.ClusterLabel,
 			&c.TotalSpeechMS, &c.TurnCount, &c.CurrentSpeakerLabel, &c.CurrentSpeakerKind, &c.CurrentReviewStatus); err != nil {
 			return nil, fmt.Errorf("scan speaker cluster review: %w", err)
 		}
+		idx[c.ClusterID] = len(out)
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	if err := s.attachSpeakerReviewTasksForEvent(ctx, tvwEventID, out, idx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachSpeakerReviewTasksForEvent loads every speaker_review_task for the
+// clusters in `out` (one round trip) and groups them onto each cluster.
+// Without this the event view shows "No candidate" even when the extractor
+// has populated review tasks.
+func (s *Store) attachSpeakerReviewTasksForEvent(ctx context.Context, tvwEventID string, out []SpeakerClusterReview, idx map[int64]int) error {
+	const q = `
+SELECT t.id, t.diarization_job_id, sc.tvw_event_id, sc.id, sc.cluster_label,
+       COALESCE(sc.total_speech_ms,0), COALESCE(sc.turn_count,0), t.status::text,
+       t.priority, t.proposed_candidate_kind::text, COALESCE(t.proposed_candidate_id,0),
+       t.proposed_label, COALESCE(t.proposed_confidence,0), t.evidence_ids,
+       COALESCE(e.evidence_text,''), COALESCE(e.start_ms,0), COALESCE(e.end_ms,0),
+       COALESCE(sa.speaker_label, ''), COALESCE(sa.review_status::text, '')
+  FROM speaker_review_task t
+  JOIN speaker_cluster sc ON sc.id = t.speaker_cluster_id
+  JOIN diarization_job j ON j.id = sc.diarization_job_id
+  LEFT JOIN speaker_assignment sa
+    ON sa.diarization_job_id = t.diarization_job_id
+   AND sa.speaker_cluster_id = t.speaker_cluster_id
+  LEFT JOIN LATERAL (
+    SELECT evidence_text, start_ms, end_ms
+      FROM speaker_identity_evidence e
+     WHERE e.id = ANY(t.evidence_ids)
+     ORDER BY confidence DESC NULLS LAST, id
+     LIMIT 1
+  ) e ON true
+ WHERE sc.tvw_event_id = $1
+   AND j.status = 'succeeded'
+   AND j.id = (
+     SELECT id FROM diarization_job
+      WHERE tvw_event_id = $1 AND status = 'succeeded'
+      ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1
+   )
+ ORDER BY CASE t.status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END,
+          t.priority DESC, t.proposed_confidence DESC NULLS LAST, t.created_at DESC;`
+	rows, err := s.Pool.Query(ctx, q, tvwEventID)
+	if err != nil {
+		return fmt.Errorf("list speaker review tasks for event: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t SpeakerReviewTask
+		if err := rows.Scan(&t.ID, &t.DiarizationJobID, &t.TVWEventID, &t.ClusterID, &t.ClusterLabel,
+			&t.TotalSpeechMS, &t.TurnCount, &t.Status, &t.Priority, &t.CandidateKind,
+			&t.CandidateID, &t.CandidateLabel, &t.CandidateConfidence, &t.EvidenceIDs,
+			&t.EvidenceText, &t.EvidenceStartMS, &t.EvidenceEndMS,
+			&t.CurrentSpeakerLabel, &t.CurrentReviewStatus); err != nil {
+			return fmt.Errorf("scan speaker review task for event: %w", err)
+		}
+		i, ok := idx[t.ClusterID]
+		if !ok {
+			continue
+		}
+		out[i].Tasks = append(out[i].Tasks, t)
+	}
+	return rows.Err()
 }
 
 func (s *Store) GetSpeakerClusterReview(ctx context.Context, clusterID int64) (SpeakerClusterReview, error) {

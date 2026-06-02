@@ -29,7 +29,7 @@ func runDiarizeEvent(args []string) int {
 		provider = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
 		model    = fs.String("model", "nova-3", "provider model")
 		outDir   = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
-		apiKey   = fs.String("api-key", env("DEEPGRAM_API_KEY", ""), "provider API key (defaults to DEEPGRAM_API_KEY)")
+		apiKey   = fs.String("api-key", "", "provider API key (defaults to DEEPGRAM_API_KEY or PYANNOTEAI_API_KEY based on --provider)")
 		useURL   = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -49,7 +49,19 @@ func runDiarizeEvent(args []string) int {
 	}
 	defer store.Close()
 
-	p, err := newDiarizationProvider(*provider, *apiKey, *model)
+	key := *apiKey
+	if strings.TrimSpace(key) == "" {
+		switch strings.ToLower(*provider) {
+		case "pyannoteai":
+			key = env("PYANNOTEAI_API_KEY", "")
+		default:
+			key = env("DEEPGRAM_API_KEY", "")
+		}
+	}
+	if strings.ToLower(*provider) == "pyannoteai" && *model == "nova-3" {
+		*model = "precision-2"
+	}
+	p, err := newDiarizationProvider(*provider, key, *model)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diarize-event: %v\n", err)
 		return 2
@@ -70,6 +82,12 @@ func newDiarizationProvider(provider, apiKey, model string) (diarization.Provide
 			return nil, fmt.Errorf("deepgram: %w", err)
 		}
 		return dg, nil
+	case "pyannoteai":
+		pa, err := diarization.NewPyannoteAIProvider(diarization.PyannoteAIConfig{APIKey: apiKey, Model: model, Confidence: true})
+		if err != nil {
+			return nil, fmt.Errorf("pyannoteai: %w", err)
+		}
+		return pa, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", provider)
 	}
@@ -162,5 +180,15 @@ func diarizeOneEvent(ctx context.Context, store *db.Store, p diarization.Provide
 		return fmt.Errorf("store result: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "diarize-event: stored %d segments and %d entity mentions for job_id=%d raw=%s\n", len(segments), len(entities), jobID, rawPath)
+
+	// Auto-populate the speaker identity review queue from self-introduction
+	// patterns in the freshly-stored segments. Failures here shouldn't roll
+	// back the diarization itself — the backfill command can re-run safely.
+	scanned, ev, tk, err := extractSpeakerEvidenceForJob(ctx, store, jobID, eventID, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "diarize-event: speaker-evidence extraction failed for job_id=%d: %v\n", jobID, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "diarize-event: speaker-evidence scanned %d segments, upserted %d evidence rows and %d review tasks\n", scanned, ev, tk)
+	}
 	return nil
 }

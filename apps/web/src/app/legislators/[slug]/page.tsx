@@ -6,6 +6,7 @@ import {
 } from "@/lib/api";
 import {
   BillSearchResults,
+  billRenderKey,
   parseBillFilters,
   type RawBillSearchParams,
 } from "../../bills/BillSearchResults";
@@ -35,6 +36,9 @@ export default async function LegislatorPage({
   const primary = legislator.appearances.filter(
     (a) => a.sponsorType === "Primary"
   ).length;
+  const primarySponsoredBillKeys = legislator.appearances
+    .filter((a) => a.sponsorType === "Primary")
+    .map((a) => billRenderKey(a));
   const secondary = legislator.appearances.length - primary;
   const displayName = legislator.displayName ?? legislator.name;
   const subtitle = [
@@ -90,6 +94,7 @@ export default async function LegislatorPage({
           facets={sponsoredBillResult.facets}
           hiddenFilters={["chamber", "party"]}
           leadSponsorOptions={[{ value: slug, label: displayName }]}
+          highlightedBillKeys={primarySponsoredBillKeys}
         />
       </section>
     </article>

@@ -992,6 +992,13 @@ export type SpeakerReviewEvent = {
   TotalSpeechMS: number;
 };
 
+export type SpeakerReviewEventsPage = {
+  events: SpeakerReviewEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type SpeakerIdentityEvidence = {
   ID: number;
   EvidenceType: string;
@@ -1019,13 +1026,25 @@ export type SpeakerClusterReview = {
   SampleSegments?: SpeakerReviewSegment[];
 };
 
-export async function listSpeakerReviewEvents(): Promise<SpeakerReviewEvent[]> {
-  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/events`, { cache: "no-store" });
+export async function listSpeakerReviewEvents(opts: { page?: number; limit?: number; offset?: number } = {}): Promise<SpeakerReviewEventsPage> {
+  const params = new URLSearchParams();
+  const limit = opts.limit ?? 50;
+  params.set("limit", String(limit));
+  const offset = opts.offset ?? (Math.max(1, opts.page ?? 1) - 1) * limit;
+  if (offset > 0) params.set("offset", String(offset));
+  const qs = params.toString();
+  const url = `${API_BASE}/api/v1/admin/review/speakers/events${qs ? `?${qs}` : ""}`;
+  const res = await adminApiFetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`listSpeakerReviewEvents returned ${res.status}`);
   }
-  const body = (await res.json()) as { events: SpeakerReviewEvent[] };
-  return body.events ?? [];
+  const body = (await res.json()) as Partial<SpeakerReviewEventsPage>;
+  return {
+    events: body.events ?? [],
+    total: body.total ?? body.events?.length ?? 0,
+    limit: body.limit ?? limit,
+    offset: body.offset ?? offset,
+  };
 }
 
 export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<SpeakerClusterReview[]> {

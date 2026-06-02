@@ -201,8 +201,10 @@ func (s *Store) SearchBills(ctx context.Context, p BillSearchParams) ([]ListedBi
 		idx := push(p.Party)
 		where = append(where, fmt.Sprintf("primary_sponsor.party = $%d", idx))
 	}
+	sponsorSlugArg := 0
 	if p.Sponsor != "" {
 		idx := push(p.Sponsor)
+		sponsorSlugArg = idx
 		where = append(where, fmt.Sprintf(`
 EXISTS (
   SELECT 1
@@ -259,6 +261,13 @@ EXISTS (
 	}
 
 	whereSQL := strings.Join(where, " AND ")
+	orderSQL := "b.biennium DESC, b.prefix, b.number"
+	if sponsorSlugArg > 0 {
+		orderSQL = fmt.Sprintf(`CASE
+    WHEN trim(both '-' from regexp_replace(replace(lower(primary_sponsor.name), '&', ' and '), '[^a-z0-9]+', '-', 'g')) = $%d THEN 0
+    ELSE 1
+  END, %s`, sponsorSlugArg, orderSQL)
+	}
 
 	// One join to the legislator that's the Primary sponsor (DISTINCT
 	// ON keeps it to one row per bill if there are duplicate Primary
@@ -297,7 +306,7 @@ SELECT b.biennium, b.prefix, b.number, b.bill_number,
        COALESCE(primary_sponsor.last_name, ''),
        COALESCE(primary_sponsor.party, '')
 ` + baseFROM + ` WHERE ` + whereSQL + `
- ORDER BY b.biennium DESC, b.prefix, b.number
+ ORDER BY ` + orderSQL + `
  LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
 	rows, err := s.Pool.Query(ctx, q, args...)
 	if err != nil {

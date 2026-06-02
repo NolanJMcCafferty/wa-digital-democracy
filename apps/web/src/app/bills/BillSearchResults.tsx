@@ -108,6 +108,7 @@ export function BillSearchResults({
   facets,
   hiddenFilters = [],
   leadSponsorOptions = [],
+  highlightedBillKeys = [],
 }: {
   basePath: string;
   filters: BillSearchFilters;
@@ -117,8 +118,10 @@ export function BillSearchResults({
   facets: BillSearchFacets;
   hiddenFilters?: Array<"chamber" | "party" | "status" | "prefix">;
   leadSponsorOptions?: Array<{ value: string; label: string }>;
+  highlightedBillKeys?: string[];
 }) {
   const hidden = new Set(hiddenFilters);
+  const highlighted = new Set(highlightedBillKeys);
   const limit = filters.limit ?? 50;
   const page = filters.page ?? 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -296,8 +299,12 @@ export function BillSearchResults({
                 {bills.map((b) => {
                   const billHref = `/bills/${b.biennium}/${b.billPrefix}${b.billNumber}`;
                   const sponsorName = b.leadDisplay ?? b.leadSponsor ?? "";
+                  const isHighlighted = highlighted.has(billRenderKey(b));
                   return (
-                    <tr key={`${b.biennium}-${b.billPrefix}-${b.billNumber}`} className="hover:bg-stone-50">
+                    <tr
+                      key={billRenderKey(b)}
+                      className={isHighlighted ? "bg-amber-50/70 hover:bg-amber-100/70" : "hover:bg-stone-50"}
+                    >
                       <td className="px-4 py-2.5 align-top">
                         <Link
                           href={billHref}
@@ -355,6 +362,10 @@ export function BillSearchResults({
       </div>
     </div>
   );
+}
+
+export function billRenderKey(b: Pick<BillListEntry, "biennium" | "billPrefix" | "billNumber">): string {
+  return `${b.biennium}-${b.billPrefix}-${b.billNumber}`;
 }
 
 function FilterGroup({

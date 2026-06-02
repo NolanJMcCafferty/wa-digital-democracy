@@ -87,6 +87,16 @@ func newAdminAuthenticator(ctx context.Context, cfg adminAuthConfig) (func(http.
 	return adminAuthMiddleware(cfg, jwks.Keyfunc), nil
 }
 
+func localDevAdminBypass() func(http.Handler) http.Handler {
+	stub := adminUser{ID: "local-dev", Email: "local-dev@wa-dd.local", Name: "Local Dev", Role: adminRoleAdmin}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := context.WithValue(req.Context(), adminUserContextKey{}, stub)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	}
+}
+
 func adminAuthMiddleware(cfg adminAuthConfig, keys jwt.Keyfunc) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

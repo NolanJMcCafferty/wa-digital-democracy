@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
 import { Nav } from "./Nav";
 
@@ -24,7 +25,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-stone-50 antialiased">
         <header className="border-b border-stone-300 bg-white">
           <div className="mx-auto flex max-w-7xl flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <a
+            <Link
               href="/"
               className="inline-flex items-center gap-2 text-xl font-bold tracking-tight text-stone-900 hover:text-stone-700"
             >
@@ -35,7 +36,7 @@ export default function RootLayout({
                 className="h-8 w-8 shrink-0 rounded-md"
               />
               <span>WA Digital Democracy</span>
-            </a>
+            </Link>
             <Nav />
           </div>
         </header>
