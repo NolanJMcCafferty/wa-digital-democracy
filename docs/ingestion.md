@@ -1,6 +1,6 @@
 # Data ingestion
 
-Last updated: 2026-05-20.
+Last updated: 2026-06-02.
 
 This document describes how data flows from the official Washington
 state sources (LWS, CSI, TVW/Invintus, PDC, DataWA) into Postgres and out to
@@ -10,11 +10,11 @@ where things land, and how to debug a stuck or misbehaving run.
 ## TL;DR
 
 ```
-                     nightly cron: make daily
+                    hosted daily: wa-dd daily
         ┌──────────────────┬────────────────────────────────────┐
         │                  │                                    │
-   ingest-session                 ingest-hearings
-   (concurrent)              discovery + full ingest (variable)
+ingest-legislators     ingest-session                 discover-hearings → ingest-hearings
+   roster refresh       concurrent LWS metadata        CSI/TVW discovery + full ingest
         │                  │                                    │
    LWS metadata         CSI agenda IDs + TVW event IDs, then
    for ~5,000 bills     CSI testifiers, TVW captions, transcript
@@ -85,11 +85,20 @@ path); when it's empty, it stores every hearing LWS reports
 **Cost:** ~5,000 bills × 4 LWS calls = 20,000 calls. The default driver
 uses concurrent workers while the shared HTTP client enforces the LWS
 host rate limit, so runtime depends on upstream latency and the selected
-`--workers` / `--rate` values.
+`--workers` / `--rate` values. The hosted `wa-dd daily` wrapper defaults
+session metadata to `--session-workers=4` and `--session-rate=25`.
 
-**Code:** `cmd/wa-dd/main.go` (`runIngestSession`), `internal/jobs/jobs.go`
-(`Pipeline.RunMetadataOnly`), `internal/jobs/ingest_bill.go`
-(`IngestBill`).
+**Resume / smoke-test flags:**
+
+- `--skip-fresh=24h` is the default: bills whose `bill.updated_at` is newer
+  than the window are skipped so a killed run can resume without re-fetching
+  already-ingested bill metadata. Use `--skip-fresh=0` for a forced full pass.
+- `--only-types=HB,SB` narrows the bill-prefix set for targeted checks.
+- `--limit=N` stops after N bills for smoke tests.
+
+**Code:** `cmd/wa-dd/cmd_ingest_session.go` (`runIngestSession`),
+`internal/jobs/jobs.go` (`Pipeline.RunMetadataOnly`),
+`internal/jobs/ingest_bill.go` (`IngestBill`).
 
 ### 2. `wa-dd discover-hearings --biennium 2025-26`
 
@@ -179,14 +188,23 @@ list-meetings range, not loosen the time window.
 unique CSI meeting in the biennium. Empirically ~few minutes for a
 full biennium run after the first batch warms the caches.
 
-**Code:** `cmd/wa-dd/main.go` (`runDiscoverHearings`),
+**Code:** `cmd/wa-dd/cmd_discover_hearings.go` (`runDiscoverHearings`),
 `internal/jobs/discover.go` (`Discoverer`).
 
 ### 3. `wa-dd ingest-hearings --biennium 2025-26`
 
-**What it does:** for every `agenda_item` row whose hearing has a TVW
-event ID but no testifiers ingested yet, runs the full 6-step
+**What it does:** for every discovered `agenda_item` row whose hearing has a
+TVW event ID and is still selected by the retry query, runs the full 6-step
 pipeline.
+
+**Retry-selection caveat:** the current selection query in
+`Store.ListDiscoveredAgendaItems` still looks for the legacy terminal
+`ingestion_run.job = 'pdc-context'` success marker. The current 6-step pipeline
+no longer writes that step (it ends at `populate-organizations`), so this is a
+known code/doc mismatch to keep in mind when interpreting re-runs. Operationally,
+`ingest-hearings` is intended to retry agenda items that have not completed the
+full pipeline, including items that failed after partially inserting testifiers
+or transcript rows; it is not merely a “no testifier rows yet” filter.
 
 **Why:** discovery populated the join keys; this pass uses them to
 fetch the actual testimony, video captions, and downstream derivatives.
@@ -225,7 +243,8 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
 6. **`PopulateOrganizations`** — seeds `organization` rows from CSI
    `raw_organization` strings, records `organization_source_mention`, and
    links matching testifier rows. PDC/vendor/federal context flows through
-   reviewable entity matching rather than a hand-edited YAML file.
+   separate source-context ingestion plus reviewable entity matching rather
+   than this hearing pipeline or a hand-edited YAML file.
 
 **Output:**
 
@@ -235,19 +254,20 @@ The 6 pipeline steps (`internal/jobs/jobs.go`):
   and any failures.
 
 **Cost:** ~6 HTTP calls per bill (3 LWS for the re-ingest, 1 CSI for
-testifiers, 2 TVW/Invintus for event detail + captions, plus PDC if
-matched orgs). At 10 req/sec, ~0.6–0.8 seconds per bill. Hundreds of
-hearings → tens of minutes.
+testifiers, 2 TVW/Invintus for event detail + captions). At 10 req/sec,
+~0.6–0.8 seconds per bill. Hundreds of hearings → tens of minutes.
+Separate PDC/DataWA/IRS/Federal source-context commands have their own costs.
 
-**Code:** `cmd/wa-dd/main.go` (`runIngestHearings`),
+**Code:** `cmd/wa-dd/cmd_ingest_hearings.go` (`runIngestHearings`),
 `internal/jobs/ingest_csi.go`, `internal/jobs/ingest_tvw.go`,
 `internal/jobs/segment_transcript.go`,
 `internal/jobs/match_speakers.go`, and `internal/jobs/populate_organizations.go`.
 
 ## Postgres tables
 
-The schema is defined in `db/migrations/0001_initial.sql`. The passes
-interact with these tables:
+The base schema starts in `db/migrations/0001_initial.sql`; current state is the
+full ordered migration set under `db/migrations/`. The core legislative/testimony
+passes interact with these tables:
 
 | Table | Populated by | Notes |
 |---|---|---|
@@ -269,7 +289,9 @@ interact with these tables:
 | `organization_source_mention` | `PopulateOrganizations` | One row per source-backed organization-name mention. |
 | `vendor_entity_match_candidate`, `vendor_entity_match_decision`, `reviewed_vendor_entity_match` | source-context ingest + entity-review commands/UI | Reviewable organization/entity links for PDC/DataWA/FiscalWA/Federal context. |
 | `source_record` | every HTTP fetch via `httpx.RawSink` | Append-only. UPSERT on `(system, endpoint, url, content_hash, transform_version)` DO UPDATE SET fetched_at — so identical responses get one row that ages forward. |
-| `ingestion_run` | `Pipeline.Run`, `RunMetadataOnly` | One row per pipeline step, with `started_at`, `finished_at`, `status`, `error`. Useful for grep-style debugging across runs. |
+| `ingestion_run` | `Pipeline.Run`, `RunMetadataOnly` | One row per pipeline step, with `started_at`, `finished_at`, `status`, `error`. Useful for grep-style debugging across runs. Note that the current `ingest-hearings` work-list query still checks for legacy `pdc-context` success rows even though the active pipeline ends at `populate-organizations`. |
+| `job_lock` | `wa-dd daily` | Postgres advisory-lock helper table/migration support; the daily command also uses a Postgres advisory lock so overlapping hosted daily runs exit cleanly. |
+| `irs_bmf_organization`, `pdc_employer` | `ingest-irs-bmf-wa`, `ingest-pdc-employers` | Optional organization verification/source-context tables used by `verify-organizations` and review workflows. |
 
 ## Hearing diarization and speaker review
 
@@ -298,16 +320,21 @@ source_record row with no per-step boilerplate.
 
 ## Daily orchestration
 
-`make daily` chains the public operator passes:
+The hosted operator path is the CLI command:
+
+```sh
+wa-dd daily --biennium "${BIENNIUM:-2025-26}"
+```
+
+Railway runs that command from `infra/railway/config/daily.railway.json` and
+`scripts/bootstrap-railway.mjs`. The command acquires a Postgres advisory lock
+for the whole chain; if another daily run is active, the new run exits cleanly.
+
+`make daily` remains a local convenience target and chains the same public
+operator work through Make:
 
 ```makefile
 daily: ingest-legislators ingest-session ingest-hearings
-```
-
-For nightly cron:
-
-```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 The order matters when fresh:
@@ -315,17 +342,25 @@ The order matters when fresh:
 1. `ingest-legislators` refreshes the roster and owns `legislator`
    rows.
 2. `ingest-session` creates `bill`, `bill_sponsor`, status, and
-   `hearing` rows for every bill in the biennium.
-3. `ingest-hearings` first runs discovery to enrich those `hearing`
-   rows with CSI/TVW IDs and create `agenda_item` rows, then runs the
-   full pipeline against discovered agenda items.
+   `hearing` rows for every bill in the biennium. In the hosted `daily`
+   command this stage uses `--session-workers`, `--session-rate`, and
+   optional `--session-limit`.
+3. `discover-hearings` enriches those `hearing` rows with CSI/TVW IDs
+   and creates `agenda_item` rows. `make ingest-hearings` runs this
+   discovery step internally; `wa-dd daily` calls it explicitly.
+4. `ingest-hearings` runs the full pipeline against discovered agenda
+   items. `--hearing-limit` applies to both discovery and hearing ingest
+   in `wa-dd daily` for smoke tests.
 
-`make discover-hearings` remains available as a lower-level debugging
-or backfill target, but it is an implementation detail of
-`make ingest-hearings` in the daily path.
+For an old-school local cron, one line still works:
 
-If any pass exits non-zero, cron mail will surface it. Each step's
-per-bill isolation means most failures are partial, not blocking.
+```cron
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+```
+
+If any pass exits non-zero, cron mail / Railway logs will surface it. Each
+step's per-bill or per-hearing isolation means most failures are partial, not
+blocking.
 
 ## Rate limits and politeness
 
@@ -365,10 +400,11 @@ All daily stages are safe to re-run. What changes:
   `hearing`, `agenda_item`, `tvw_event`, `organization` — UPSERT, so
   re-running just refreshes timestamps and any changed fields.
 - `testifier`, `transcript_segment` — these are insert-only with no
-  dedupe. Re-running creates duplicates today.
-  `ingest-hearings` filters to agenda items without testifier rows, so
-  the routine nightly path doesn't hit this. This remains a known
-  operational caveat, not a public-beta blocker.
+  dedupe. Re-running creates duplicates today. The intended routine path is
+  to avoid re-running completed agenda items and retry incomplete ones, but
+  the current work-list query still uses the legacy `pdc-context` terminal
+  marker; until that is corrected, verify the candidate list before broad
+  re-runs on a database that already has completed hearing ingests.
 - `source_record` — UPSERT on `(system, endpoint, url, content_hash,
   transform_version)`. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new
@@ -396,9 +432,11 @@ All daily stages are safe to re-run. What changes:
 
 ## Out of scope today
 
-- Parallelism across bills. The daily stages are serial. At 10 req/sec
-  the bottleneck is upstream rate limits, not local CPU; concurrency
-  would primarily help if we raise the rate.
+- Parallelism across hearing agenda items. `ingest-session` already has
+  concurrent workers (`--workers`, surfaced by `wa-dd daily` as
+  `--session-workers`). Discovery and full hearing ingest remain serial;
+  at 10 req/sec the bottleneck is usually upstream rate limits and source
+  latency, not local CPU.
 - Per-step selective re-fetching. Today every run re-hits every
   upstream API. The `source_record` content_hash dedupe makes this
   cheap on storage, but expensive on bandwidth. Conditional GETs
@@ -410,6 +448,34 @@ All daily stages are safe to re-run. What changes:
 - Broad accountability-graph expansion. The current public-beta product is
   complete around legislative/testimony pages; DataWA/FiscalWA/Federal
   context commands are bounded source-context tools, not a Phase 4 roadmap.
+
+## Optional source-context: PDC and IRS organization verification
+
+`wa-dd ingest-pdc-employers` ingests PDC lobbyist-employer registrations from
+DataWA/Socrata (`xhn7-64im`) into `pdc_employer`:
+
+```sh
+wa-dd ingest-pdc-employers --limit 1000
+```
+
+`wa-dd ingest-irs-bmf-wa` ingests the IRS Business Master File Washington
+501(c) extract into `irs_bmf_organization`:
+
+```sh
+wa-dd ingest-irs-bmf-wa
+```
+
+`wa-dd verify-organizations` cross-matches seeded CSI organizations against
+IRS BMF and PDC employer rows. Treat these as source-backed evidence for
+review/verification, not automatic proof that two real-world entities are the
+same in every context.
+
+Use `wa-dd sources` to list registered source connectors and their base URLs.
+The registry includes both shipped legislative/testimony connectors and broader
+source-context clients (Socrata/DataWA, PDC, IRS-adjacent verification data,
+USAspending, FEMA, BLS, HUD, EPA, Census, SAO, Seattle, King County, etc.).
+Not every registered connector has a first-class ingest command yet; commands
+listed in this document are the operator-supported ingestion surfaces.
 
 ## Optional source-context: DataWA contract and vendor ingestion
 
