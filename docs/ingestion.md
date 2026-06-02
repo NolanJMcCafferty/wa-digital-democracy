@@ -263,36 +263,6 @@ Separate PDC/DataWA/IRS/Federal source-context commands have their own costs.
 `internal/jobs/segment_transcript.go`,
 `internal/jobs/match_speakers.go`, and `internal/jobs/populate_organizations.go`.
 
-## Postgres tables
-
-The base schema starts in `db/migrations/0001_initial.sql`; current state is the
-full ordered migration set under `db/migrations/`. The core legislative/testimony
-passes interact with these tables:
-
-| Table | Populated by | Notes |
-|---|---|---|
-| `bill` | `IngestBill` | UPSERT on `(biennium, prefix, number)`. Bill prefix is normalized to bare form (`HB`/`SB`/`HJR`/etc.) — engrossment and substitution chrome (`E`/`2S`/`SS`) is stripped at ingest time so a bill doesn't fork into multiple rows as it moves through the legislature. |
-| `legislator` | `ingest-legislators` | UPSERT on `lws_sponsor_id`. This pass owns legislator identity/profile fields. |
-| `bill_sponsor` | `IngestBill` | UPSERT on `(bill_id, legislator_id, sponsor_type)` DO NOTHING. Sponsor IDs missing from the roster are warned and skipped. |
-| `bill_status_change` | `IngestBill` | UPSERT on `(bill_id, action_date, history_line)` DO NOTHING. |
-| `hearing` | `IngestBill` (creates), `Discoverer.Commit` (enriches), `IngestCSI` (touches), `IngestTVW` (sets tvw fields) | Soft-key on `(chamber, committee_name, meeting_datetime)`. UPDATE uses COALESCE so partial enrichment is safe. |
-| `agenda_item` | `Discoverer.Commit` (creates), `IngestCSI` (touches) | UPSERT on `csi_agenda_item_id`. |
-| `testifier` | `IngestCSI` | One row per CSI sign-in. `testified` boolean distinguishes "did testify" from "registered position only". |
-| `tvw_event` | `IngestTVW` | One row per Invintus event. UPSERT on `tvw_event_id`; includes WordPress slug/link, bill/category taxonomy IDs, stream URIs, runtime, and audio/video download metadata when available. |
-| `tvw_media_asset` | `IngestTVW` | One row per Invintus media/document/link asset for an event. Replaced per event on re-ingest; captures caption VTT, agenda/document links, published MP4 metadata, thumbnails, HLS-adjacent asset URLs, and technical advanced-details JSON. |
-| `transcript_segment` | `IngestTVW` (creates), `SegmentTranscript` (tags), `MatchSpeakers` (legacy labels) | One row per WebVTT cue. `agenda_item_id` is set when the cue falls in the bill window; these rows also back transcript search. |
-| `agenda_item_window` | `SegmentTranscript` | Persisted bill/agenda discussion windows used by page assemblers instead of re-deriving windows in SQL. |
-| `tvw_audio_asset`, `diarization_job`, `speaker_cluster`, `diarized_speech_segment` | `audio-cache`, `diarize-event`, `diarize-pending`, `merge-segments` | Deepgram-derived canonical public hearing transcript path: anonymous clusters and merged speech segments. |
-| `speaker_identity_evidence`, `speaker_review_task`, `speaker_assignment` | `extract-speaker-evidence`, `/admin/review/speakers` | Reviewable evidence/tasks and accepted public speaker labels. |
-| `entity_mention` | Deepgram diarization/entity extraction | Provider-derived named-entity mentions, treated as reviewable evidence. |
-| `organization` | `PopulateOrganizations` | UPSERT on `canonical_name` from source-backed CSI org strings. |
-| `organization_source_mention` | `PopulateOrganizations` | One row per source-backed organization-name mention. |
-| `vendor_entity_match_candidate`, `vendor_entity_match_decision`, `reviewed_vendor_entity_match` | source-context ingest + entity-review commands/UI | Reviewable organization/entity links for PDC/DataWA/FiscalWA/Federal context. |
-| `source_record` | every HTTP fetch via `httpx.RawSink` | Append-only. UPSERT on `(system, endpoint, url, content_hash, transform_version)` DO UPDATE SET fetched_at — so identical responses get one row that ages forward. |
-| `ingestion_run` | `Pipeline.Run`, `RunMetadataOnly` | One row per pipeline step, with `started_at`, `finished_at`, `status`, `error`. Useful for grep-style debugging across runs. Note that the current `ingest-hearings` work-list query still checks for legacy `pdc-context` success rows even though the active pipeline ends at `populate-organizations`. |
-| `job_lock` | `wa-dd daily` | Postgres advisory-lock helper table/migration support; the daily command also uses a Postgres advisory lock so overlapping hosted daily runs exit cleanly. |
-| `irs_bmf_organization`, `pdc_employer` | `ingest-irs-bmf-wa`, `ingest-pdc-employers` | Optional organization verification/source-context tables used by `verify-organizations` and review workflows. |
-
 ## Hearing diarization and speaker review
 
 See [`docs/hearing-diarization-and-review.md`](hearing-diarization-and-review.md)
@@ -387,10 +357,6 @@ parses them as `America/Los_Angeles` (handles DST correctly) — see
 `internal/sources/lws/normalize.go:parseLWSDate` and
 `internal/jobs/discover.go:tvwPostsForDay`. Storing as Pacific-local
 time means UI rendering in either Pacific or UTC is unambiguous.
-
-A previous bug stored Pacific wall-clock as UTC, causing meetings to
-render as "2:30 AM PST" instead of "10:30 AM PST". That's fixed at the
-parse layer and tested.
 
 ## Re-running
 
