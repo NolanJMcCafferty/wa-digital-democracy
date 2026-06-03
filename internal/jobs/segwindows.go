@@ -10,7 +10,7 @@ package jobs
 //   1. Read agenda_item_window rows that SegmentTranscript persisted, or
 //   2. Call DetectBillDiscussionWindows with the same inputs,
 //
-// rather than running their own regex against transcript_segment.text.
+// rather than running their own regex against diarized_speech_segment.text.
 // Two implementations of "matches the bill" inevitably drift, and
 // rendered windows that disagree with the segmenter's persisted windows
 // have already bitten this codebase once (the old in-SQL window-detect

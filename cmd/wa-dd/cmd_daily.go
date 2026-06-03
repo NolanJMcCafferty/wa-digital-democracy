@@ -28,7 +28,7 @@ func runDaily(args []string) int {
 		sessionRate    = fs.Float64("session-rate", 25.0, "max requests/sec for LWS session metadata")
 		sessionWorkers = fs.Int("session-workers", 4, "number of ingest-session workers")
 		sessionLimit   = fs.Int("session-limit", 0, "stop ingest-session after N bills (0 = no limit)")
-		hearingLimit   = fs.Int("hearing-limit", 0, "stop discover/ingest-hearings after N rows (0 = no limit)")
+		hearingLimit   = fs.Int("hearing-limit", 0, "stop discover/ingest-hearings after N hearings (0 = no limit)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2

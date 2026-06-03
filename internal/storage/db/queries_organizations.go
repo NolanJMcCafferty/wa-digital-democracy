@@ -490,7 +490,6 @@ SELECT DISTINCT ON (source_kind, source_record_id, source_name, detail)
 
 type PopulateOrganizationsStats struct {
 	CandidatesProcessed   int
-	MentionsUpserted      int
 	OrganizationsUpserted int
 	TestifiersLinked      int64
 	Skipped               int
@@ -504,27 +503,34 @@ type PopulateOrganizationsProgress struct {
 	ElapsedTime time.Duration
 }
 
-// PopulateOrganizationsFromCSI seeds organization rows from distinct
-// testifier.raw_organization values, records source mentions, and links all
-// matching testifier rows to the resulting organization. It is intentionally
-// source-local: no cross-source merge is asserted here.
-func (s *Store) PopulateOrganizationsFromCSI(ctx context.Context) (PopulateOrganizationsStats, error) {
-	return s.PopulateOrganizationsFromCSIWithProgress(ctx, nil)
+// PopulateOrganizationsFromCSIWithProgress seeds organization rows from
+// distinct testifier.raw_organization values and links all matching testifier
+// rows to the resulting organization. It is intentionally source-local: no
+// cross-source merge is asserted here.
+func (s *Store) PopulateOrganizationsFromCSIWithProgress(ctx context.Context, progress func(PopulateOrganizationsProgress)) (PopulateOrganizationsStats, error) {
+	return s.populateOrganizationsFromCSI(ctx, 0, progress)
 }
 
-func (s *Store) PopulateOrganizationsFromCSIWithProgress(ctx context.Context, progress func(PopulateOrganizationsProgress)) (PopulateOrganizationsStats, error) {
+func (s *Store) PopulateOrganizationsFromCSIForHearing(ctx context.Context, hearingID int64) (PopulateOrganizationsStats, error) {
+	if hearingID == 0 {
+		return PopulateOrganizationsStats{}, errors.New("populate organizations for hearing: hearing id required")
+	}
+	return s.populateOrganizationsFromCSI(ctx, hearingID, nil)
+}
+
+func (s *Store) populateOrganizationsFromCSI(ctx context.Context, hearingID int64, progress func(PopulateOrganizationsProgress)) (PopulateOrganizationsStats, error) {
 	const q = `
 WITH orgs AS (
-    SELECT MIN(t.id) AS source_pk,
-           trim(t.raw_organization) AS source_name,
+    SELECT trim(t.raw_organization) AS source_name,
            wa_dd_normalize_entity_name(trim(t.raw_organization)) AS normalized_name,
-           COUNT(*) AS occurrence_count,
-           MIN(t.source_record_id) AS source_record_id
+           COUNT(*) AS occurrence_count
       FROM testifier t
+      JOIN agenda_item a ON a.id = t.agenda_item_id
      WHERE NULLIF(trim(t.raw_organization), '') IS NOT NULL
+       AND ($1::bigint = 0 OR a.hearing_id = $1)
      GROUP BY trim(t.raw_organization), wa_dd_normalize_entity_name(trim(t.raw_organization))
 )
-SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_id
+SELECT source_name, normalized_name
   FROM orgs
  WHERE normalized_name IS NOT NULL
  ORDER BY occurrence_count DESC, source_name;`
@@ -542,7 +548,7 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 	}
 
 	emitProgress("listing", PopulateOrganizationsStats{}, "")
-	rows, err := s.Pool.Query(ctx, q)
+	rows, err := s.Pool.Query(ctx, q, hearingID)
 	if err != nil {
 		return PopulateOrganizationsStats{}, fmt.Errorf("list CSI organizations: %w", err)
 	}
@@ -552,10 +558,9 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 	emitProgress("processing", stats, "")
 	lastProgress := time.Now()
 	for rows.Next() {
-		var sourcePK, count, sourceRecordID int64
 		var sourceName string
 		var normalized *string
-		if err := rows.Scan(&sourcePK, &sourceName, &normalized, &count, &sourceRecordID); err != nil {
+		if err := rows.Scan(&sourceName, &normalized); err != nil {
 			return stats, fmt.Errorf("scan CSI organization: %w", err)
 		}
 		stats.CandidatesProcessed++
@@ -582,9 +587,6 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 				return stats, err
 			}
 		}
-		if err != nil {
-			return stats, err
-		}
 		stats.OrganizationsUpserted++
 		if match, ok, err := s.LookupOrgCrossSource(ctx, *normalized); err != nil {
 			return stats, err
@@ -594,11 +596,12 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 			}
 			stats.Verified++
 		}
-		if err := s.upsertOrganizationSourceMention(ctx, "csi_testifier", "testifier", sourcePK, sourceName, *normalized, orgID, int(count), sourceRecordID, "possible"); err != nil {
-			return stats, err
+		var linked int64
+		if hearingID == 0 {
+			linked, err = s.LinkTestifiersToOrg(ctx, orgID, []string{sourceName})
+		} else {
+			linked, err = s.linkTestifiersToOrgForHearing(ctx, hearingID, orgID, []string{sourceName})
 		}
-		stats.MentionsUpserted++
-		linked, err := s.LinkTestifiersToOrg(ctx, orgID, []string{sourceName})
 		if err != nil {
 			return stats, err
 		}
@@ -613,6 +616,34 @@ SELECT source_pk, source_name, normalized_name, occurrence_count, source_record_
 	}
 	emitProgress("complete", stats, "")
 	return stats, nil
+}
+
+func (s *Store) linkTestifiersToOrgForHearing(ctx context.Context, hearingID, orgID int64, rawOrgNames []string) (int64, error) {
+	if len(rawOrgNames) == 0 {
+		return 0, nil
+	}
+	lowers := make([]string, len(rawOrgNames))
+	for i, n := range rawOrgNames {
+		lowers[i] = lowerTrim(n)
+	}
+	const q = `
+UPDATE testifier t
+   SET normalized_org_id = $1
+  FROM agenda_item a
+ WHERE a.id = t.agenda_item_id
+   AND a.hearing_id = $2
+   AND lower(trim(t.raw_organization)) = ANY($3);`
+	tag, err := s.Pool.Exec(ctx, q, orgID, hearingID, lowers)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, nil
+	}
+	if err := s.BackfillCSITestifierPersonAffiliationsForRawOrganizations(ctx, rawOrgNames); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 type PruneJunkOrganizationsStats struct {
@@ -683,7 +714,7 @@ SELECT id, canonical_name, aliases, match_confidence::text
 		return stats, nil
 	}
 	// Batch the deletes; FK relationships are mostly ON DELETE CASCADE or
-	// SET NULL (see migrations 0001/0010/0015/0018), so individual DELETEs suffice.
+	// SET NULL (see migrations 0001/0010/0018), so individual DELETEs suffice.
 	for _, c := range toDelete {
 		if _, err := s.Pool.Exec(ctx, `DELETE FROM organization WHERE id = $1`, c.id); err != nil {
 			return stats, fmt.Errorf("delete organization %d (%q): %w", c.id, c.canonicalName, err)
@@ -697,26 +728,6 @@ SELECT id, canonical_name, aliases, match_confidence::text
 // names will be pruned without touching the DB.
 func JunkOrganizationName(raw, normalized string) bool {
 	return junkOrganizationName(raw, normalized)
-}
-
-func (s *Store) upsertOrganizationSourceMention(ctx context.Context, sourceKind, sourceTable string, sourcePK int64, sourceName, normalized string, orgID int64, count int, sourceRecordID int64, confidence string) error {
-	const q = `
-INSERT INTO organization_source_mention (source_kind, source_table, source_pk, source_name,
-                                         normalized_name, organization_id, occurrence_count,
-                                         confidence, source_record_id)
-VALUES ($1,$2,NULLIF($3,0),$4,$5,NULLIF($6,0),$7,$8::org_match_confidence,NULLIF($9,0))
-ON CONFLICT (source_kind, source_table, source_pk, source_name) DO UPDATE SET
-  normalized_name = EXCLUDED.normalized_name,
-  organization_id = EXCLUDED.organization_id,
-  occurrence_count = EXCLUDED.occurrence_count,
-  confidence = EXCLUDED.confidence,
-  source_record_id = EXCLUDED.source_record_id,
-  last_seen_at = NOW();`
-	_, err := s.Pool.Exec(ctx, q, sourceKind, sourceTable, sourcePK, sourceName, normalized, orgID, count, defaultStr(confidence, "possible"), sourceRecordID)
-	if err != nil {
-		return fmt.Errorf("upsert organization_source_mention: %w", err)
-	}
-	return nil
 }
 
 type organizationNameMatch struct {

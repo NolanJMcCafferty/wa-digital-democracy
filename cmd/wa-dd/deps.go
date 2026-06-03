@@ -6,12 +6,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
@@ -39,8 +36,6 @@ func acquireDailyLock(ctx context.Context, dsn string) (func(), bool, error) {
 type buildDeps struct {
 	store      *db.Store
 	httpClient *httpx.Client
-	pdcClient  *pdc.Client
-	lwsClient  *lws.Client
 	csiClient  *csi.Client
 	tvwClient  *tvw.Client
 }
@@ -83,8 +78,6 @@ func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*
 	return &buildDeps{
 		store:      store,
 		httpClient: httpClient,
-		pdcClient:  pdc.New(httpClient, os.Getenv("SOCRATA_APP_TOKEN")),
-		lwsClient:  lws.New(httpClient),
 		csiClient:  csi.New(httpClient),
 		tvwClient:  tvw.New(httpClient, embedderKey),
 	}, cleanup, nil
@@ -129,22 +122,6 @@ func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64)
 		httpClient: httpClient,
 		lwsClient:  lws.New(httpClient),
 	}, cleanup, nil
-}
-
-// ingestOne runs the full hearing-ingestion pipeline for one agenda item.
-// Page JSON is assembled on demand by wa-dd-api; this routine only writes
-// normalized source-linked records to Postgres.
-func ingestOne(ctx context.Context, deps *buildDeps, demo *common.BillAgendaTarget, logf func(string)) error {
-	pipeline := &jobs.Pipeline{
-		Store: deps.store,
-		LWS:   deps.lwsClient,
-		CSI:   deps.csiClient,
-		TVW:   deps.tvwClient,
-		PDC:   deps.pdcClient,
-		Demo:  demo,
-	}
-	ids := jobs.NewIDs()
-	return pipeline.Run(ctx, logf, ids)
 }
 
 type discoveryDeps struct {

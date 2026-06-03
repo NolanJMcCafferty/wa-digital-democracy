@@ -8,15 +8,8 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// dbCleanup is a no-op shim retained so existing tests compile unchanged. The
-// testcontainers harness in testmain_test.go now restores the database from a
-// post-migration snapshot in t.Cleanup, so per-FK row deletion is unnecessary.
-type dbCleanup struct{}
-
-func newDBCleanup(_ *testing.T, _ *db.Store) *dbCleanup { return &dbCleanup{} }
-
 // insertProvenance creates a fake source_record we can FK against.
-func insertProvenance(t *testing.T, store *db.Store, _ *dbCleanup, system, hash string) int64 {
+func insertProvenance(t *testing.T, store *db.Store, system, hash string) int64 {
 	t.Helper()
 	id, err := store.InsertSourceRecord(context.Background(), db.SourceRecordParams{
 		System:      system,
@@ -36,8 +29,7 @@ func insertProvenance(t *testing.T, store *db.Store, _ *dbCleanup, system, hash 
 func TestUpsertBill_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "lws", "bill-test-1")
+	srID := insertProvenance(t, store, "lws", "bill-test-1")
 
 	id1, err := store.UpsertBill(ctx, db.UpsertBillParams{
 		Biennium: "9999-99", Prefix: "HB", Number: 9990,
@@ -64,8 +56,7 @@ func TestUpsertBill_Idempotent(t *testing.T) {
 func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "csi", "test-csi-1")
+	srID := insertProvenance(t, store, "csi", "test-csi-1")
 
 	// Need a hearing + agenda_item to satisfy FKs.
 	hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
@@ -110,63 +101,65 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	}
 }
 
-func TestListDiscoveredAgendaItems_UsesCurrentAndLegacyCompletionMarkers(t *testing.T) {
+func TestListDiscoveredHearingsForIngest_UsesHearingPipelineMarker(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "lws", "discovered-agenda-items-test-1")
+	srID := insertProvenance(t, store, "lws", "discovered-hearings-test-1")
 
 	billID, err := store.UpsertBill(ctx, db.UpsertBillParams{
-		Biennium: "9999-99", Prefix: "HB", Number: 9992,
-		Title: "Retry Marker Test", ChamberOrigin: "House",
+		Biennium: "9999-99", Prefix: "HB", Number: 9993,
+		Title: "Hearing Pipeline Marker Test", ChamberOrigin: "House",
 		SourceRecordID: srID,
 	})
 	if err != nil {
 		t.Fatalf("bill: %v", err)
 	}
-	makeAgenda := func(tvwEventID, csiAgendaID string) {
+	makeHearing := func(offset time.Duration, tvwEventID string, agendaIDs ...string) int64 {
 		t.Helper()
 		hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
-			BillID: pInt64Test(billID), CommitteeName: "Retry Marker Committee", Chamber: "House",
-			MeetingDateTime: time.Now().UTC().Add(time.Duration(len(csiAgendaID)) * time.Minute),
+			BillID: pInt64Test(billID), CommitteeName: "Hearing Pipeline Committee", Chamber: "House",
+			MeetingDateTime: time.Now().UTC().Add(offset),
 			TVWEventID:      tvwEventID,
 			SourceRecordID:  srID,
 		})
 		if err != nil {
-			t.Fatalf("hearing %s: %v", csiAgendaID, err)
+			t.Fatalf("hearing %s: %v", tvwEventID, err)
 		}
-		if _, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
-			HearingID: hearingID, BillID: pInt64Test(billID), Label: "HB 9992 Retry Marker",
-			CSIAgendaItemID: csiAgendaID, SourceRecordID: srID,
-		}); err != nil {
-			t.Fatalf("agenda %s: %v", csiAgendaID, err)
+		for _, agendaID := range agendaIDs {
+			if _, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
+				HearingID: hearingID, BillID: pInt64Test(billID), Label: "HB 9993 Hearing Pipeline",
+				CSIAgendaItemID: agendaID, SourceRecordID: srID,
+			}); err != nil {
+				t.Fatalf("agenda %s: %v", agendaID, err)
+			}
 		}
+		return hearingID
 	}
-	makeAgenda("tvw-current", "csi-current-complete")
-	makeAgenda("tvw-legacy", "csi-legacy-complete")
-	makeAgenda("tvw-pending", "csi-pending")
+	completeID := makeHearing(time.Minute, "tvw-hearing-complete", "csi-hearing-complete")
+	pendingID := makeHearing(2*time.Minute, "tvw-hearing-pending", "csi-hearing-pending-a", "csi-hearing-pending-b")
 
-	currentRun, err := store.StartIngestionRun(ctx, "populate-organizations", map[string]any{"agenda_item_id": "csi-current-complete"})
+	runID, err := store.StartIngestionRun(ctx, "hearing-pipeline", map[string]any{"hearing_id": completeID})
 	if err != nil {
-		t.Fatalf("start current run: %v", err)
+		t.Fatalf("start hearing run: %v", err)
 	}
-	if err := store.FinishIngestionRun(ctx, currentRun, "succeeded", 0, 0, nil); err != nil {
-		t.Fatalf("finish current run: %v", err)
-	}
-	legacyRun, err := store.StartIngestionRun(ctx, "pdc-context", map[string]any{"agenda_item_id": "csi-legacy-complete"})
-	if err != nil {
-		t.Fatalf("start legacy run: %v", err)
-	}
-	if err := store.FinishIngestionRun(ctx, legacyRun, "succeeded", 0, 0, nil); err != nil {
-		t.Fatalf("finish legacy run: %v", err)
+	if err := store.FinishIngestionRun(ctx, runID, "succeeded", 0, 0, nil); err != nil {
+		t.Fatalf("finish hearing run: %v", err)
 	}
 
-	rows, err := store.ListDiscoveredAgendaItems(ctx, "9999-99")
+	rows, err := store.ListDiscoveredHearingsForIngest(ctx, "9999-99")
 	if err != nil {
-		t.Fatalf("list discovered agenda items: %v", err)
+		t.Fatalf("list discovered hearings: %v", err)
 	}
-	if len(rows) != 1 || rows[0].CSIAgendaItemID != "csi-pending" {
-		t.Fatalf("rows = %#v, want only csi-pending", rows)
+	if len(rows) != 1 || rows[0].HearingID != pendingID || rows[0].AgendaItemCount != 2 {
+		t.Fatalf("rows = %#v, want only pending hearing %d with 2 agenda items", rows, pendingID)
+	}
+
+	items, err := store.ListAgendaItemsForHearing(ctx, pendingID)
+	if err != nil {
+		t.Fatalf("list agenda items for hearing: %v", err)
+	}
+	if len(items) != 2 || items[0].BillPrefix != "HB" || items[0].TVWEventID != "tvw-hearing-pending" {
+		t.Fatalf("items = %#v", items)
 	}
 }
 
@@ -175,8 +168,7 @@ func pInt64Test(v int64) *int64 { return &v }
 func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "invintus", "tvw-media-test-1")
+	srID := insertProvenance(t, store, "invintus", "tvw-media-test-1")
 
 	wpID := int64(77334)
 	if _, err := store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
@@ -248,48 +240,10 @@ SELECT count(*), max(name) FROM tvw_media_asset WHERE tvw_event_id = 'test-media
 	}
 }
 
-func TestFindBillNumberMentions(t *testing.T) {
-	store := newTestStore(t)
-	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "tvw", "test-tvw-1")
-
-	tvwEventID := "test-99999999"
-	if _, err := store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
-		TVWEventID: tvwEventID, Title: "Test", SourceRecordID: srID,
-	}); err != nil {
-		t.Fatalf("upsert tvw_event: %v", err)
-	}
-
-	rows := []db.InsertTranscriptSegmentParams{
-		{TVWEventID: tvwEventID, StartMS: 0, EndMS: 1000, Text: "Welcome to the meeting.", SourceCaptionURL: "u", SourceRecordID: srID},
-		{TVWEventID: tvwEventID, StartMS: 1000, EndMS: 2000, Text: "We will now consider HB 1234.", SourceCaptionURL: "u", SourceRecordID: srID},
-		{TVWEventID: tvwEventID, StartMS: 2000, EndMS: 3000, Text: "Moving on to House Bill 5678 next.", SourceCaptionURL: "u", SourceRecordID: srID},
-		{TVWEventID: tvwEventID, StartMS: 3000, EndMS: 4000, Text: "Questions on HB 1234?", SourceCaptionURL: "u", SourceRecordID: srID},
-	}
-	if err := store.ReplaceTranscriptSegments(ctx, tvwEventID, rows); err != nil {
-		t.Fatalf("replace segments: %v", err)
-	}
-
-	got, err := store.FindBillNumberMentions(ctx, tvwEventID, "HB", 1234)
-	if err != nil {
-		t.Fatalf("FindBillNumberMentions: %v", err)
-	}
-	if len(got) != 2 || got[0] != 1000 || got[1] != 3000 {
-		t.Fatalf("hits = %v, want [1000 3000]", got)
-	}
-
-	got, _ = store.FindBillNumberMentions(ctx, tvwEventID, "HB", 5678)
-	if len(got) != 1 || got[0] != 2000 {
-		t.Fatalf("HB 5678 hits = %v, want [2000]", got)
-	}
-}
-
 func TestUpsertDataWAContract_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-contract-test-1")
+	srID := insertProvenance(t, store, "datawa_socrata", "datawa-contract-test-1")
 
 	params := db.UpsertDataWAContractParams{
 		SourceDatasetID: "test-contracts",
@@ -328,8 +282,7 @@ SELECT count(*), max(contractor_name), max(total_amount)::text
 func TestUpsertDataWAMasterContractSale_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-master-sale-test-1")
+	srID := insertProvenance(t, store, "datawa_socrata", "datawa-master-sale-test-1")
 
 	params := db.UpsertDataWAMasterContractSaleParams{
 		SourceDatasetID:    "n8q6-4twj",
@@ -375,8 +328,7 @@ SELECT count(*), max(vendor_name), max(total_sales_reported)::text
 func TestUpsertDataWAITContract_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-it-contract-test-1")
+	srID := insertProvenance(t, store, "datawa_socrata", "datawa-it-contract-test-1")
 	coop := true
 
 	params := db.UpsertDataWAITContractParams{
@@ -424,8 +376,7 @@ SELECT count(*), max(contractor_name), max(total_contract_amount)::text
 func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "vendor-match-test-1")
+	srID := insertProvenance(t, store, "datawa_socrata", "vendor-match-test-1")
 
 	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
 		CanonicalName:   "Acme Technologies Inc.",
@@ -491,8 +442,7 @@ func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 func TestUpsertDataWAWEBSVendor_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-webs-vendor-test-1")
+	srID := insertProvenance(t, store, "datawa_socrata", "datawa-webs-vendor-test-1")
 
 	params := db.UpsertDataWAWEBSVendorParams{
 		SourceDatasetID:       "3kwi-7zsj",
@@ -537,8 +487,7 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 func TestUpsertFederalAward_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "usaspending", "usaspending-award-test-1")
+	srID := insertProvenance(t, store, "usaspending", "usaspending-award-test-1")
 	start := time.Date(2025, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 
@@ -582,8 +531,7 @@ SELECT count(*), max(award_amount)::text
 func TestUpsertSeattleOperatingBudget_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "seattle_socrata", "seattle-operating-budget-test-1")
+	srID := insertProvenance(t, store, "seattle_socrata", "seattle-operating-budget-test-1")
 
 	params := db.UpsertSeattleOperatingBudgetParams{
 		SourceDatasetID: "8u2j-imqx",
@@ -625,8 +573,7 @@ SELECT count(*), max(approved_amount)::text
 func TestUpsertFiscalWAVendorPayment_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	cleanup := newDBCleanup(t, store)
-	srID := insertProvenance(t, store, cleanup, "fiscal_wa", "fiscalwa-vendor-payment-test-1")
+	srID := insertProvenance(t, store, "fiscal_wa", "fiscalwa-vendor-payment-test-1")
 
 	params := db.UpsertFiscalWAVendorPaymentParams{
 		SourceDatasetID: "vendor-payments-2025-27",

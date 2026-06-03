@@ -7,12 +7,10 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// SegmentTranscript assigns agenda_item_id to transcript segments that
-// fall within detected bill-discussion windows. Manual overrides still
-// win, but the automatic path supports multiple windows for the same
-// bill in one TVW event instead of a single first-mention-to-last-
-// mention span. Windows are persisted to agenda_item_window so the
-// page assemblers read them back literally.
+// SegmentTranscript detects bill-discussion windows in the diarized
+// transcript and persists them to agenda_item_window. Manual overrides
+// still win. Multiple windows per agenda item are supported for bills
+// revisited later in the same TVW event.
 func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	if ids.AgendaItemID == 0 {
 		return fmt.Errorf("segment-transcript: AgendaItemID not set; ingest-csi must run first")
@@ -27,8 +25,7 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 		ids.BillSegmentEnd = p.Demo.TranscriptOverride.EndMS
 		fmt.Fprintf(stderrSink, "  using transcript_override [%d, %d]\n",
 			ids.BillSegmentStart, ids.BillSegmentEnd)
-		_, err := p.Store.AssignSegmentsToAgendaItemWindows(ctx,
-			ids.TVWEventID, ids.AgendaItemID,
+		_, err := p.Store.ReplaceAgendaItemWindows(ctx, ids.AgendaItemID,
 			[]db.AgendaItemWindow{{
 				StartMS:  ids.BillSegmentStart,
 				EndMS:    ids.BillSegmentEnd,
@@ -37,9 +34,12 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 		return err
 	}
 
-	cues, err := p.Store.ListTranscriptCues(ctx, ids.TVWEventID)
+	cues, err := p.Store.ListDiarizedCues(ctx, ids.TVWEventID)
 	if err != nil {
 		return err
+	}
+	if len(cues) == 0 {
+		return fmt.Errorf("segment-transcript: no diarized turns for tvw_event_id=%s; run hearing ingestion or `wa-dd diarize-pending` first", ids.TVWEventID)
 	}
 	jobCues := make([]segmentCue, 0, len(cues))
 	for _, c := range cues {
@@ -47,11 +47,11 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	}
 	windows := DetectBillDiscussionWindows(jobCues, p.Demo.Bill.Prefix, p.Demo.Bill.Number)
 	if len(windows) == 0 {
-		fmt.Fprintf(stderrSink, "  no transcript mentions of %s %d; bill segment unset (set TranscriptOverride on the selected demo to override)\n",
+		fmt.Fprintf(stderrSink, "  no diarized mentions of %s %d; bill segment unset (set TranscriptOverride on the selected demo to override)\n",
 			p.Demo.Bill.Prefix, p.Demo.Bill.Number)
 		// Empty input still clears any stale assignments + windows
 		// from a prior run that found mentions and now doesn't.
-		_, err := p.Store.AssignSegmentsToAgendaItemWindows(ctx, ids.TVWEventID, ids.AgendaItemID, nil)
+		_, err := p.Store.ReplaceAgendaItemWindows(ctx, ids.AgendaItemID, nil)
 		return err
 	}
 
@@ -72,11 +72,10 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 		}
 		mentions += w.Mentions
 	}
-	rows, err := p.Store.AssignSegmentsToAgendaItemWindows(ctx, ids.TVWEventID, ids.AgendaItemID, dbWindows)
-	if err != nil {
+	if _, err := p.Store.ReplaceAgendaItemWindows(ctx, ids.AgendaItemID, dbWindows); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderrSink, "  bill-segment windows %s from %d mentions; %d segments tagged\n",
-		describeWindows(windows), mentions, rows)
+	fmt.Fprintf(stderrSink, "  bill-segment windows %s from %d mentions\n",
+		describeWindows(windows), mentions)
 	return nil
 }

@@ -1,15 +1,18 @@
 // Package jobs implements the ingestion pipeline steps. Each step is designed
 // around idempotent upserts where the underlying source data has stable keys.
 //
-// Steps:
+// Step primitives:
 //
 //  1. IngestBill            LWS metadata → bill, bill_sponsor, status timeline
-//  2. EnrichSchedules       (skipped at runtime when operator provides TVW event ID)
-//  3. IngestCSI              CSI agenda + testifiers → hearing, agenda_item, testifier
-//  4. IngestTVW              Invintus event detail + VTT → tvw_event, transcript_segment
-//  5. SegmentTranscript      bill open/close detection → assign agenda_item_id to segments
-//  6. MatchSpeakers          CSI testifier order around bill segment → speaker labels
-//  7. PopulateOrganizations  CSI organization strings → organization + testifier links
+//  2. IngestCSI             CSI agenda + testifiers → hearing, agenda_item, testifier
+//  3. IngestTVW             Invintus event detail → tvw_event, tvw_media_asset
+//  4. SegmentTranscript     bill-window detection → agenda_item_window
+//  5. PopulateOrganizations CSI organization strings → organization + testifier links
+//
+// `wa-dd ingest-session` uses IngestBill through RunMetadataOnly. `wa-dd
+// ingest-hearings` orchestrates the hearing steps directly at hearing scope:
+// CSI per agenda item, TVW and diarization once per TVW event, then
+// segmentation per agenda item.
 package jobs
 
 import (
@@ -61,50 +64,9 @@ func NewIDs() *IDs {
 	return &IDs{OrgIDs: map[string]int64{}}
 }
 
-// Run executes the eight steps in order, stopping on the first error.
-// Per-step instrumentation (ingestion_run rows) is the caller's job.
-func (p *Pipeline) Run(ctx context.Context, log func(string), ids *IDs) error {
-	steps := []struct {
-		name string
-		fn   func(context.Context, *IDs) error
-	}{
-		{"ingest-bill", p.IngestBill},
-		{"ingest-csi", p.IngestCSI},
-		{"ingest-tvw", p.IngestTVW},
-		{"segment-transcript", p.SegmentTranscript},
-		{"match-speakers", p.MatchSpeakers},
-		{"populate-organizations", p.PopulateOrganizations},
-	}
-	for _, s := range steps {
-		log(fmt.Sprintf("==> %s", s.name))
-		runID, err := p.Store.StartIngestionRun(ctx, s.name, map[string]any{
-			"biennium": p.Demo.Bill.Biennium, "bill": p.Demo.Bill.ID(),
-			"agenda_item_id": p.Demo.AgendaItem.CSIAgendaItemID,
-		})
-		if err != nil {
-			return fmt.Errorf("start run %s: %w", s.name, err)
-		}
-		stepErr := s.fn(ctx, ids)
-		status := "succeeded"
-		if stepErr != nil {
-			status = "failed"
-		}
-		if err := p.Store.FinishIngestionRun(ctx, runID, status, 0, 0, stepErr); err != nil {
-			log(fmt.Sprintf("warning: finish run %s: %v", s.name, err))
-		}
-		if stepErr != nil {
-			return fmt.Errorf("%s: %w", s.name, stepErr)
-		}
-	}
-	return nil
-}
-
 // RunMetadataOnly runs only the LWS-bill ingestion step. Used by the
 // biennium-wide `wa-dd ingest-session` driver where we ingest metadata
-// for every bill in the session but skip CSI/TVW/segment/match/PDC —
-// those steps require operator-curated agenda + TVW IDs that aren't in
-// scope for the bulk-metadata pass. Same `ingestion_run` instrumentation
-// as Run; same per-step error semantics.
+// for every bill in the session but skip CSI/TVW/segment/org work.
 func (p *Pipeline) RunMetadataOnly(ctx context.Context, log func(string), ids *IDs) error {
 	const step = "ingest-bill"
 	log(fmt.Sprintf("==> %s", step))

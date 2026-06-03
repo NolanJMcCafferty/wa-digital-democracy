@@ -49,10 +49,9 @@ func runPopulateOrganizations(args []string) int {
 				fmt.Fprintln(os.Stderr, "==> processing CSI organization candidates")
 				return
 			}
-			fmt.Fprintf(os.Stderr, "  processed=%d organizations=%d mentions=%d linked=%d skipped=%d elapsed=%s current=%q\n",
+			fmt.Fprintf(os.Stderr, "  processed=%d organizations=%d linked=%d skipped=%d elapsed=%s current=%q\n",
 				p.Stats.CandidatesProcessed,
 				p.Stats.OrganizationsUpserted,
-				p.Stats.MentionsUpserted,
 				p.Stats.TestifiersLinked,
 				p.Stats.Skipped,
 				p.ElapsedTime,
@@ -70,6 +69,6 @@ func runPopulateOrganizations(args []string) int {
 	if *jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(stats)
 	}
-	fmt.Fprintf(os.Stderr, "==> seeded %d organizations from CSI, verified %d via cross-source, recorded %d mentions, linked %d testifiers, skipped %d junk names (%d candidates processed)\n", stats.OrganizationsUpserted, stats.Verified, stats.MentionsUpserted, stats.TestifiersLinked, stats.Skipped, stats.CandidatesProcessed)
+	fmt.Fprintf(os.Stderr, "==> seeded %d organizations from CSI, verified %d via cross-source, linked %d testifiers, skipped %d junk names (%d candidates processed)\n", stats.OrganizationsUpserted, stats.Verified, stats.TestifiersLinked, stats.Skipped, stats.CandidatesProcessed)
 	return 0
 }

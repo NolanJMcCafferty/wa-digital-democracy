@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -25,10 +26,10 @@ func runDiarizePending(args []string) int {
 	fs := flag.NewFlagSet("diarize-pending", flag.ContinueOnError)
 	var (
 		dsn         = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		provider    = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
-		model       = fs.String("model", "nova-3", "provider model")
+		provider    = fs.String("provider", "pyannoteai", "diarization provider: pyannoteai or deepgram")
+		model       = fs.String("model", "precision-2", "provider model")
 		outDir      = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
-		apiKey      = fs.String("api-key", env("DEEPGRAM_API_KEY", ""), "provider API key (defaults to DEEPGRAM_API_KEY)")
+		apiKey      = fs.String("api-key", "", "provider API key (defaults to PYANNOTEAI_API_KEY or DEEPGRAM_API_KEY based on --provider)")
 		useURL      = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
 		limit       = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
 		dryRun      = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
@@ -66,7 +67,19 @@ func runDiarizePending(args []string) int {
 		return 0
 	}
 
-	p, err := newDiarizationProvider(*provider, *apiKey, *model, *transcription, *asrModel)
+	key := *apiKey
+	if strings.TrimSpace(key) == "" {
+		switch strings.ToLower(*provider) {
+		case "deepgram":
+			key = env("DEEPGRAM_API_KEY", "")
+		default:
+			key = env("PYANNOTEAI_API_KEY", "")
+		}
+	}
+	if strings.ToLower(*provider) == "deepgram" && *model == "precision-2" {
+		*model = "nova-3"
+	}
+	p, err := newDiarizationProvider(*provider, key, *model, *transcription, *asrModel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diarize-pending: %v\n", err)
 		return 2

@@ -26,10 +26,10 @@ func runDiarizeEvent(args []string) int {
 	var (
 		eventID  = fs.String("event-id", "", "TVW/Invintus event ID to diarize")
 		dsn      = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		provider = fs.String("provider", "deepgram", "diarization provider (currently: deepgram)")
-		model    = fs.String("model", "nova-3", "provider model")
+		provider = fs.String("provider", "pyannoteai", "diarization provider: pyannoteai or deepgram")
+		model    = fs.String("model", "precision-2", "provider model")
 		outDir   = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
-		apiKey   = fs.String("api-key", "", "provider API key (defaults to DEEPGRAM_API_KEY or PYANNOTEAI_API_KEY based on --provider)")
+		apiKey   = fs.String("api-key", "", "provider API key (defaults to PYANNOTEAI_API_KEY or DEEPGRAM_API_KEY based on --provider)")
 		useURL   = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
 		// pyannoteAI-only: bundle ASR with diarization so segments come back
 		// with text already aligned to clusters, removing the need for a
@@ -57,14 +57,14 @@ func runDiarizeEvent(args []string) int {
 	key := *apiKey
 	if strings.TrimSpace(key) == "" {
 		switch strings.ToLower(*provider) {
-		case "pyannoteai":
-			key = env("PYANNOTEAI_API_KEY", "")
-		default:
+		case "deepgram":
 			key = env("DEEPGRAM_API_KEY", "")
+		default:
+			key = env("PYANNOTEAI_API_KEY", "")
 		}
 	}
-	if strings.ToLower(*provider) == "pyannoteai" && *model == "nova-3" {
-		*model = "precision-2"
+	if strings.ToLower(*provider) == "deepgram" && *model == "precision-2" {
+		*model = "nova-3"
 	}
 	p, err := newDiarizationProvider(*provider, key, *model, *transcription, *asrModel)
 	if err != nil {

@@ -20,10 +20,9 @@ func (p *Pipeline) PopulateOrganizations(ctx context.Context, ids *IDs) error {
 				fmt.Fprintln(stderrSink, "  processing CSI organization candidates")
 				return
 			}
-			fmt.Fprintf(stderrSink, "  processed=%d organizations=%d mentions=%d linked=%d skipped=%d elapsed=%s\n",
+			fmt.Fprintf(stderrSink, "  processed=%d organizations=%d linked=%d skipped=%d elapsed=%s\n",
 				progress.Stats.CandidatesProcessed,
 				progress.Stats.OrganizationsUpserted,
-				progress.Stats.MentionsUpserted,
 				progress.Stats.TestifiersLinked,
 				progress.Stats.Skipped,
 				progress.ElapsedTime,

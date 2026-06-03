@@ -1,22 +1,20 @@
 package jobs
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// IngestTVW fetches Invintus event detail and the WebVTT caption file (if
-// present), upserts tvw_event, and replaces the transcript_segment rows.
+// IngestTVW fetches Invintus event detail and upserts tvw_event +
+// tvw_media_asset. The WebVTT caption URL is recorded on tvw_event for
+// archival and frontend deep-linking; transcript text and speaker
+// attribution come from the diarization pipeline, not from VTT.
 func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 	eventID := p.Demo.TVW.EventID
 	ids.TVWEventID = eventID
-
-	httpClient := p.TVW.HTTP
 
 	// 1. TVW WordPress metadata + rich Invintus Event/getDetailed.
 	wp, _, err := p.TVW.FetchWPVideoByEventID(ctx, eventID)
@@ -98,39 +96,8 @@ UPDATE hearing
 		}
 	}
 
-	// 2. Caption fetch + parse, if available.
 	if norm.CaptionURL == "" {
-		fmt.Fprintf(stderrSink, "  warn: no captionPath for event %s; transcript section will be empty\n", eventID)
-		return nil
-	}
-	capFetch, err := httpClient.Do(ctx, httpx.Request{
-		System:   tvw.InvintusSystemName,
-		Endpoint: "captionPath",
-		URL:      norm.CaptionURL,
-	})
-	if err != nil {
-		return fmt.Errorf("fetch captions: %w", err)
-	}
-	segs, err := tvw.ParseVTT(capFetch.Body)
-	if err != nil {
-		return fmt.Errorf("parse vtt: %w", err)
-	}
-	rows := make([]db.InsertTranscriptSegmentParams, 0, len(segs))
-	for _, s := range segs {
-		rows = append(rows, db.InsertTranscriptSegmentParams{
-			TVWEventID:        norm.TVWEventID,
-			StartMS:           s.StartMS,
-			EndMS:             s.EndMS,
-			Text:              s.Text,
-			SpeakerConfidence: "unknown_speaker",
-			SourceCaptionURL:  norm.CaptionURL,
-			SourceRecordID:    capFetch.SourceRecordID,
-		})
-	}
-	if err := p.Store.ReplaceTranscriptSegments(ctx, norm.TVWEventID, rows); err != nil {
-		return err
+		fmt.Fprintf(stderrSink, "  warn: no captionPath for event %s\n", eventID)
 	}
 	return nil
 }
-
-var _ = bytes.Buffer{} // import retained for potential future XML rendering

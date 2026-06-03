@@ -193,75 +193,61 @@ full biennium run after the first batch warms the caches.
 
 ### 3. `wa-dd ingest-hearings --biennium 2025-26`
 
-**What it does:** for every discovered `agenda_item` row whose hearing has a
-TVW event ID and is still selected by the retry query, runs the full 6-step
-pipeline.
+**What it does:** for every discovered hearing whose rows have CSI agenda-item
+IDs and a TVW event ID, runs the full hearing pipeline. The hearing is the unit
+of work because TVW media and diarization are event-level, while CSI testifiers
+and bill-window segmentation are agenda-item-level.
 
-**Retry selection:** `Store.ListDiscoveredAgendaItems` selects discovered
-agenda items whose full pipeline has not completed. The current terminal marker
-is a succeeded `ingestion_run.job = 'populate-organizations'` row tagged with the
-agenda item's CSI ID. Legacy succeeded `pdc-context` rows are also honored so
-older completed ingests do not get reprocessed. Operationally,
-`ingest-hearings` retries agenda items that have not completed the full pipeline,
-including items that failed after partially inserting testifiers or transcript
-rows; it is not merely a “no testifier rows yet” filter.
+**Retry selection:** `Store.ListDiscoveredHearingsForIngest` selects discovered
+hearings whose hearing-level pipeline has not completed. The terminal marker is
+a succeeded `ingestion_run.job = 'hearing-pipeline'` row tagged with the
+`hearing_id`. If a hearing fails after partially inserting testifiers, TVW media,
+diarization rows, or transcript windows, the next run retries the whole hearing.
 
-**Why:** discovery populated the join keys; this pass uses them to
-fetch the actual testimony, video captions, and downstream derivatives.
+**Why:** discovery populated the join keys; this pass uses them to fetch the
+actual testimony, media assets, diarized transcript, bill-discussion windows,
+and organization links.
 
 **Implementation:**
 
-- Reads `(csi_agenda_item_id, biennium, bill_prefix, bill_number)` rows
-  via `Store.ListDiscoveredAgendaItems`.
-- For each row, calls `Store.LookupBillAgendaTargetByAgendaItem` to
-  rebuild a `*common.BillAgendaTarget` from the DB (no YAML parsing).
-- Calls `ingestOne`, which runs `Pipeline.Run`'s 6 ingestion steps.
-  Page JSON is assembled later on demand by `wa-dd-api`; this pass no
-  longer writes generated page snapshots.
+- Reads `(hearing_id, tvw_event_id)` rows via
+  `Store.ListDiscoveredHearingsForIngest`.
+- Loads every CSI agenda item attached to the hearing via
+  `Store.ListAgendaItemsForHearing`.
+- For each agenda item, fetches CSI testifiers via `IngestCSI`.
+- Fetches TVW WordPress video metadata, rich Invintus event detail (requires
+  `INVINTUS_EMBEDDER_KEY`), and media assets once for the hearing's TVW event
+  via `IngestTVW`.
+- Ensures one succeeded diarization job exists for that TVW event. The command
+  uses an event-level Postgres advisory lock plus `--diarization-concurrency`
+  so parallel hearing workers do not submit duplicate provider jobs for the
+  same recording.
+- For each agenda item, runs `SegmentTranscript` against the latest succeeded
+  diarized transcript and writes `agenda_item_window` rows.
+- Runs hearing-scoped organization population for CSI `raw_organization`
+  strings. PDC/vendor/federal context flows through separate source-context
+  ingestion plus reviewable entity matching.
 
-The 6 pipeline steps (`internal/jobs/jobs.go`):
-
-1. **`IngestBill`** — re-runs the LWS pull. Idempotent: the bill row
-   gets touched, but no new data unless the bill metadata or status
-   changed.
-2. **`IngestCSI`** — fetches the CSI testifier list for the agenda
-   item via `csi.Client.GetTestifiers`. Inserts `testifier` rows,
-   updates `agenda_item` and `hearing` if needed.
-3. **`IngestTVW`** — fetches TVW WordPress video metadata, rich Invintus
-   event detail (requires `INVINTUS_EMBEDDER_KEY` env var), media assets,
-   stream URIs, and the WebVTT caption file. Inserts `tvw_event`,
-   `tvw_media_asset`, and `transcript_segment` rows. The media-asset rows
-   preserve caption, document/link, HLS, audio, and published-video metadata
-   used by transcript QA and the Deepgram diarization path.
-4. **`SegmentTranscript`** — finds the bill-discussion window in the
-   transcript via bill-mention regex; tags the matching
-   `transcript_segment` rows with the agenda_item_id.
-5. **`MatchSpeakers`** — legacy WebVTT-cue speaker-label pass. The public
-   hearing transcript now uses Deepgram-derived `diarized_speech_segment`
-   rows plus reviewed `speaker_assignment` labels; this step remains for
-   the caption-segment/bill-window view.
-6. **`PopulateOrganizations`** — seeds `organization` rows from CSI
-   `raw_organization` strings, records `organization_source_mention`, and
-   links matching testifier rows. PDC/vendor/federal context flows through
-   separate source-context ingestion plus reviewable entity matching rather
-   than this hearing pipeline or a hand-edited YAML file.
+Bill metadata is not refreshed here. `ingest-session` owns `bill`,
+`bill_sponsor`, `bill_status_change`, and the initial LWS `hearing` rows.
 
 **Output:**
 
-- Per agenda item: 1 hearing row updated, ~1–500 testifier rows,
-  ~10–1000 transcript segments, and source-backed organization links where CSI org strings are present.
-- A summary at `data/processed/_ingest.json` with per-bill durations
-  and any failures.
+- Per hearing: TVW event/media rows, one succeeded diarization job when needed,
+  CSI testifier rows per agenda item, `agenda_item_window` rows per bill, and
+  organization links where CSI org strings are present.
+- A summary at `data/processed/_ingest.json` with per-hearing durations and any
+  failures.
 
-**Cost:** ~6 HTTP calls per bill (3 LWS for the re-ingest, 1 CSI for
-testifiers, 2 TVW/Invintus for event detail + captions). At 10 req/sec,
-~0.6–0.8 seconds per bill. Hundreds of hearings → tens of minutes.
-Separate PDC/DataWA/IRS/Federal source-context commands have their own costs.
+**Cost:** CSI and TVW requests are short; provider diarization dominates fresh
+hearings. Use `--workers` for hearing-level parallelism and
+`--diarization-concurrency` to cap provider jobs. Separate
+PDC/DataWA/IRS/Federal source-context commands have their own costs.
 
 **Code:** `cmd/wa-dd/cmd_ingest_hearings.go` (`runIngestHearings`),
 `internal/jobs/ingest_csi.go`, `internal/jobs/ingest_tvw.go`,
 `internal/jobs/segment_transcript.go`,
-`internal/jobs/match_speakers.go`, and `internal/jobs/populate_organizations.go`.
+and `internal/jobs/populate_organizations.go`.
 
 ## Hearing diarization and speaker review
 
@@ -318,9 +304,10 @@ The order matters when fresh:
 3. `discover-hearings` enriches those `hearing` rows with CSI/TVW IDs
    and creates `agenda_item` rows. `make ingest-hearings` runs this
    discovery step internally; `wa-dd daily` calls it explicitly.
-4. `ingest-hearings` runs the full pipeline against discovered agenda
-   items. `--hearing-limit` applies to both discovery and hearing ingest
-   in `wa-dd daily` for smoke tests.
+4. `ingest-hearings` runs the full pipeline against discovered hearings:
+   CSI testifiers per agenda item, TVW metadata once per event, diarization
+   once per event, and transcript segmentation per agenda item. `--hearing-limit`
+   applies to both discovery and hearing ingest in `wa-dd daily` for smoke tests.
 5. `ingest-pdc-employers` refreshes PDC lobbyist-employer registrations,
    seeds `person` rows keyed by `pdc_lobbyist_id`, and records
    `lobbyist_for` person-organization affiliations. This runs after
@@ -330,7 +317,7 @@ The order matters when fresh:
 For an old-school local cron, one line still works:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 If any pass exits non-zero, cron mail / Railway logs will surface it. Each
@@ -370,12 +357,12 @@ All daily stages are safe to re-run. What changes:
 - `bill`, `legislator`, `bill_sponsor`, `bill_status_change`,
   `hearing`, `agenda_item`, `tvw_event`, `organization` — UPSERT, so
   re-running just refreshes timestamps and any changed fields.
-- `testifier`, `transcript_segment` — these are insert-only with no
-  dedupe. Re-running creates duplicates today. The intended routine path is
-  to avoid re-running completed agenda items and retry incomplete ones; the
-  work-list query treats succeeded `populate-organizations` rows as the
-  current terminal marker and still honors legacy succeeded `pdc-context`
-  rows.
+- `testifier` and `agenda_item_window` — replaced per agenda item, so
+  hearing retries refresh those rows. `diarized_speech_segment` is appended
+  per diarization job, but hearing ingestion first checks for an existing
+  succeeded job and uses an event-level advisory lock to avoid duplicate
+  provider submissions. The work-list query treats succeeded
+  `hearing-pipeline` rows keyed by `hearing_id` as the current terminal marker.
 - `source_record` — UPSERT on `(system, endpoint, url, content_hash,
   transform_version)`. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new
@@ -403,11 +390,10 @@ All daily stages are safe to re-run. What changes:
 
 ## Out of scope today
 
-- Parallelism across hearing agenda items. `ingest-session` already has
-  concurrent workers (`--workers`, surfaced by `wa-dd daily` as
-  `--session-workers`). Discovery and full hearing ingest remain serial;
-  at 10 req/sec the bottleneck is usually upstream rate limits and source
-  latency, not local CPU.
+- Fine-grained parallelism inside a single hearing. `ingest-hearings` already
+  runs hearings concurrently with `--workers`; inside each hearing, agenda-item
+  CSI and segmentation steps stay ordered so they can share the event-level TVW
+  and diarization result.
 - Per-step selective re-fetching. Today every run re-hits every
   upstream API. The `source_record` content_hash dedupe makes this
   cheap on storage, but expensive on bandwidth. Conditional GETs

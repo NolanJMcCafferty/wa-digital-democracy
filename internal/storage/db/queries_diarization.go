@@ -46,6 +46,21 @@ SELECT e.tvw_event_id
 	return out, rows.Err()
 }
 
+func (s *Store) HasSucceededDiarization(ctx context.Context, tvwEventID string) (bool, error) {
+	const q = `
+SELECT EXISTS (
+  SELECT 1
+    FROM diarization_job
+   WHERE tvw_event_id = $1
+     AND status = 'succeeded'
+);`
+	var ok bool
+	if err := s.Pool.QueryRow(ctx, q, tvwEventID).Scan(&ok); err != nil {
+		return false, fmt.Errorf("has succeeded diarization: %w", err)
+	}
+	return ok, nil
+}
+
 type CreateDiarizationJobParams struct {
 	TVWEventID   string
 	AudioAssetID int64
@@ -193,7 +208,7 @@ VALUES ($1,$2,$3,NULLIF($4,0),$5,NULLIF($6,''),$7,$8,NULLIF($9,''),$10,$11,$12,$
 
 // DiarizedHearingSegment is one row from the most recent succeeded
 // diarization job for a hearing's TVW event. Covers the entire hearing,
-// not just one bill discussion (transcript_segment is the per-bill view).
+// not just one bill discussion (per-bill slicing happens via agenda_item_window).
 type DiarizedHearingSegment struct {
 	StartMS      int
 	EndMS        int

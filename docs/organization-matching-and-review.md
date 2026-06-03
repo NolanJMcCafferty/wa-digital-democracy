@@ -12,7 +12,7 @@ The short version:
 1. `ingest-hearings` ingests CSI testifier rows, including raw organization
    strings from sign-ins.
 2. `PopulateOrganizations` seeds canonical `organization` rows from those CSI
-   strings and records source-backed `organization_source_mention` rows.
+   strings and links matching `testifier` rows back to them.
 3. Optional source-context ingests bring in PDC lobbying employers, DataWA
    contract/vendor rows, FiscalWA vendor payments, and USAspending recipients.
 4. `generate-vendor-entity-matches` creates reviewable
@@ -46,7 +46,7 @@ Normalized-name equality is a starting point, not truth.
 
 ## Core tables
 
-### Canonical organizations and source mentions
+### Canonical organizations
 
 - `organization`
   - Canonical organization row used by public pages.
@@ -54,14 +54,6 @@ Normalized-name equality is a starting point, not truth.
   - Has aliases, match confidence, match notes, and optional verification
     metadata such as `verified_at`, `verification_source`, `irs_bmf_ein`, and
     `pdc_lobbyist_employer_id`.
-
-- `organization_source_mention`
-  - Source-backed occurrence of an organization-like string.
-  - Records `source_kind`, `source_table`, `source_pk`, `source_name`,
-    `normalized_name`, optional `organization_id`, mention/testifier counts,
-    and confidence.
-  - Used to preserve provenance and avoid treating every raw string as a
-    canonical organization without evidence.
 
 - `testifier.normalized_org_id`
   - Links CSI testifier rows to an `organization` when the source string has
@@ -136,13 +128,11 @@ What it does:
 1. scans distinct non-empty CSI `testifier.raw_organization` strings;
 2. filters junk/self-descriptor strings where possible;
 3. upserts canonical `organization` rows;
-4. writes `organization_source_mention` rows with CSI provenance;
-5. links matching `testifier.normalized_org_id` rows;
-6. marks organizations as verified when cross-source validation is available.
+4. links matching `testifier.normalized_org_id` rows;
+5. marks organizations as verified when cross-source validation is available.
 
 Progress output includes processed candidate count, organizations upserted,
-mentions upserted, linked testifier rows, skipped junk names, and verified
-count.
+linked testifier rows, skipped junk names, and verified count.
 
 ### Pruning junk organizations
 
@@ -442,13 +432,14 @@ SELECT source_kind, source_name, match_confidence, review_notes, reviewed_at
  ORDER BY reviewed_at DESC;
 ```
 
-CSI source mentions for an organization:
+CSI testifier sign-ins for an organization:
 
 ```sql
-SELECT source_kind, source_name, mention_count, testifier_count, confidence
-  FROM organization_source_mention
- WHERE organization_id = <organization_id>
- ORDER BY mention_count DESC, source_name;
+SELECT t.raw_organization, COUNT(*) AS mention_count
+  FROM testifier t
+ WHERE t.normalized_org_id = <organization_id>
+ GROUP BY t.raw_organization
+ ORDER BY mention_count DESC, t.raw_organization;
 ```
 
 Deepgram organization candidates with transcript context:

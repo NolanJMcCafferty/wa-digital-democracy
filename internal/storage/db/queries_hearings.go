@@ -408,7 +408,7 @@ func zeroTimeToNil(t time.Time) any {
 }
 
 // ---------------------------------------------------------------------------
-// tvw_event + transcript_segment
+// tvw_event + diarized_speech_segment
 // ---------------------------------------------------------------------------
 
 // HearingAgendaItemAggregate is one agenda item/bill associated with a hearing.
@@ -763,51 +763,104 @@ SELECT h.id, b.id, b.prefix, b.number,
 	return out, rows.Err()
 }
 
-// DiscoveredAgendaItemRow is one (agenda_item, bill) pair that
-// auto-discovery has populated and is ready for full pipeline ingestion
-// (CSI testifiers + TVW captions + segments + speakers + PDC).
-type DiscoveredAgendaItemRow struct {
-	CSIAgendaItemID string
-	Biennium        string
-	BillPrefix      string
-	BillNumber      int
+// DiscoveredHearingRow is one hearing ready for hearing-level ingestion.
+// Hearing ingestion is grouped at this level because TVW media and
+// diarization are event-level while CSI testifiers and segmentation remain
+// agenda-item-level.
+type DiscoveredHearingRow struct {
+	HearingID       int64
+	TVWEventID      string
+	MeetingDateTime time.Time
+	AgendaItemCount int
 }
 
-// ListDiscoveredAgendaItems returns agenda_item rows where (a) the
-// hearing has a tvw_event_id (so transcript ingest can run) and (b) the
-// full ingest pipeline has not yet succeeded end-to-end for that agenda
-// item. The terminal step is `populate-organizations`: a `succeeded`
-// ingestion_run row tagged with this agenda's csi_agenda_item_id proves
-// all current pipeline steps ran. Legacy `pdc-context` successes are also
-// honored so old completed ingests do not get reprocessed. Items that died
-// mid-pipeline (e.g. testifiers ingested but transcript segmentation
-// failed) come back into the work list for a retry. Used by `wa-dd
-// ingest-hearings` to feed buildOne.
-func (s *Store) ListDiscoveredAgendaItems(ctx context.Context, biennium string) ([]DiscoveredAgendaItemRow, error) {
+// HearingAgendaItemRow is one agenda item attached to a discovered hearing,
+// with enough bill and CSI metadata to run CSI ingestion and transcript
+// segmentation without re-fetching bill metadata from LWS.
+type HearingAgendaItemRow struct {
+	AgendaItemID          int64
+	BillID                int64
+	Biennium              string
+	BillPrefix            string
+	BillNumber            int
+	CommitteeName         string
+	CommitteeAcronym      string
+	Chamber               string
+	TVWEventID            string
+	CSIMeetingFamilyID    string
+	CSIAgendaItemFamilyID string
+	CSIAgendaItemID       string
+	Label                 string
+}
+
+// ListDiscoveredHearingsForIngest returns one row per hearing that discovery
+// has mapped to a TVW event and at least one CSI agenda item, and that has not
+// completed the hearing-level ingest pipeline yet.
+func (s *Store) ListDiscoveredHearingsForIngest(ctx context.Context, biennium string) ([]DiscoveredHearingRow, error) {
 	const q = `
-SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
-  FROM agenda_item a
-  JOIN hearing h ON h.id = a.hearing_id
-  JOIN bill    b ON b.id = a.bill_id
+SELECT h.id, h.tvw_event_id, h.meeting_datetime, COUNT(a.id)::int AS agenda_item_count
+  FROM hearing h
+  JOIN agenda_item a ON a.hearing_id = h.id
+  JOIN bill b ON b.id = a.bill_id
  WHERE b.biennium = $1
    AND h.tvw_event_id IS NOT NULL
+   AND NULLIF(a.csi_agenda_item_id, '') IS NOT NULL
    AND NOT EXISTS (
      SELECT 1 FROM ingestion_run r
-      WHERE r.job IN ('populate-organizations', 'pdc-context')
+      WHERE r.job = 'hearing-pipeline'
         AND r.status = 'succeeded'
-        AND r.args ->> 'agenda_item_id' = a.csi_agenda_item_id
+        AND r.args ->> 'hearing_id' = h.id::text
    )
+ GROUP BY h.id, h.tvw_event_id, h.meeting_datetime
  ORDER BY h.meeting_datetime DESC;`
 	rows, err := s.Pool.Query(ctx, q, biennium)
 	if err != nil {
-		return nil, fmt.Errorf("list discovered agenda items: %w", err)
+		return nil, fmt.Errorf("list discovered hearings for ingest: %w", err)
 	}
 	defer rows.Close()
-	out := []DiscoveredAgendaItemRow{}
+	out := []DiscoveredHearingRow{}
 	for rows.Next() {
-		var r DiscoveredAgendaItemRow
-		if err := rows.Scan(&r.CSIAgendaItemID, &r.Biennium, &r.BillPrefix, &r.BillNumber); err != nil {
-			return nil, fmt.Errorf("scan agenda item: %w", err)
+		var r DiscoveredHearingRow
+		if err := rows.Scan(&r.HearingID, &r.TVWEventID, &r.MeetingDateTime, &r.AgendaItemCount); err != nil {
+			return nil, fmt.Errorf("scan discovered hearing: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListAgendaItemsForHearing returns every agenda item for a hearing with the
+// bill identity needed for per-item CSI ingest and transcript segmentation.
+func (s *Store) ListAgendaItemsForHearing(ctx context.Context, hearingID int64) ([]HearingAgendaItemRow, error) {
+	const q = `
+SELECT a.id, b.id, b.biennium, b.prefix, b.number,
+       h.committee_name, COALESCE(h.committee_acronym, ''), h.chamber,
+       COALESCE(h.tvw_event_id, ''),
+       COALESCE(a.csi_meeting_family_id, ''),
+       COALESCE(a.csi_agenda_item_family_id, ''),
+       COALESCE(a.csi_agenda_item_id, ''),
+       a.label
+  FROM agenda_item a
+  JOIN hearing h ON h.id = a.hearing_id
+  JOIN bill b ON b.id = a.bill_id
+ WHERE h.id = $1
+   AND NULLIF(a.csi_agenda_item_id, '') IS NOT NULL
+ ORDER BY a.order_index NULLS LAST, a.id;`
+	rows, err := s.Pool.Query(ctx, q, hearingID)
+	if err != nil {
+		return nil, fmt.Errorf("list agenda items for hearing: %w", err)
+	}
+	defer rows.Close()
+	out := []HearingAgendaItemRow{}
+	for rows.Next() {
+		var r HearingAgendaItemRow
+		if err := rows.Scan(
+			&r.AgendaItemID, &r.BillID, &r.Biennium, &r.BillPrefix, &r.BillNumber,
+			&r.CommitteeName, &r.CommitteeAcronym, &r.Chamber, &r.TVWEventID,
+			&r.CSIMeetingFamilyID, &r.CSIAgendaItemFamilyID, &r.CSIAgendaItemID,
+			&r.Label,
+		); err != nil {
+			return nil, fmt.Errorf("scan hearing agenda item: %w", err)
 		}
 		out = append(out, r)
 	}

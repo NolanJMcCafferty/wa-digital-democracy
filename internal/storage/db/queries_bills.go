@@ -162,17 +162,6 @@ type BillSearchFacets struct {
 	Statuses []string // in_progress, passed, failed
 }
 
-// ListIngestedBills returns every bill row in stable display order
-// (newest biennium first, then prefix, then number). Filters out the
-// occasional placeholder row with number=0 from broken upserts.
-//
-// Returns the same shape as SearchBills with no filters but no total
-// count — kept for back-compat with callers that don't paginate.
-func (s *Store) ListIngestedBills(ctx context.Context) ([]ListedBill, error) {
-	hits, _, err := s.SearchBills(ctx, BillSearchParams{Limit: 100000, Offset: 0})
-	return hits, err
-}
-
 // SearchBills is the paginated, filtered query backing /api/v1/bills.
 // Returns (hits, total, err). total is the count of matches across all
 // pages (not just the page returned), so the frontend can render

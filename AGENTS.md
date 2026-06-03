@@ -50,7 +50,7 @@ internal/
                 Phase status table lives in internal/sources/README.md.
   sources/httpx/ shared retry + per-host rate-limit + RawSink hook
   jobs/         pipeline steps (ingest-bill, ingest-csi, ingest-tvw,
-                segment-transcript, match-speakers, pdc-context, discover)
+                segment-transcript, pdc-context, discover)
   diarization/  provider-neutral diarization (Provider interface, Deepgram +
                 pyannoteAI implementations, MergeConsecutiveSegments,
                 self-introduction evidence extractor).

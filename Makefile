@@ -18,7 +18,7 @@ include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web railway-bootstrap railway-deploy vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings ingest-pdc-employers daily
+.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web railway-bootstrap railway-deploy vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings ingest-pdc-employers diarize-pending daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -161,9 +161,12 @@ ingest-session: ## Pull LWS metadata for every bill in BIENNIUM (default 2025-26
 discover-hearings: ## Auto-fill CSI/TVW IDs on every LWS hearing in BIENNIUM
 	$(GO) run ./cmd/wa-dd discover-hearings --biennium $${BIENNIUM:-2025-26}
 
-ingest-hearings: ## Discover hearing IDs, then run the full pipeline for every discovered agenda item
+ingest-hearings: ## Discover hearing IDs, then run the full hearing pipeline
 	@if [ -z "$$INVINTUS_EMBEDDER_KEY" ]; then \
 		echo "INVINTUS_EMBEDDER_KEY is required (export it or put it in your env)"; exit 1; \
+	fi
+	@if [ -z "$$PYANNOTEAI_API_KEY" ]; then \
+		echo "PYANNOTEAI_API_KEY is required (export it or put it in your env)"; exit 1; \
 	fi
 	$(GO) run ./cmd/wa-dd discover-hearings --biennium $${BIENNIUM:-2025-26}
 	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26}
@@ -171,4 +174,10 @@ ingest-hearings: ## Discover hearing IDs, then run the full pipeline for every d
 ingest-pdc-employers: ## Pull PDC lobbyist-employer registrations into person/org context
 	$(GO) run ./cmd/wa-dd ingest-pdc-employers
 
-daily: ingest-legislators ingest-session ingest-hearings ingest-pdc-employers ## One-call nightly: roster + metadata + hearing discovery + PDC context
+diarize-pending: ## Diarize every TVW event without a successful diarization_job (idempotent: skips already-diarized hearings)
+	@if [ -z "$$PYANNOTEAI_API_KEY" ]; then \
+		echo "PYANNOTEAI_API_KEY is required (export it or put it in your env)"; exit 1; \
+	fi
+	$(GO) run ./cmd/wa-dd diarize-pending
+
+daily: ingest-legislators ingest-session ingest-hearings ingest-pdc-employers ## One-call nightly: roster + metadata + hearing pipeline + PDC context

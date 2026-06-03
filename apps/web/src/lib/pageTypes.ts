@@ -62,15 +62,7 @@ export type TestifierSummary = {
   organization_id?: number | null;
 };
 
-export type SpeakerConfidence =
-  | "confirmed_legislator"
-  | "likely_legislator"
-  | "likely_testifier"
-  | "unknown_speaker"
-  | "ai_inferred_pending_review";
-
 export type TranscriptSection = {
-  caption_url?: string;
   bill_segment_start_ms?: number;
   bill_segment_end_ms?: number;
   windows?: TranscriptWindow[];
@@ -86,8 +78,11 @@ export type TranscriptSegment = {
   start_ms: number;
   end_ms: number;
   text: string;
+  cluster_label?: string;
   speaker_label?: string;
-  speaker_confidence: SpeakerConfidence;
+  speaker_kind?: string;
+  review_status?: string;
+  reviewed: boolean;
 };
 
 export type OrganizationSummary = {

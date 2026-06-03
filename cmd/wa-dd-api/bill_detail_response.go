@@ -78,7 +78,6 @@ type TestifierSummary struct {
 }
 
 type TranscriptSection struct {
-	CaptionURL       string              `json:"caption_url,omitempty"`
 	BillSegmentStart int                 `json:"bill_segment_start_ms,omitempty"`
 	BillSegmentEnd   int                 `json:"bill_segment_end_ms,omitempty"`
 	Windows          []TranscriptWindow  `json:"windows,omitempty"`
@@ -91,11 +90,14 @@ type TranscriptWindow struct {
 }
 
 type TranscriptSegment struct {
-	StartMS           int    `json:"start_ms"`
-	EndMS             int    `json:"end_ms"`
-	Text              string `json:"text"`
-	SpeakerLabel      string `json:"speaker_label,omitempty"`
-	SpeakerConfidence string `json:"speaker_confidence"`
+	StartMS      int    `json:"start_ms"`
+	EndMS        int    `json:"end_ms"`
+	Text         string `json:"text"`
+	ClusterLabel string `json:"cluster_label,omitempty"`
+	SpeakerLabel string `json:"speaker_label,omitempty"`
+	SpeakerKind  string `json:"speaker_kind,omitempty"`
+	ReviewStatus string `json:"review_status,omitempty"`
+	Reviewed     bool   `json:"reviewed"`
 }
 
 type OrganizationSummary struct {
@@ -365,81 +367,84 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 }
 
 func loadTranscript(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (*TranscriptSection, error) {
-	// Caption URL + agenda-bound segment range.
 	const headQ = `
-SELECT te.caption_url,
-       MIN(ts.start_ms) FILTER (WHERE ts.agenda_item_id = a.id),
-       MAX(ts.end_ms)   FILTER (WHERE ts.agenda_item_id = a.id)
+SELECT COALESCE(h.tvw_event_id, '')
   FROM agenda_item a
   JOIN hearing h ON h.id = a.hearing_id
-  LEFT JOIN tvw_event te ON te.tvw_event_id = h.tvw_event_id
-  LEFT JOIN transcript_segment ts ON ts.tvw_event_id = h.tvw_event_id
- WHERE a.csi_agenda_item_id = $1
- GROUP BY te.caption_url, a.id;`
-	var (
-		captionURL *string
-		startMS    *int
-		endMS      *int
-	)
-	err := store.Pool.QueryRow(ctx, headQ, demo.AgendaItem.CSIAgendaItemID).Scan(&captionURL, &startMS, &endMS)
+ WHERE a.csi_agenda_item_id = $1;`
+	var tvwEventID string
+	err := store.Pool.QueryRow(ctx, headQ, demo.AgendaItem.CSIAgendaItemID).Scan(&tvwEventID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil // no transcript yet — render with empty section
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	tr := &TranscriptSection{CaptionURL: deref(captionURL)}
-	if startMS != nil {
-		tr.BillSegmentStart = *startMS
-	}
-	if endMS != nil {
-		tr.BillSegmentEnd = *endMS
-	}
-	if tr.BillSegmentEnd <= tr.BillSegmentStart {
-		return tr, nil
-	}
-	// Read the windows that SegmentTranscript decided on, rather than
-	// re-deriving them in SQL with a different gap threshold. The
-	// segmenter's defaultBillSegmentPaddingMS and the in-SQL 120000ms
-	// disagreed, which caused window counts to flip in the band where
-	// only one of them split a span.
+	tr := &TranscriptSection{}
+
+	// Windows are the canonical bill-discussion ranges. Without them
+	// there is nothing to render.
 	stored, err := store.ListAgendaItemWindowsByAgendaItem(ctx, demo.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		return nil, err
 	}
-	for _, w := range stored {
-		tr.Windows = append(tr.Windows, TranscriptWindow{
-			StartMS: w.StartMS,
-			EndMS:   w.EndMS,
-		})
+	if len(stored) == 0 || tvwEventID == "" {
+		return tr, nil
 	}
-	if len(tr.Windows) == 0 && startMS != nil && endMS != nil {
-		// Fallback for hearings ingested before the persisted-window
-		// migration: synthesize a single window from the head bounds.
-		tr.Windows = append(tr.Windows, TranscriptWindow{StartMS: *startMS, EndMS: *endMS})
+	for _, w := range stored {
+		tr.Windows = append(tr.Windows, TranscriptWindow{StartMS: w.StartMS, EndMS: w.EndMS})
+		if tr.BillSegmentStart == 0 || w.StartMS < tr.BillSegmentStart {
+			tr.BillSegmentStart = w.StartMS
+		}
+		if w.EndMS > tr.BillSegmentEnd {
+			tr.BillSegmentEnd = w.EndMS
+		}
 	}
 
-	// Pull segments in all bill discussion windows.
+	// Pull diarized turns from the latest succeeded job that overlap any
+	// window. Reviewed speaker labels come from speaker_assignment.
 	const segQ = `
-SELECT ts.start_ms, ts.end_ms, ts.text, ts.speaker_label, ts.speaker_confidence::text
-  FROM transcript_segment ts
-  JOIN agenda_item a ON a.id = ts.agenda_item_id
- WHERE a.csi_agenda_item_id = $1
- ORDER BY ts.start_ms ASC;`
-	rows, err := store.Pool.Query(ctx, segQ, demo.AgendaItem.CSIAgendaItemID)
+WITH latest_job AS (
+  SELECT id FROM diarization_job
+   WHERE tvw_event_id = $1 AND status = 'succeeded'
+   ORDER BY finished_at DESC NULLS LAST, id DESC
+   LIMIT 1
+),
+windows AS (
+  SELECT w.start_ms, w.end_ms
+    FROM agenda_item_window w
+    JOIN agenda_item a ON a.id = w.agenda_item_id
+   WHERE a.csi_agenda_item_id = $2
+)
+SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label,
+       COALESCE(sa.speaker_label, ''), COALESCE(sa.speaker_kind::text, ''),
+       COALESCE(sa.review_status::text, ''), (sa.id IS NOT NULL) AS reviewed
+  FROM diarized_speech_segment d
+  JOIN latest_job j ON j.id = d.diarization_job_id
+  LEFT JOIN speaker_assignment sa
+    ON sa.diarization_job_id = d.diarization_job_id
+   AND sa.speaker_cluster_id = d.speaker_cluster_id
+   AND sa.review_status = 'accepted'
+ WHERE d.tvw_event_id = $1
+   AND EXISTS (
+     SELECT 1 FROM windows w
+      WHERE d.start_ms < w.end_ms AND d.end_ms > w.start_ms
+   )
+ ORDER BY d.start_ms ASC;`
+	rows, err := store.Pool.Query(ctx, segQ, tvwEventID, demo.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var (
-			seg   TranscriptSegment
-			label *string
-		)
-		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &label, &seg.SpeakerConfidence); err != nil {
+		var seg TranscriptSegment
+		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &seg.ClusterLabel,
+			&seg.SpeakerLabel, &seg.SpeakerKind, &seg.ReviewStatus, &seg.Reviewed); err != nil {
 			return nil, err
 		}
-		seg.SpeakerLabel = deref(label)
+		if !seg.Reviewed {
+			seg.SpeakerLabel = ""
+		}
 		tr.Segments = append(tr.Segments, seg)
 	}
 	return tr, rows.Err()
@@ -527,7 +532,7 @@ func loadSourcesForSections(ctx context.Context, store *db.Store, sections []Age
 
 // loadSourcesForAgendaItems surfaces every distinct source_record touched by
 // the rendered agenda items (joined via bill, hearing, agenda_item, testifier,
-// tvw_event, transcript_segment, and bill_status_change).
+// tvw_event, and bill_status_change).
 //
 // Per the wiki: "every public fact needs provenance" — the source panel
 // is part of the product, not engineering metadata.
@@ -544,7 +549,6 @@ SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_
    UNION SELECT source_record_id FROM agenda_item   WHERE csi_agenda_item_id = ANY($1)
    UNION SELECT source_record_id FROM testifier     WHERE agenda_item_id IN (SELECT id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
    UNION SELECT source_record_id FROM tvw_event     WHERE tvw_event_id IN (SELECT tvw_event_id FROM hearing WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1)))
-   UNION SELECT source_record_id FROM transcript_segment WHERE tvw_event_id IN (SELECT tvw_event_id FROM hearing WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1)))
    UNION SELECT source_record_id FROM bill_status_change WHERE bill_id IN (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
  )
  ORDER BY sr.fetched_at DESC;`

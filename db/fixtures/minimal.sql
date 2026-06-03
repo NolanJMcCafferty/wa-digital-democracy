@@ -316,35 +316,30 @@ CROSS JOIN (VALUES
 ) AS x(raw_name, raw_organization, position, testified, time_signed_in)
 WHERE a.csi_agenda_item_id = 'fixture-agenda-item-9001';
 
-DELETE FROM transcript_segment
+DELETE FROM diarized_speech_segment
+WHERE tvw_event_id = 'fixture-tvw-event-9001';
+DELETE FROM diarization_job
 WHERE tvw_event_id = 'fixture-tvw-event-9001';
 
-INSERT INTO transcript_segment (
-  tvw_event_id, agenda_item_id, start_ms, end_ms, text, speaker_label,
-  speaker_confidence, source_caption_url, source_record_id
+INSERT INTO diarization_job (
+  tvw_event_id, provider, model, status, submitted_at, finished_at
+) VALUES (
+  'fixture-tvw-event-9001', 'fixture', 'fixture-model', 'succeeded',
+  TIMESTAMPTZ '2099-01-10 17:30:00+00', TIMESTAMPTZ '2099-01-10 17:45:00+00'
+);
+
+INSERT INTO diarized_speech_segment (
+  diarization_job_id, tvw_event_id, cluster_label, start_ms, end_ms, text
 )
-SELECT
-  'fixture-tvw-event-9001',
-  a.id,
-  x.start_ms,
-  x.end_ms,
-  x.text,
-  x.speaker_label,
-  x.speaker_confidence::speaker_confidence,
-  'https://example.test/captions/fixture-tvw-event-9001.vtt',
-  sr.id
-FROM agenda_item a
-JOIN source_record sr ON sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
+SELECT j.id, 'fixture-tvw-event-9001', x.cluster_label, x.start_ms, x.end_ms, x.text
+FROM diarization_job j
 CROSS JOIN (VALUES
-  (1000, 5000, 'We are opening testimony on HB 9001, the fixture housing stability act.', 'Chair Fixture', 'unknown_speaker'),
-  (6000, 11000, 'This housing fixture bill helps renters and homeowners understand the test flow.', 'Alex Fixture', 'likely_testifier'),
-  (12000, 16000, 'Members discuss housing supply, affordability, and fixture data quality.', 'Representative Fixture Sponsor', 'likely_legislator')
-) AS x(start_ms, end_ms, text, speaker_label, speaker_confidence)
-WHERE a.csi_agenda_item_id = 'fixture-agenda-item-9001';
+  ('speaker_0', 1000,  5000,  'We are opening testimony on HB 9001, the fixture housing stability act.'),
+  ('speaker_1', 6000,  11000, 'This housing fixture bill helps renters and homeowners understand the test flow.'),
+  ('speaker_2', 12000, 16000, 'Members discuss housing supply, affordability, and fixture data quality.')
+) AS x(cluster_label, start_ms, end_ms, text)
+WHERE j.tvw_event_id = 'fixture-tvw-event-9001'
+  AND j.status = 'succeeded';
 
 DELETE FROM agenda_item_window
 WHERE agenda_item_id IN (

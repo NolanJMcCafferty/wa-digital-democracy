@@ -25,9 +25,8 @@ import (
 
 // TestLiveIngestionPipelineSingleBillHearingAndDiarization is intentionally
 // live except for Deepgram. It pulls the current LWS legislator roster, ingests
-// one real bill, discovers one real hearing through CSI + TVW, ingests that
-// hearing, then stores a mocked Deepgram diarization result for the real TVW
-// event audio source.
+// one real bill, discovers one real hearing through CSI + TVW, then runs the
+// hearing-level pipeline with a mocked Deepgram diarization result.
 func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 	dsn := os.Getenv("WADD_TEST_DSN")
 	if strings.TrimSpace(dsn) == "" {
@@ -54,28 +53,9 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 		cleanupLiveTargetRows(t, store, target)
 	})
 
-	ids := jobs.NewIDs()
-	pipeline := &jobs.Pipeline{
-		Store: store,
-		LWS:   lwsClient,
-		CSI:   csiClient,
-		TVW:   tvwClient,
-		Demo:  target.Demo,
-	}
-	if err := pipeline.Run(ctx, func(string) {}, ids); err != nil {
-		t.Fatalf("Pipeline.Run(%s / %s): %v", target.Demo.Bill.ID(), target.Demo.AgendaItem.CSIAgendaItemID, err)
-	}
-	assertLiveBillIngested(t, ctx, store, ids.BillID)
-	assertLiveHearingIngested(t, ctx, store, ids, target)
-
-	audio, err := store.BestTVWAudioSource(ctx, target.Demo.TVW.EventID)
-	if err != nil {
-		t.Fatalf("BestTVWAudioSource(%s): %v", target.Demo.TVW.EventID, err)
-	}
 	mockDeepgram := &mockDeepgramClient{
-		t:        t,
-		eventID:  target.Demo.TVW.EventID,
-		audioURL: audio.URL,
+		t:       t,
+		eventID: target.Demo.TVW.EventID,
 		result: &diarization.Result{
 			Provider: "deepgram",
 			Model:    "mock-nova",
@@ -83,7 +63,7 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 			Raw:      []byte(fmt.Sprintf(`{"mock":"deepgram","event_id":%q}`, target.Demo.TVW.EventID)),
 			Segments: []diarization.Segment{
 				{StartMS: 0, EndMS: 1800, SpeakerCluster: "SPEAKER_00", Confidence: float64Ptr(0.96), Text: "The committee will come to order."},
-				{StartMS: 2000, EndMS: 6200, SpeakerCluster: "SPEAKER_01", Confidence: float64Ptr(0.94), Text: "For the record, my name is Jane Doe with Civic Housing Alliance."},
+				{StartMS: 2000, EndMS: 6200, SpeakerCluster: "SPEAKER_01", Confidence: float64Ptr(0.94), Text: fmt.Sprintf("We will now consider %s. For the record, my name is Jane Doe with Civic Housing Alliance.", target.Demo.Bill.ID())},
 				{StartMS: 6400, EndMS: 9000, SpeakerCluster: "SPEAKER_00", Confidence: float64Ptr(0.91), Text: "Thank you for your testimony."},
 			},
 			Entities: []diarization.EntityMention{
@@ -100,9 +80,21 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 			},
 		},
 	}
-	if err := diarizeOneEvent(ctx, store, mockDeepgram, target.Demo.TVW.EventID, "deepgram", "mock-nova", t.TempDir(), true); err != nil {
-		t.Fatalf("diarizeOneEvent(%s): %v", target.Demo.TVW.EventID, err)
+	deps := &buildDeps{
+		store:     store,
+		csiClient: csiClient,
+		tvwClient: tvwClient,
 	}
+	hearing := db.DiscoveredHearingRow{
+		HearingID:       target.Hearing.HearingID,
+		TVWEventID:      target.Demo.TVW.EventID,
+		AgendaItemCount: 1,
+	}
+	if err := ingestHearing(ctx, deps, hearing, mockDeepgram, "deepgram", "mock-nova", t.TempDir(), true, 1, make(chan struct{}, 1), func(string) {}); err != nil {
+		t.Fatalf("ingestHearing(%d / %s): %v", target.Hearing.HearingID, target.Demo.TVW.EventID, err)
+	}
+	assertLiveBillIngested(t, ctx, store, target.Hearing.BillID)
+	assertLiveHearingIngested(t, ctx, store, target)
 	assertLiveDiarizationIngested(t, ctx, store, target.Demo.TVW.EventID)
 }
 
@@ -298,34 +290,30 @@ SELECT COALESCE(title, ''), COALESCE(current_status, ''), COALESCE(official_url,
 	}
 }
 
-func assertLiveHearingIngested(t *testing.T, ctx context.Context, store *db.Store, ids *jobs.IDs, target liveIngestionTarget) {
+func assertLiveHearingIngested(t *testing.T, ctx context.Context, store *db.Store, target liveIngestionTarget) {
 	t.Helper()
 	var hearingEventID, agendaLabel string
+	var agendaItemID int64
 	if err := store.Pool.QueryRow(ctx, `
-SELECT COALESCE(h.tvw_event_id, ''), COALESCE(a.label, '')
+SELECT a.id, COALESCE(h.tvw_event_id, ''), COALESCE(a.label, '')
   FROM hearing h
   JOIN agenda_item a ON a.hearing_id = h.id
- WHERE a.id = $1`, ids.AgendaItemID).Scan(&hearingEventID, &agendaLabel); err != nil {
+ WHERE a.csi_agenda_item_id = $1`, target.Demo.AgendaItem.CSIAgendaItemID).Scan(&agendaItemID, &hearingEventID, &agendaLabel); err != nil {
 		t.Fatalf("select hearing/agenda: %v", err)
 	}
 	if hearingEventID != target.Demo.TVW.EventID || agendaLabel == "" {
 		t.Fatalf("hearing agenda mismatch: event=%q label=%q", hearingEventID, agendaLabel)
 	}
 
-	var testifierCount, transcriptCount, taggedCount, orgLinkCount int
-	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1`, ids.AgendaItemID).Scan(&testifierCount); err != nil {
+	var testifierCount, orgLinkCount int
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1`, agendaItemID).Scan(&testifierCount); err != nil {
 		t.Fatalf("count testifiers: %v", err)
 	}
-	if err := store.Pool.QueryRow(ctx, `
-SELECT count(*), count(*) FILTER (WHERE agenda_item_id = $2)
-  FROM transcript_segment WHERE tvw_event_id = $1`, target.Demo.TVW.EventID, ids.AgendaItemID).Scan(&transcriptCount, &taggedCount); err != nil {
-		t.Fatalf("count transcript segments: %v", err)
-	}
-	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1 AND normalized_org_id IS NOT NULL`, ids.AgendaItemID).Scan(&orgLinkCount); err != nil {
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1 AND normalized_org_id IS NOT NULL`, agendaItemID).Scan(&orgLinkCount); err != nil {
 		t.Fatalf("count org links: %v", err)
 	}
-	if testifierCount == 0 || transcriptCount == 0 || taggedCount == 0 || orgLinkCount == 0 {
-		t.Fatalf("hearing ingest incomplete: testifiers=%d transcript=%d tagged=%d orgLinks=%d", testifierCount, transcriptCount, taggedCount, orgLinkCount)
+	if testifierCount == 0 || orgLinkCount == 0 {
+		t.Fatalf("hearing ingest incomplete: testifiers=%d orgLinks=%d", testifierCount, orgLinkCount)
 	}
 
 	windows, err := store.ListAgendaItemWindowsByAgendaItem(ctx, target.Demo.AgendaItem.CSIAgendaItemID)
@@ -404,13 +392,11 @@ func cleanupLiveTargetRows(t *testing.T, store *db.Store, target liveIngestionTa
 		sql  string
 		args []any
 	}{
-		{`DELETE FROM organization_source_mention WHERE source_table = 'testifier' AND source_pk IN (SELECT id FROM testifier WHERE agenda_item_id IN (SELECT id FROM agenda_item WHERE csi_agenda_item_id = $1))`, []any{agendaID}},
 		{`DELETE FROM entity_mention WHERE tvw_event_id = $1`, []any{eventID}},
 		{`DELETE FROM diarized_speech_segment WHERE tvw_event_id = $1`, []any{eventID}},
 		{`DELETE FROM speaker_cluster WHERE tvw_event_id = $1`, []any{eventID}},
 		{`DELETE FROM diarization_job WHERE tvw_event_id = $1`, []any{eventID}},
 		{`DELETE FROM tvw_audio_asset WHERE tvw_event_id = $1`, []any{eventID}},
-		{`DELETE FROM transcript_segment WHERE tvw_event_id = $1`, []any{eventID}},
 		{`DELETE FROM tvw_media_asset WHERE tvw_event_id = $1`, []any{eventID}},
 		{`DELETE FROM agenda_item_window WHERE agenda_item_id IN (SELECT id FROM agenda_item WHERE csi_agenda_item_id = $1)`, []any{agendaID}},
 		{`DELETE FROM testifier WHERE agenda_item_id IN (SELECT id FROM agenda_item WHERE csi_agenda_item_id = $1)`, []any{agendaID}},
@@ -421,7 +407,7 @@ func cleanupLiveTargetRows(t *testing.T, store *db.Store, target liveIngestionTa
 		{`DELETE FROM hearing WHERE bill_id IN (SELECT id FROM bill WHERE biennium = $1 AND prefix = $2 AND number = $3)`, []any{bill.Biennium, bill.Prefix, bill.Number}},
 		{`DELETE FROM bill WHERE biennium = $1 AND prefix = $2 AND number = $3`, []any{bill.Biennium, bill.Prefix, bill.Number}},
 		{`DELETE FROM tvw_event WHERE tvw_event_id = $1`, []any{eventID}},
-		{`DELETE FROM ingestion_run WHERE args->>'bill' = $1 OR args->>'agenda_item_id' = $2`, []any{bill.ID(), agendaID}},
+		{`DELETE FROM ingestion_run WHERE args->>'bill' = $1 OR args->>'hearing_id' = $2`, []any{bill.ID(), fmt.Sprint(target.Hearing.HearingID)}},
 	}
 	for _, stmt := range stmts {
 		if _, err := store.Pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
@@ -437,12 +423,6 @@ func cleanupLiveBillRows(t *testing.T, store *db.Store, bill common.BillKey) {
 		sql  string
 		args []any
 	}{
-		{`DELETE FROM organization_source_mention WHERE source_table = 'testifier' AND source_pk IN (
-			SELECT t.id FROM testifier t
-			JOIN agenda_item a ON a.id = t.agenda_item_id
-			JOIN bill b ON b.id = a.bill_id
-			WHERE b.biennium = $1 AND b.prefix = $2 AND b.number = $3
-		)`, []any{bill.Biennium, bill.Prefix, bill.Number}},
 		{`DELETE FROM agenda_item_window WHERE agenda_item_id IN (
 			SELECT a.id FROM agenda_item a
 			JOIN bill b ON b.id = a.bill_id
@@ -510,8 +490,11 @@ func (m *mockDeepgramClient) Diarize(ctx context.Context, in diarization.AudioIn
 	if in.EventID != m.eventID {
 		m.t.Fatalf("mock Deepgram EventID = %q, want %q", in.EventID, m.eventID)
 	}
-	if in.URL != m.audioURL {
+	if m.audioURL != "" && in.URL != m.audioURL {
 		m.t.Fatalf("mock Deepgram URL = %q, want %q", in.URL, m.audioURL)
+	}
+	if m.audioURL == "" && in.URL == "" {
+		m.t.Fatalf("mock Deepgram received empty URL")
 	}
 	if len(in.Bytes) != 0 {
 		m.t.Fatalf("mock Deepgram received bytes with useURL=true")

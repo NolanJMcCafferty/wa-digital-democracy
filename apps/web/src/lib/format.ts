@@ -38,26 +38,3 @@ export function tvwDeepLink(eventId: string, startMs: number): string {
   return `https://tvw.org/watch?eventID=${encodeURIComponent(eventId)}&startStreamAt=${seconds}`;
 }
 
-export function confidenceLabel(c: string): string {
-  switch (c) {
-    case "confirmed_legislator":
-      return "confirmed";
-    case "likely_legislator":
-      return "likely legislator";
-    case "likely_testifier":
-      return "likely testifier";
-    case "ai_inferred_pending_review":
-      return "AI-inferred (pending review)";
-    case "confirmed":
-      return "confirmed match";
-    case "probable":
-      return "probable match";
-    case "possible":
-      return "possible match";
-    case "unmatched":
-      return "unmatched";
-    case "unknown_speaker":
-    default:
-      return "unknown";
-  }
-}

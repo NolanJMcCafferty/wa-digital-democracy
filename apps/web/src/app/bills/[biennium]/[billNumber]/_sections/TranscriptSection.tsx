@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { TranscriptSection as TranscriptSectionData } from "@/lib/pageTypes";
-import { confidenceLabel, formatMS, tvwDeepLink } from "@/lib/format";
+import { formatMS, tvwDeepLink } from "@/lib/format";
 
 export function TranscriptSection({
   transcript,
@@ -39,22 +39,6 @@ export function TranscriptSection({
       {segments.length === 0 ? (
         <p className="rounded border border-stone-300 bg-stone-50 p-4 text-sm text-stone-600">
           No transcript segments matched this bill discussion.
-          {transcript.caption_url ? (
-            <>
-              {" "}A caption file is available at{" "}
-              <a
-                href={transcript.caption_url}
-                className="text-blue-700 underline hover:text-blue-900"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Invintus
-              </a>
-              .
-            </>
-          ) : (
-            " No captions are available for this hearing's TVW event."
-          )}
         </p>
       ) : (
         <div className="space-y-4 rounded-lg border border-stone-300 bg-white p-5">
@@ -86,9 +70,7 @@ export function TranscriptSection({
           {showTranscript ? (
             <ol id="transcript-excerpts" className="space-y-3">
               {segments.map((s, i) => {
-                const link = tvwEventId
-                  ? tvwDeepLink(tvwEventId, s.start_ms)
-                  : transcript.caption_url ?? "#";
+                const link = tvwEventId ? tvwDeepLink(tvwEventId, s.start_ms) : "#";
                 return (
                   <li
                     key={`${s.start_ms}-${i}`}
@@ -103,14 +85,20 @@ export function TranscriptSection({
                       >
                         {formatMS(s.start_ms)}
                       </a>
-                      {s.speaker_label ? (
+                      {s.reviewed && s.speaker_label ? (
                         <span className="font-medium text-stone-800">
                           {s.speaker_label}
+                          {s.speaker_kind ? (
+                            <span className="ml-1 font-normal text-stone-500">
+                              ({s.speaker_kind})
+                            </span>
+                          ) : null}
                         </span>
-                      ) : null}
-                      <span className="text-stone-500">
-                        confidence: {confidenceLabel(s.speaker_confidence)}
-                      </span>
+                      ) : (
+                        <span className="text-stone-500">
+                          {s.cluster_label || "unidentified speaker"}
+                        </span>
+                      )}
                     </div>
                     <p className="text-stone-800 leading-relaxed">{s.text}</p>
                   </li>
