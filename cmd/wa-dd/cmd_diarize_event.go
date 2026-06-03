@@ -31,6 +31,11 @@ func runDiarizeEvent(args []string) int {
 		outDir   = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
 		apiKey   = fs.String("api-key", "", "provider API key (defaults to DEEPGRAM_API_KEY or PYANNOTEAI_API_KEY based on --provider)")
 		useURL   = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
+		// pyannoteAI-only: bundle ASR with diarization so segments come back
+		// with text already aligned to clusters, removing the need for a
+		// separate transcript pass.
+		transcription = fs.Bool("transcription", true, "(pyannoteai only) request transcription with diarization so segments include text")
+		asrModel      = fs.String("asr-model", "faster-whisper-large-v3-turbo", "(pyannoteai only) ASR backend: faster-whisper-large-v3-turbo or parakeet-tdt-0.6b-v3")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -61,7 +66,7 @@ func runDiarizeEvent(args []string) int {
 	if strings.ToLower(*provider) == "pyannoteai" && *model == "nova-3" {
 		*model = "precision-2"
 	}
-	p, err := newDiarizationProvider(*provider, key, *model)
+	p, err := newDiarizationProvider(*provider, key, *model, *transcription, *asrModel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diarize-event: %v\n", err)
 		return 2
@@ -74,7 +79,7 @@ func runDiarizeEvent(args []string) int {
 	return 0
 }
 
-func newDiarizationProvider(provider, apiKey, model string) (diarization.Provider, error) {
+func newDiarizationProvider(provider, apiKey, model string, transcription bool, asrModel string) (diarization.Provider, error) {
 	switch strings.ToLower(provider) {
 	case "deepgram":
 		dg, err := diarization.NewDeepgramProvider(diarization.DeepgramConfig{APIKey: apiKey, Model: model})
@@ -83,7 +88,13 @@ func newDiarizationProvider(provider, apiKey, model string) (diarization.Provide
 		}
 		return dg, nil
 	case "pyannoteai":
-		pa, err := diarization.NewPyannoteAIProvider(diarization.PyannoteAIConfig{APIKey: apiKey, Model: model, Confidence: true})
+		pa, err := diarization.NewPyannoteAIProvider(diarization.PyannoteAIConfig{
+			APIKey:        apiKey,
+			Model:         model,
+			Confidence:    true,
+			Transcription: transcription,
+			ASRModel:      asrModel,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("pyannoteai: %w", err)
 		}

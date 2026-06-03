@@ -17,6 +17,7 @@ import (
 const (
 	defaultPyannoteAIEndpoint = "https://api.pyannote.ai"
 	defaultPyannoteAIModel    = "precision-2"
+	defaultPyannoteAIASRModel = "faster-whisper-large-v3-turbo"
 )
 
 // PyannoteAIConfig configures the pyannoteAI Precision-2 diarization adapter.
@@ -34,6 +35,18 @@ type PyannoteAIConfig struct {
 	// Confidence asks pyannoteAI to return per-segment confidence in the
 	// `0..1` range. Defaults to true.
 	Confidence bool
+
+	// Transcription enables pyannoteAI's bundled ASR (precision-2 only).
+	// When true, the job result includes word- and turn-level transcripts
+	// already aligned to diarization speakers, and we populate Segment.Text
+	// from the turn-level output.
+	Transcription bool
+
+	// ASRModel selects the transcription backend when Transcription is on.
+	// Valid values: "faster-whisper-large-v3-turbo" (default, multilingual,
+	// strong on proper nouns) or "parakeet-tdt-0.6b-v3" (English-only,
+	// faster but weaker on names).
+	ASRModel string
 }
 
 // PyannoteAIProvider implements diarization.Provider against pyannoteAI's
@@ -56,6 +69,9 @@ func NewPyannoteAIProvider(cfg PyannoteAIConfig) (*PyannoteAIProvider, error) {
 	cfg.Endpoint = strings.TrimRight(cfg.Endpoint, "/")
 	if cfg.Model == "" {
 		cfg.Model = defaultPyannoteAIModel
+	}
+	if cfg.Transcription && cfg.ASRModel == "" {
+		cfg.ASRModel = defaultPyannoteAIASRModel
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 5 * time.Second
@@ -109,9 +125,11 @@ func (p *PyannoteAIProvider) Diarize(ctx context.Context, in AudioInput) (*Resul
 }
 
 type pyannoteSubmitRequest struct {
-	URL        string `json:"url"`
-	Model      string `json:"model,omitempty"`
-	Confidence bool   `json:"confidence,omitempty"`
+	URL           string `json:"url"`
+	Model         string `json:"model,omitempty"`
+	Confidence    bool   `json:"confidence,omitempty"`
+	Transcription bool   `json:"transcription,omitempty"`
+	ASRModel      string `json:"asrModel,omitempty"`
 }
 
 type pyannoteSubmitResponse struct {
@@ -120,7 +138,13 @@ type pyannoteSubmitResponse struct {
 }
 
 func (p *PyannoteAIProvider) submitJob(ctx context.Context, audioURL string) (string, error) {
-	body, err := json.Marshal(pyannoteSubmitRequest{URL: audioURL, Model: p.cfg.Model, Confidence: p.cfg.Confidence})
+	body, err := json.Marshal(pyannoteSubmitRequest{
+		URL:           audioURL,
+		Model:         p.cfg.Model,
+		Confidence:    p.cfg.Confidence,
+		Transcription: p.cfg.Transcription,
+		ASRModel:      p.cfg.ASRModel,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -207,6 +231,12 @@ type pyannoteJobResult struct {
 			Speaker    string   `json:"speaker"`
 			Confidence *float64 `json:"confidence,omitempty"`
 		} `json:"diarization"`
+		TurnLevelTranscription []struct {
+			Start   float64 `json:"start"`
+			End     float64 `json:"end"`
+			Speaker string  `json:"speaker"`
+			Text    string  `json:"text"`
+		} `json:"turnLevelTranscription"`
 	} `json:"output"`
 }
 
@@ -217,6 +247,28 @@ func parsePyannoteAI(raw []byte) (*Result, error) {
 	var r pyannoteJobResult
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, fmt.Errorf("pyannoteai decode: %w", err)
+	}
+	// Prefer turn-level transcription when available — each turn is already
+	// one (speaker, text, start, end) tuple, which is exactly the shape of
+	// a provider-neutral Segment. Fall back to diarization-only when the
+	// caller didn't enable ASR.
+	if len(r.Output.TurnLevelTranscription) > 0 {
+		segs := make([]Segment, 0, len(r.Output.TurnLevelTranscription))
+		for _, t := range r.Output.TurnLevelTranscription {
+			startMS := int(math.Round(t.Start * 1000))
+			endMS := int(math.Round(t.End * 1000))
+			if endMS <= startMS {
+				continue
+			}
+			segs = append(segs, Segment{
+				StartMS:        startMS,
+				EndMS:          endMS,
+				SpeakerCluster: strings.TrimSpace(t.Speaker),
+				Text:           strings.TrimSpace(t.Text),
+			})
+		}
+		segs = MergeConsecutiveSegments(segs)
+		return &Result{Segments: segs}, nil
 	}
 	segs := make([]Segment, 0, len(r.Output.Diarization))
 	for _, d := range r.Output.Diarization {

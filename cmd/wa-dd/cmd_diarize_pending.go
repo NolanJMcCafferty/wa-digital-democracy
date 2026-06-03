@@ -33,7 +33,9 @@ func runDiarizePending(args []string) int {
 		limit       = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
 		dryRun      = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
 		concurrency = fs.Int("concurrency", 10, "max diarization jobs to run in parallel")
-		maxAttempts = fs.Int("max-attempts", 5, "max attempts per event before giving up")
+		maxAttempts   = fs.Int("max-attempts", 5, "max attempts per event before giving up")
+		transcription = fs.Bool("transcription", true, "(pyannoteai only) request transcription with diarization so segments include text")
+		asrModel      = fs.String("asr-model", "faster-whisper-large-v3-turbo", "(pyannoteai only) ASR backend: faster-whisper-large-v3-turbo or parakeet-tdt-0.6b-v3")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -64,7 +66,7 @@ func runDiarizePending(args []string) int {
 		return 0
 	}
 
-	p, err := newDiarizationProvider(*provider, *apiKey, *model)
+	p, err := newDiarizationProvider(*provider, *apiKey, *model, *transcription, *asrModel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diarize-pending: %v\n", err)
 		return 2
