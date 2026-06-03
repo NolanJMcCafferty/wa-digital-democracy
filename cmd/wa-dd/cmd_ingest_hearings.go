@@ -44,7 +44,6 @@ func runIngestHearings(args []string) int {
 		useURL                 = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
 		maxAttempts            = fs.Int("max-attempts", 5, "max diarization attempts per event before giving up")
 		transcription          = fs.Bool("transcription", true, "(pyannoteai only) request transcription with diarization so segments include text")
-		asrModel               = fs.String("asr-model", "faster-whisper-large-v3-turbo", "(pyannoteai only) ASR backend: faster-whisper-large-v3-turbo or parakeet-tdt-0.6b-v3")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -85,7 +84,7 @@ func runIngestHearings(args []string) int {
 	if strings.ToLower(*provider) == "deepgram" && *model == "precision-2" {
 		*model = "nova-3"
 	}
-	diarizer, err := newDiarizationProvider(*provider, key, *model, *transcription, *asrModel)
+	diarizer, err := newDiarizationProvider(*provider, key, *model, *transcription)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-hearings: %v\n", err)
 		return 2
@@ -356,6 +355,9 @@ func ensureDiarizationSucceeded(
 		}
 		if err := diarizeOneEvent(ctx, store, diarizer, eventID, provider, model, outDir, useURL); err != nil {
 			lastErr = err
+			if !retryableDiarizationError(err) {
+				return err
+			}
 			if attempt < maxAttempts {
 				wait := time.Duration(1<<attempt) * time.Second
 				if wait > 60*time.Second {

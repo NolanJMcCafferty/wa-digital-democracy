@@ -1,6 +1,6 @@
 # Data ingestion
 
-Last updated: 2026-06-02.
+Last updated: 2026-06-03.
 
 This document describes how data flows from the official Washington
 state sources (LWS, CSI, TVW/Invintus, PDC, DataWA) into Postgres and out to
@@ -14,11 +14,11 @@ where things land, and how to debug a stuck or misbehaving run.
         ┌──────────────────┬────────────────────────────────────┐
         │                  │                                    │
 ingest-legislators     ingest-session                 discover-hearings → ingest-hearings
-   roster refresh       concurrent LWS metadata        CSI/TVW discovery + full ingest
+   roster refresh       concurrent LWS metadata        CSI/TVW discovery + hearing ingest
         │                  │                                    │
    LWS metadata         CSI agenda IDs + TVW event IDs, then
-   for ~5,000 bills     CSI testifiers, TVW captions, transcript
-   in the biennium      segmentation, organizations, source context
+   for ~5,000 bills     CSI testifiers, Invintus media, diarization,
+   in the biennium      bill windows, organizations, source context
         │                  │                                    │
         └──────────────────┴───────────────┬────────────────────┘
                                            ▼
@@ -29,7 +29,7 @@ ingest-legislators     ingest-session                 discover-hearings → inge
                        Next.js frontend at :3000
 ```
 
-The public API returns route-specific page objects assembled from Postgres. The old generated JSON snapshot path has been removed; Postgres plus `wa-dd-api` is the only supported page-data flow.
+The public API returns route-specific page objects assembled from Postgres. Postgres plus `wa-dd-api` is the only page-data flow.
 
 ## Legislative daily passes
 
@@ -124,8 +124,10 @@ are still blank, walks four lookups to fill them in:
    `data-eventid="\d+"` in the rendered HTML content).
 
 The CSI side is required — if any of steps 1–3 fail, the hearing is
-skipped. The TVW side is best-effort — a hearing with CSI testifiers
-but no TVW captions is still useful.
+skipped. The TVW side is best-effort during discovery — a hearing with
+CSI agenda metadata but no matched TVW event is still useful, but the full
+`ingest-hearings` pipeline only runs hearings that have both CSI agenda
+item IDs and a TVW event ID.
 
 **Caching policy:** the discoverer caches CSI directory data and the
 TVW WP archive per process. Scope of caching:
@@ -215,13 +217,15 @@ and organization links.
 - Loads every CSI agenda item attached to the hearing via
   `Store.ListAgendaItemsForHearing`.
 - For each agenda item, fetches CSI testifiers via `IngestCSI`.
-- Fetches TVW WordPress video metadata, rich Invintus event detail (requires
-  `INVINTUS_EMBEDDER_KEY`), and media assets once for the hearing's TVW event
-  via `IngestTVW`.
-- Ensures one succeeded diarization job exists for that TVW event. The command
-  uses an event-level Postgres advisory lock plus `--diarization-concurrency`
-  so parallel hearing workers do not submit duplicate provider jobs for the
-  same recording.
+- Fetches rich Invintus event detail and media assets once for the hearing's
+  TVW event via `IngestTVW` (requires `INVINTUS_EMBEDDER_KEY`). The TVW
+  WordPress API is used during discovery to resolve the event ID; hearing ingest
+  does not re-search WordPress. Invintus `captionPath` is recorded on
+  `tvw_event`, but VTT text is not fetched for the transcript path.
+- Ensures one succeeded diarization job exists for that TVW event before
+  transcript segmentation. The command uses an event-level Postgres advisory
+  lock plus `--diarization-concurrency` so parallel hearing workers do not
+  submit duplicate provider jobs for the same recording.
 - For each agenda item, runs `SegmentTranscript` against the latest succeeded
   diarized transcript and writes `agenda_item_window` rows.
 - Runs hearing-scoped organization population for CSI `raw_organization`
@@ -239,8 +243,10 @@ Bill metadata is not refreshed here. `ingest-session` owns `bill`,
 - A summary at `data/processed/_ingest.json` with per-hearing durations and any
   failures.
 
-**Cost:** CSI and TVW requests are short; provider diarization dominates fresh
-hearings. Use `--workers` for hearing-level parallelism and
+**Provider defaults and cost:** CSI and Invintus requests are short; provider
+diarization dominates fresh hearings. `ingest-hearings` defaults to pyannoteAI
+`precision-2` with bundled transcription. Use `--provider deepgram` for
+Deepgram, `--workers` for hearing-level parallelism, and
 `--diarization-concurrency` to cap provider jobs. Separate
 PDC/DataWA/IRS/Federal source-context commands have their own costs.
 
@@ -305,9 +311,10 @@ The order matters when fresh:
    and creates `agenda_item` rows. `make ingest-hearings` runs this
    discovery step internally; `wa-dd daily` calls it explicitly.
 4. `ingest-hearings` runs the full pipeline against discovered hearings:
-   CSI testifiers per agenda item, TVW metadata once per event, diarization
-   once per event, and transcript segmentation per agenda item. `--hearing-limit`
-   applies to both discovery and hearing ingest in `wa-dd daily` for smoke tests.
+   CSI testifiers per agenda item, Invintus event/media metadata once per event,
+   diarization once per event, and transcript segmentation per agenda item.
+   `--hearing-limit` applies to both discovery and hearing ingest in
+   `wa-dd daily` for smoke tests.
 5. `ingest-pdc-employers` refreshes PDC lobbyist-employer registrations,
    seeds `person` rows keyed by `pdc_lobbyist_id`, and records
    `lobbyist_for` person-organization affiliations. This runs after
@@ -399,9 +406,9 @@ All daily stages are safe to re-run. What changes:
   cheap on storage, but expensive on bandwidth. Conditional GETs
   (`If-Modified-Since` / `ETag`) aren't supported by the upstreams
   we've checked.
-- Real-time / sub-day refresh. TVW captions don't appear until hours
-  after a hearing, and CSI sign-ins for tomorrow's hearings don't
-  exist yet. Daily is the right cadence given the data sources.
+- Real-time / sub-day refresh. TVW recordings and downloadable media can lag
+  the hearing, and CSI sign-ins for tomorrow's hearings don't exist yet. Daily
+  is the right cadence given the data sources.
 - Broad accountability-graph expansion. The current public-beta product is
   complete around legislative/testimony pages; DataWA/FiscalWA/Federal
   context commands are bounded source-context tools, not a Phase 4 roadmap.

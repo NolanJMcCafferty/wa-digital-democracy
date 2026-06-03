@@ -17,12 +17,12 @@ import (
 const (
 	defaultPyannoteAIEndpoint = "https://api.pyannote.ai"
 	defaultPyannoteAIModel    = "precision-2"
-	defaultPyannoteAIASRModel = "faster-whisper-large-v3-turbo"
 )
 
 // PyannoteAIConfig configures the pyannoteAI Precision-2 diarization adapter.
 // pyannoteAI runs an async job: POST /v1/diarize → poll /v1/jobs/{id} until
-// "succeeded". Output is diarization-only — no transcript words.
+// "succeeded". When transcription is enabled, the result includes turn-level
+// text aligned to speaker clusters.
 type PyannoteAIConfig struct {
 	APIKey     string
 	Endpoint   string
@@ -41,12 +41,6 @@ type PyannoteAIConfig struct {
 	// already aligned to diarization speakers, and we populate Segment.Text
 	// from the turn-level output.
 	Transcription bool
-
-	// ASRModel selects the transcription backend when Transcription is on.
-	// Valid values: "faster-whisper-large-v3-turbo" (default, multilingual,
-	// strong on proper nouns) or "parakeet-tdt-0.6b-v3" (English-only,
-	// faster but weaker on names).
-	ASRModel string
 }
 
 // PyannoteAIProvider implements diarization.Provider against pyannoteAI's
@@ -69,9 +63,6 @@ func NewPyannoteAIProvider(cfg PyannoteAIConfig) (*PyannoteAIProvider, error) {
 	cfg.Endpoint = strings.TrimRight(cfg.Endpoint, "/")
 	if cfg.Model == "" {
 		cfg.Model = defaultPyannoteAIModel
-	}
-	if cfg.Transcription && cfg.ASRModel == "" {
-		cfg.ASRModel = defaultPyannoteAIASRModel
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 5 * time.Second
@@ -129,7 +120,6 @@ type pyannoteSubmitRequest struct {
 	Model         string `json:"model,omitempty"`
 	Confidence    bool   `json:"confidence,omitempty"`
 	Transcription bool   `json:"transcription,omitempty"`
-	ASRModel      string `json:"asrModel,omitempty"`
 }
 
 type pyannoteSubmitResponse struct {
@@ -143,7 +133,6 @@ func (p *PyannoteAIProvider) submitJob(ctx context.Context, audioURL string) (st
 		Model:         p.cfg.Model,
 		Confidence:    p.cfg.Confidence,
 		Transcription: p.cfg.Transcription,
-		ASRModel:      p.cfg.ASRModel,
 	})
 	if err != nil {
 		return "", err
@@ -242,7 +231,6 @@ type pyannoteJobResult struct {
 
 // parsePyannoteAI converts the pyannoteAI job response into provider-neutral
 // segments. The API returns sub-second times in seconds; we round to ms.
-// pyannoteAI does not transcribe — Text on each segment is left empty.
 func parsePyannoteAI(raw []byte) (*Result, error) {
 	var r pyannoteJobResult
 	if err := json.Unmarshal(raw, &r); err != nil {

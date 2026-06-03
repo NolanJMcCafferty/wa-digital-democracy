@@ -192,9 +192,3 @@ func nonfatalDiscoveryStatus(err error) (string, bool) {
 		return "", false
 	}
 }
-
-// runIngestHearings implements `wa-dd ingest-hearings`: for every
-// agenda_item whose hearing has a TVW event but no testifiers yet,
-// run the full curated pipeline (buildOne) so the hearing's testimony,
-// transcript, and PDC context get ingested. Reuses
-// Store.LookupBillAgendaTargetByAgendaItem so we don't re-derive the

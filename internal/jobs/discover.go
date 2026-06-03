@@ -81,12 +81,14 @@ type DiscoveryResult struct {
 
 // DiscoverOne walks the four-step lookup for a single hearing and
 // returns whatever it found. Returning a partial result is OK — the
-// CSI side and the TVW side are independent: a hearing with CSI
-// testifiers but no TVW captions is still useful, and vice versa.
+// CSI side and the TVW side are independent during discovery: a hearing with
+// CSI agenda metadata but no matched TVW event can still be useful as a
+// source-linked agenda/testifier record.
 //
 // Errors are reserved for "couldn't even start" cases (CSI committee
 // not found means we can't look up testifiers, so the whole hearing is
-// skipped). TVW miss is non-fatal.
+// skipped). TVW miss is non-fatal during discovery; full hearing ingest
+// only runs after a TVW event ID has been found.
 func (d *Discoverer) DiscoverOne(ctx context.Context, h db.HearingForDiscovery) (*DiscoveryResult, error) {
 	// 1. CSI committee.
 	committeeID, err := d.matchCommittee(ctx, h.Chamber, h.CommitteeName)

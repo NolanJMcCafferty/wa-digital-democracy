@@ -234,8 +234,8 @@ use that carefully and prefer `--dry-run` first.
 go run ./cmd/wa-dd generate-vendor-entity-matches --limit 10000
 ```
 
-Despite the historical command/table name, this covers more than vendors. It
-builds candidates from these source kinds:
+Despite the "vendor" naming, this covers more than vendors. It builds
+candidates from these source kinds:
 
 - `pdc_lobbying_organization`
 - `datawa_contract_contractor`

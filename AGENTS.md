@@ -10,12 +10,14 @@ A source-linked public graph of Washington State legislative activity — bills,
 
 ```
 nightly cron: make daily
+  ├─ wa-dd ingest-legislators  LWS roster → person, legislator, memberships
   ├─ wa-dd ingest-session     LWS metadata for every bill in biennium (~70 min)
   ├─ wa-dd discover-hearings  fills CSI agenda IDs + TVW event IDs on hearing rows
-  ├─ wa-dd ingest-hearings    full pipeline (CSI testifiers + TVW captions +
-  │                           transcript segmentation + organization/context enrichment) per hearing
-  └─ wa-dd diarize-pending    diarization + speaker-evidence for any
-                              hearing with audio but no succeeded job
+  ├─ wa-dd ingest-hearings    full hearing pipeline (CSI testifiers +
+  │                           Invintus event/media + diarization +
+  │                           transcript segmentation + organization links)
+  └─ wa-dd ingest-pdc-employers
+                              PDC lobbyist-employer registrations
 
   → Postgres (single source of truth)
   → wa-dd-api on :8080 (chi router; reads only; Clerk-gated /admin routes)
@@ -23,7 +25,7 @@ nightly cron: make daily
                       /admin UI for speaker + org review)
 ```
 
-The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `tvw_event` / `organization` tables are upsertable on stable keys — re-running passes is safe. **Exception:** `testifier` and `transcript_segment` are insert-only with no dedupe; `ingest-hearings` filters to agenda items without testifier rows so the routine path doesn't hit this.
+The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `tvw_event` / `organization` tables are upsertable on stable keys — re-running passes is safe. `testifier` and `agenda_item_window` are replaced per agenda item; diarization rows are appended per provider job, but `ingest-hearings` checks for an existing succeeded diarization job and uses an event-level advisory lock to avoid duplicate provider submissions.
 
 ## Layout
 
@@ -49,8 +51,8 @@ internal/
                 connectors. Each follows Fetch / StoreRaw / Parse / Normalize.
                 Phase status table lives in internal/sources/README.md.
   sources/httpx/ shared retry + per-host rate-limit + RawSink hook
-  jobs/         pipeline steps (ingest-bill, ingest-csi, ingest-tvw,
-                segment-transcript, pdc-context, discover)
+  jobs/         pipeline step primitives (ingest-bill, ingest-csi, ingest-tvw,
+                segment-transcript, populate-organizations, discover)
   diarization/  provider-neutral diarization (Provider interface, Deepgram +
                 pyannoteAI implementations, MergeConsecutiveSegments,
                 self-introduction evidence extractor).
@@ -96,7 +98,7 @@ cd apps/web && pnpm typecheck                       # Frontend typecheck
 make e2e                                            # Playwright e2e (requires Postgres + fixtures + chromium)
 
 # Ingestion (operator-driven; usually triggered via make daily)
-INVINTUS_EMBEDDER_KEY=… make daily             # full nightly chain
+INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily  # full nightly chain
 go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
 go run ./cmd/wa-dd discover-hearings --biennium 2025-26 --limit 47
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
@@ -169,12 +171,12 @@ E2E tests live in `apps/web/e2e/`. Accessibility checks use `@axe-core/playwrigh
 - **Bill prefixes.** LWS reports `BillID` in the *current* substituted/engrossed form (`SSB 6054`, `2SHB 1859`). `internal/sources/lws/normalize.go:baseBillPrefix` strips `E`/`N`/`S` chrome down to the bare prefix (`HB`/`SB`/`HJR`/etc.) so a single bill doesn't fork into multiple rows as it moves through the legislature.
 - **`IngestBill` two-mode behavior.** When `Demo.Chamber` is set (curated path), it stores one chamber-matched hearing. When empty (`ingest-session` path), it stores every hearing LWS reports so `discover-hearings` has rows to enrich.
 - **Rate limit default 10 req/sec** per upstream host. The User-Agent identifies the project so state-agency operators can contact us. Retries on 429/5xx with exponential backoff.
-- **Pipeline orchestration** lives in `internal/jobs/jobs.go`. `Pipeline.Run` runs all 6 hearing-ingestion steps; `Pipeline.RunMetadataOnly` runs only `IngestBill`. The CLI commands wire steps into the discovery/ingest-hearings drivers.
+- **Pipeline orchestration** lives in the CLI drivers. `Pipeline.RunMetadataOnly` runs only `IngestBill` for `ingest-session`; `ingest-hearings` iterates by `hearing_id`, runs CSI per agenda item, Invintus + diarization once per TVW event, transcript segmentation per agenda item, then hearing-scoped organization population.
 - **API response shapes.** Public API routes should return explicit response/list objects (`BillDetailResponse`, `HearingPage`, `OrganizationPage`, etc.). Keep collection fields initialized to `[]` rather than `nil` so frontend code can treat them as arrays.
-- **No generated page snapshots.** The old generated snapshot path has been removed. Public/frontend page data should come from route-specific API objects assembled from Postgres.
+- **No generated page snapshots.** Public/frontend page data comes from route-specific API objects assembled from Postgres.
 - **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `billPageHandler` and `searchTranscriptsHandler` for examples.
 - **Frontend fetch path.** Server Components fetch by absolute URL (`process.env.WADD_API_URL ?? "http://localhost:8080"`) because they don't traverse `next.config.ts` rewrites. Client components use the rewrite path `/api/v1/...` so requests stay same-origin.
-- **Diarization providers.** `internal/diarization` is provider-neutral. Deepgram (`nova-3`) is the legacy default; pyannoteAI (`precision-2`) is the higher-fidelity option that fixed Deepgram's long-gap false-merge bug, with optional bundled ASR (`faster-whisper-large-v3-turbo`). See `docs/hearing-diarization-and-review.md` for tradeoffs and run commands.
+- **Diarization providers.** `internal/diarization` is provider-neutral. pyannoteAI (`precision-2`) is the default for hearing ingestion and can return bundled transcription; Deepgram (`nova-3`) remains available as an alternate provider. See `docs/hearing-diarization-and-review.md` for tradeoffs and run commands.
 - **Local admin auth.** `/admin` routes bypass Clerk when `NODE_ENV !== "production"` — see `apps/web/src/lib/adminAuth.ts`, `apps/web/src/proxy.ts`, and `cmd/wa-dd-api/auth.go`'s `localDevAdminBypass`. The web Dockerfile has a separate `web-dev` stage (`NODE_ENV=development`, `next dev`) used by `infra/docker-compose.yml`; the final `web` stage stays production-default for Railway.
 - **Backwards compatibility** Typically, you do not need to make changes backwards compatible. Only include backwards compatibility if the user explicitly says so.
 

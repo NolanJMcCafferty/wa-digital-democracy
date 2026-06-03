@@ -27,7 +27,8 @@ make analytics              # start optional Metabase analytics UI on :3001
 make api                    # run the HTTP API the Next.js frontend reads from (:8080)
 ```
 
-`INVINTUS_EMBEDDER_KEY` is required for TVW/Invintus caption ingestion.
+`INVINTUS_EMBEDDER_KEY` is required for Invintus event/media ingestion.
+`PYANNOTEAI_API_KEY` is required for the default hearing diarization path.
 
 The frontend reads from the API, so a full local loop is:
 
@@ -59,25 +60,28 @@ and starter dashboard ideas.
 
 ## Daily batch
 
-Three cooperating ingestions, chained by `make daily`. Each stage is
-idempotent and safe to re-run:
+The daily chain is idempotent and safe to re-run:
 
-1. **`make ingest-session`** — pulls **every bill in the biennium** from
+1. **`make ingest-legislators`** — refreshes the LWS House+Senate roster used
+   by bill sponsor joins and speaker/entity context.
+
+2. **`make ingest-session`** — pulls **every bill in the biennium** from
    LWS `GetLegislationByYear` and stores metadata + sponsors + status
    timeline + hearing references. Hearings/testimony/video are **not**
    touched here — just the LWS-side claims about each bill. ~5,000
    bills at the default rate/concurrency, runtime depends on upstream latency. Summary:
    `data/processed/_session.json`.
 
-2. **`make ingest-hearings`** — first discovers CSI agenda IDs + TVW
-   event IDs for LWS-reported hearings, then runs the full pipeline for
-   every discovered agenda item (CSI testifiers + TVW captions,
-   transcript segmentation, organization seeding, and source/context
-   enrichment). Skips agenda items already ingested (no testifier rows
-   means "not yet ingested"). This is what produces the rich
-   bill-hearing pages.
-   Summaries: `data/processed/_discovery.json` and
-   `data/processed/_ingest.json`.
+3. **`make ingest-hearings`** — first discovers CSI agenda IDs + TVW event IDs
+   for LWS-reported hearings, then runs the full pipeline for every discovered
+   hearing: CSI testifiers per agenda item, Invintus event/media metadata once
+   per TVW event, diarization before transcript segmentation, bill-window
+   segmentation per agenda item, and organization seeding. This is what
+   produces the rich bill-hearing pages. Summaries:
+   `data/processed/_discovery.json` and `data/processed/_ingest.json`.
+
+4. **`make ingest-pdc-employers`** — refreshes PDC lobbyist-employer
+   registrations and attaches public-record context to people/organizations.
 
 `make discover-hearings` remains available as a lower-level debugging
 and backfill target when you only want to refresh CSI/TVW join IDs.
@@ -85,7 +89,7 @@ and backfill target when you only want to refresh CSI/TVW join IDs.
 For nightly cron, one line is enough:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 Re-running is cheap in DB writes — `source_record` dedups on

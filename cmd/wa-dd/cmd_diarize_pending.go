@@ -25,18 +25,17 @@ func init() {
 func runDiarizePending(args []string) int {
 	fs := flag.NewFlagSet("diarize-pending", flag.ContinueOnError)
 	var (
-		dsn         = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		provider    = fs.String("provider", "pyannoteai", "diarization provider: pyannoteai or deepgram")
-		model       = fs.String("model", "precision-2", "provider model")
-		outDir      = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
-		apiKey      = fs.String("api-key", "", "provider API key (defaults to PYANNOTEAI_API_KEY or DEEPGRAM_API_KEY based on --provider)")
-		useURL      = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
-		limit       = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
-		dryRun      = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
-		concurrency = fs.Int("concurrency", 10, "max diarization jobs to run in parallel")
+		dsn           = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		provider      = fs.String("provider", "pyannoteai", "diarization provider: pyannoteai or deepgram")
+		model         = fs.String("model", "precision-2", "provider model")
+		outDir        = fs.String("out-dir", "data/processed/diarization", "raw diarization JSON output root")
+		apiKey        = fs.String("api-key", "", "provider API key (defaults to PYANNOTEAI_API_KEY or DEEPGRAM_API_KEY based on --provider)")
+		useURL        = fs.Bool("use-source-url", true, "send original TVW/Invintus URL to provider instead of uploading local normalized WAV")
+		limit         = fs.Int("limit", 0, "max events to diarize (0 = all pending)")
+		dryRun        = fs.Bool("dry-run", false, "print pending event IDs without diarizing them")
+		concurrency   = fs.Int("concurrency", 10, "max diarization jobs to run in parallel")
 		maxAttempts   = fs.Int("max-attempts", 5, "max attempts per event before giving up")
 		transcription = fs.Bool("transcription", true, "(pyannoteai only) request transcription with diarization so segments include text")
-		asrModel      = fs.String("asr-model", "faster-whisper-large-v3-turbo", "(pyannoteai only) ASR backend: faster-whisper-large-v3-turbo or parakeet-tdt-0.6b-v3")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -79,7 +78,7 @@ func runDiarizePending(args []string) int {
 	if strings.ToLower(*provider) == "deepgram" && *model == "precision-2" {
 		*model = "nova-3"
 	}
-	p, err := newDiarizationProvider(*provider, key, *model, *transcription, *asrModel)
+	p, err := newDiarizationProvider(*provider, key, *model, *transcription)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diarize-pending: %v\n", err)
 		return 2
@@ -118,7 +117,9 @@ func runDiarizePending(args []string) int {
 				n := done.Add(1)
 				fmt.Fprintf(os.Stderr, "==> [%d/%d] %s\n", n, len(pending), j.id)
 				var lastErr error
+				attempted := 0
 				for attempt := 1; attempt <= attempts; attempt++ {
+					attempted = attempt
 					if err := ctx.Err(); err != nil {
 						lastErr = err
 						break
@@ -129,6 +130,9 @@ func runDiarizePending(args []string) int {
 						break
 					}
 					lastErr = err
+					if !retryableDiarizationError(err) {
+						break
+					}
 					if attempt >= attempts {
 						break
 					}
@@ -147,7 +151,7 @@ func runDiarizePending(args []string) int {
 				}
 				if lastErr != nil {
 					failed.Add(1)
-					fmt.Fprintf(os.Stderr, "diarize-pending: event %s: gave up after %d attempts: %v\n", j.id, attempts, lastErr)
+					fmt.Fprintf(os.Stderr, "diarize-pending: event %s: failed after %d attempt(s): %v\n", j.id, attempted, lastErr)
 				}
 			}
 		}()

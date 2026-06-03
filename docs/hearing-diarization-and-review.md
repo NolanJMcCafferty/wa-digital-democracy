@@ -1,6 +1,6 @@
 # Hearing diarization and speaker review
 
-Last updated: 2026-05-20.
+Last updated: 2026-06-03.
 
 This document explains the WA Digital Democracy hearing diarization flow and the
 manual human review that must happen before anonymous speaker clusters become
@@ -8,11 +8,11 @@ public speaker labels.
 
 The short version:
 
-1. `ingest-hearings` gets each hearing's CSI agenda/testifier data plus TVW /
-   Invintus video, audio, and caption metadata.
-2. `diarize-event` or `diarize-pending` sends the TVW/Invintus audio/video URL
-   to a diarization provider (Deepgram or pyannoteAI) with diarization,
-   punctuation, utterances, and entity detection enabled.
+1. `ingest-hearings` gets each hearing's CSI agenda/testifier data plus
+   Invintus event, media, and audio/video metadata.
+2. `ingest-hearings`, `diarize-event`, or `diarize-pending` sends the
+   TVW/Invintus audio/video URL to a diarization provider. The normal hearing
+   ingest path now runs diarization before transcript segmentation.
 3. The provider output is normalized into anonymous speaker clusters and merged
    speech segments via `internal/diarization`'s provider-neutral types.
 4. `extract-speaker-evidence` scans the diarized text for conservative identity
@@ -50,14 +50,16 @@ make ingest-hearings BIENNIUM=2025-26
 ```
 
 `ingest-hearings` discovers CSI agenda IDs and TVW event IDs, fetches CSI
-testifiers, fetches TVW/Invintus event details and captions, and stores the
-video/audio metadata needed by diarization.
+testifiers, fetches Invintus event details/media assets, runs diarization when
+the event has no successful diarization job yet, and then segments the
+diarized transcript into bill windows.
 
 Diarization requires:
 
 - a TVW/Invintus event ID (`tvw_event.tvw_event_id`);
 - a usable audio/video source URL from `tvw_event` or `tvw_media_asset`;
-- `DEEPGRAM_API_KEY` in the environment, or `--api-key` passed to the CLI;
+- `PYANNOTEAI_API_KEY` for the default `ingest-hearings` provider, or
+  `DEEPGRAM_API_KEY` / `--api-key` when explicitly using Deepgram;
 - Postgres reachable through `WADD_DSN` or `--dsn`.
 
 ## Data model
@@ -119,13 +121,15 @@ The relevant tables are introduced mainly by:
 
 The provider boundary lives in `internal/diarization`.
 
-Two providers are supported: Deepgram (default) and pyannoteAI. They share
-the `diarization.Provider` interface, so downstream storage, evidence
-extraction, and the review UI are provider-agnostic.
+Two providers are supported: pyannoteAI (default for `ingest-hearings`) and
+Deepgram. They share the `diarization.Provider` interface, so downstream
+storage, evidence extraction, and the review UI are provider-agnostic.
 
 ### Deepgram
 
-`diarize-event --provider deepgram` calls Deepgram's prerecorded endpoint with:
+`diarize-event --provider deepgram` or
+`ingest-hearings --provider deepgram` calls Deepgram's prerecorded endpoint
+with:
 
 - `diarize=true`
 - `punctuate=true`
@@ -146,18 +150,12 @@ when speaker fidelity matters more than ASR quality.
 job to `https://api.pyannote.ai/v1/diarize` and polls `/v1/jobs/{id}` every
 5s. Wall-clock is typically 15–30 min for a 1–2 hour hearing.
 
-By default the job is requested with `transcription=true` and ASR backend
-`faster-whisper-large-v3-turbo` so the response includes word- and
-turn-level transcripts already aligned to clusters. Each turn becomes one
-`Segment` with `Text` populated, which feeds the same evidence-extraction
-pipeline used for Deepgram. Set `--transcription=false` for diarize-only.
-
-ASR backends:
-
-- `faster-whisper-large-v3-turbo` (default) — multilingual, stronger on
-  proper nouns and procedural language; better for legislator/testifier
-  names.
-- `parakeet-tdt-0.6b-v3` — English-only, faster, weaker on proper nouns.
+By default the job is requested with `transcription=true` so the response
+includes word- and turn-level transcripts already aligned to clusters. Each
+turn becomes one `Segment` with `Text` populated, which feeds the same
+evidence-extraction pipeline used for Deepgram. Set `--transcription=false`
+for diarize-only. The current pyannoteAI submit API selects the ASR backend
+server-side; the CLI does not send an ASR model field.
 
 Caveats:
 
@@ -189,7 +187,7 @@ public transcript unit today.
 For a single TVW/Invintus event ID:
 
 ```sh
-DEEPGRAM_API_KEY=... \
+PYANNOTEAI_API_KEY=... \
   go run ./cmd/wa-dd diarize-event \
     --event-id <tvw_event_id>
 ```
@@ -197,25 +195,24 @@ DEEPGRAM_API_KEY=... \
 Useful flags:
 
 ```txt
---provider deepgram              # or pyannoteai
---model nova-3                   # default; auto-switches to precision-2 for pyannoteai
+--provider pyannoteai            # or deepgram
+--model precision-2              # pyannoteAI default; deepgram defaults to nova-3
 --out-dir data/processed/diarization
 --use-source-url=true            # default: send provider the TVW/Invintus URL
 --api-key ...                    # defaults to DEEPGRAM_API_KEY or PYANNOTEAI_API_KEY
 --transcription=true             # pyannoteai only: bundle ASR with diarization
---asr-model faster-whisper-large-v3-turbo  # pyannoteai only ASR backend
 --dsn ...                        # defaults to WADD_DSN or local dev DSN
 ```
 
-By default the command sends the original TVW/Invintus URL to Deepgram. If a
-provider cannot fetch the source URL, run `audio-cache` first and then call
+By default the command sends the original TVW/Invintus URL to the provider. If
+a provider cannot fetch the source URL, run `audio-cache` first and then call
 `diarize-event --use-source-url=false`.
 
 ### Audio cache fallback
 
 ```sh
 go run ./cmd/wa-dd audio-cache --event-id <tvw_event_id>
-DEEPGRAM_API_KEY=... \
+PYANNOTEAI_API_KEY=... \
   go run ./cmd/wa-dd diarize-event \
     --event-id <tvw_event_id> \
     --use-source-url=false
@@ -231,7 +228,7 @@ To process events that have audio/video source URLs and no successful
 diarization job yet:
 
 ```sh
-DEEPGRAM_API_KEY=... \
+PYANNOTEAI_API_KEY=... \
   go run ./cmd/wa-dd diarize-pending --limit 25 --concurrency 4
 ```
 

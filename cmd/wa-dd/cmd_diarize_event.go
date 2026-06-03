@@ -35,7 +35,6 @@ func runDiarizeEvent(args []string) int {
 		// with text already aligned to clusters, removing the need for a
 		// separate transcript pass.
 		transcription = fs.Bool("transcription", true, "(pyannoteai only) request transcription with diarization so segments include text")
-		asrModel      = fs.String("asr-model", "faster-whisper-large-v3-turbo", "(pyannoteai only) ASR backend: faster-whisper-large-v3-turbo or parakeet-tdt-0.6b-v3")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -66,7 +65,7 @@ func runDiarizeEvent(args []string) int {
 	if strings.ToLower(*provider) == "deepgram" && *model == "precision-2" {
 		*model = "nova-3"
 	}
-	p, err := newDiarizationProvider(*provider, key, *model, *transcription, *asrModel)
+	p, err := newDiarizationProvider(*provider, key, *model, *transcription)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diarize-event: %v\n", err)
 		return 2
@@ -79,7 +78,7 @@ func runDiarizeEvent(args []string) int {
 	return 0
 }
 
-func newDiarizationProvider(provider, apiKey, model string, transcription bool, asrModel string) (diarization.Provider, error) {
+func newDiarizationProvider(provider, apiKey, model string, transcription bool) (diarization.Provider, error) {
 	switch strings.ToLower(provider) {
 	case "deepgram":
 		dg, err := diarization.NewDeepgramProvider(diarization.DeepgramConfig{APIKey: apiKey, Model: model})
@@ -93,7 +92,6 @@ func newDiarizationProvider(provider, apiKey, model string, transcription bool, 
 			Model:         model,
 			Confidence:    true,
 			Transcription: transcription,
-			ASRModel:      asrModel,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("pyannoteai: %w", err)
@@ -102,6 +100,38 @@ func newDiarizationProvider(provider, apiKey, model string, transcription bool, 
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", provider)
 	}
+}
+
+func retryableDiarizationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	nonRetryableMarkers := []string{
+		"AudioInput.URL is required",
+		"no normalized audio path",
+		"submit status 400",
+		"submit status 401",
+		"submit status 403",
+		"submit status 404",
+		"submit status 413",
+		"submit status 422",
+		"poll status 400",
+		"poll status 401",
+		"poll status 403",
+		"poll status 404",
+		"poll status 413",
+		"poll status 422",
+		"ended in status \"failed\"",
+		"ended in status \"cancelled\"",
+		"ended in status \"canceled\"",
+	}
+	for _, marker := range nonRetryableMarkers {
+		if strings.Contains(msg, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 // diarizeOneEvent runs a single diarization pass for eventID, persisting the
