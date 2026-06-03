@@ -1,78 +1,22 @@
-//go:build integration
-// +build integration
-
 package db_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-func openTestStore(t *testing.T) *db.Store {
-	t.Helper()
-	dsn := os.Getenv("WADD_TEST_DSN")
-	if dsn == "" {
-		dsn = "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"
-	}
-	store, err := db.Open(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("db open: %v", err)
-	}
-	t.Cleanup(store.Close)
-	return store
-}
+// dbCleanup is a no-op shim retained so existing tests compile unchanged. The
+// testcontainers harness in testmain_test.go now restores the database from a
+// post-migration snapshot in t.Cleanup, so per-FK row deletion is unnecessary.
+type dbCleanup struct{}
 
-type dbCleanup struct {
-	t     *testing.T
-	store *db.Store
-	srIDs []int64
-}
-
-func newDBCleanup(t *testing.T, store *db.Store) *dbCleanup {
-	t.Helper()
-	c := &dbCleanup{t: t, store: store}
-	t.Cleanup(c.run)
-	return c
-}
-
-func (c *dbCleanup) addSourceRecord(id int64) {
-	c.srIDs = append(c.srIDs, id)
-}
-
-func (c *dbCleanup) run() {
-	ctx := context.Background()
-	for _, q := range []string{
-		`DELETE FROM vendor_entity_match_decision WHERE candidate_id IN (SELECT id FROM vendor_entity_match_candidate WHERE source_record_id = ANY($1))`,
-		`DELETE FROM vendor_entity_match_candidate WHERE source_record_id = ANY($1)`,
-		`DELETE FROM tvw_media_asset WHERE source_record_id = ANY($1)`,
-		`DELETE FROM federal_award WHERE source_record_id = ANY($1)`,
-		`DELETE FROM seattle_operating_budget WHERE source_record_id = ANY($1)`,
-		`DELETE FROM fiscalwa_vendor_payment WHERE source_record_id = ANY($1)`,
-		`DELETE FROM datawa_webs_vendor WHERE source_record_id = ANY($1)`,
-		`DELETE FROM datawa_it_contract WHERE source_record_id = ANY($1)`,
-		`DELETE FROM datawa_master_contract_sale WHERE source_record_id = ANY($1)`,
-		`DELETE FROM datawa_contract WHERE source_record_id = ANY($1)`,
-		`DELETE FROM bill_status_change WHERE source_record_id = ANY($1)`,
-		`DELETE FROM transcript_segment WHERE source_record_id = ANY($1)`,
-		`DELETE FROM testifier WHERE source_record_id = ANY($1)`,
-		`DELETE FROM agenda_item WHERE source_record_id = ANY($1)`,
-		`DELETE FROM hearing WHERE source_record_id = ANY($1)`,
-		`DELETE FROM bill WHERE source_record_id = ANY($1)`,
-		`DELETE FROM tvw_event WHERE source_record_id = ANY($1)`,
-		`DELETE FROM source_record WHERE id = ANY($1)`,
-	} {
-		if _, err := c.store.Pool.Exec(ctx, q, c.srIDs); err != nil {
-			c.t.Errorf("cleanup %q: %v", q, err)
-		}
-	}
-}
+func newDBCleanup(_ *testing.T, _ *db.Store) *dbCleanup { return &dbCleanup{} }
 
 // insertProvenance creates a fake source_record we can FK against.
-func insertProvenance(t *testing.T, store *db.Store, cleanup *dbCleanup, system, hash string) int64 {
+func insertProvenance(t *testing.T, store *db.Store, _ *dbCleanup, system, hash string) int64 {
 	t.Helper()
 	id, err := store.InsertSourceRecord(context.Background(), db.SourceRecordParams{
 		System:      system,
@@ -86,12 +30,11 @@ func insertProvenance(t *testing.T, store *db.Store, cleanup *dbCleanup, system,
 	if err != nil {
 		t.Fatalf("source_record: %v", err)
 	}
-	cleanup.addSourceRecord(id)
 	return id
 }
 
 func TestUpsertBill_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "lws", "bill-test-1")
@@ -119,7 +62,7 @@ func TestUpsertBill_Idempotent(t *testing.T) {
 }
 
 func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "csi", "test-csi-1")
@@ -168,7 +111,7 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 }
 
 func TestListDiscoveredAgendaItems_UsesCurrentAndLegacyCompletionMarkers(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "lws", "discovered-agenda-items-test-1")
@@ -230,7 +173,7 @@ func TestListDiscoveredAgendaItems_UsesCurrentAndLegacyCompletionMarkers(t *test
 func pInt64Test(v int64) *int64 { return &v }
 
 func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "invintus", "tvw-media-test-1")
@@ -306,7 +249,7 @@ SELECT count(*), max(name) FROM tvw_media_asset WHERE tvw_event_id = 'test-media
 }
 
 func TestFindBillNumberMentions(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "tvw", "test-tvw-1")
@@ -343,7 +286,7 @@ func TestFindBillNumberMentions(t *testing.T) {
 }
 
 func TestUpsertDataWAContract_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-contract-test-1")
@@ -383,7 +326,7 @@ SELECT count(*), max(contractor_name), max(total_amount)::text
 }
 
 func TestUpsertDataWAMasterContractSale_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-master-sale-test-1")
@@ -430,7 +373,7 @@ SELECT count(*), max(vendor_name), max(total_sales_reported)::text
 }
 
 func TestUpsertDataWAITContract_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-it-contract-test-1")
@@ -479,7 +422,7 @@ SELECT count(*), max(contractor_name), max(total_contract_amount)::text
 }
 
 func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "vendor-match-test-1")
@@ -546,7 +489,7 @@ func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 }
 
 func TestUpsertDataWAWEBSVendor_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "datawa_socrata", "datawa-webs-vendor-test-1")
@@ -592,7 +535,7 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 }
 
 func TestUpsertFederalAward_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "usaspending", "usaspending-award-test-1")
@@ -637,7 +580,7 @@ SELECT count(*), max(award_amount)::text
 }
 
 func TestUpsertSeattleOperatingBudget_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "seattle_socrata", "seattle-operating-budget-test-1")
@@ -680,7 +623,7 @@ SELECT count(*), max(approved_amount)::text
 }
 
 func TestUpsertFiscalWAVendorPayment_Idempotent(t *testing.T) {
-	store := openTestStore(t)
+	store := newTestStore(t)
 	ctx := context.Background()
 	cleanup := newDBCleanup(t, store)
 	srID := insertProvenance(t, store, cleanup, "fiscal_wa", "fiscalwa-vendor-payment-test-1")

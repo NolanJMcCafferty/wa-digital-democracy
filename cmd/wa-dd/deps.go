@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
@@ -134,7 +134,7 @@ func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64)
 // ingestOne runs the full hearing-ingestion pipeline for one agenda item.
 // Page JSON is assembled on demand by wa-dd-api; this routine only writes
 // normalized source-linked records to Postgres.
-func ingestOne(ctx context.Context, deps *buildDeps, demo *domain.BillAgendaTarget, logf func(string)) error {
+func ingestOne(ctx context.Context, deps *buildDeps, demo *common.BillAgendaTarget, logf func(string)) error {
 	pipeline := &jobs.Pipeline{
 		Store: deps.store,
 		LWS:   deps.lwsClient,

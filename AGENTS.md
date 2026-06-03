@@ -10,17 +10,18 @@ A source-linked public graph of Washington State legislative activity — bills,
 
 ```
 nightly cron: make daily
-  ├─ wa-dd ingest-session    LWS metadata for every bill in biennium (~70 min)
+  ├─ wa-dd ingest-session     LWS metadata for every bill in biennium (~70 min)
   ├─ wa-dd discover-hearings  fills CSI agenda IDs + TVW event IDs on hearing rows
-  └─ wa-dd ingest-hearings    full pipeline (CSI testifiers + TVW captions +
-                              transcript segmentation + organization/context enrichment) per hearing
+  ├─ wa-dd ingest-hearings    full pipeline (CSI testifiers + TVW captions +
+  │                           transcript segmentation + organization/context enrichment) per hearing
+  └─ wa-dd diarize-pending    diarization + speaker-evidence for any
+                              hearing with audio but no succeeded job
 
   → Postgres (single source of truth)
-  → wa-dd-api on :8080 (chi router; reads only)
-  → Next.js on :3000 (Server Components fetch the API; ISR revalidate: 60)
+  → wa-dd-api on :8080 (chi router; reads only; Clerk-gated /admin routes)
+  → Next.js on :3000 (Server Components fetch the API; ISR revalidate: 60;
+                      /admin UI for speaker + org review)
 ```
-
-Every public fact traces back to a `source_record` row (raw bytes on disk under `data/raw/<system>/`, deduped by `(system, endpoint, url, content_hash, transform_version)`). The `httpx.RawSink` is wired into the HTTP client so every connector fetch records provenance with no per-step boilerplate.
 
 The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / `agenda_item` / `tvw_event` / `organization` tables are upsertable on stable keys — re-running passes is safe. **Exception:** `testifier` and `transcript_segment` are insert-only with no dedupe; `ingest-hearings` filters to agenda items without testifier rows so the routine path doesn't hit this.
 
@@ -28,22 +29,37 @@ The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / 
 
 ```
 cmd/
-  wa-dd/        operator CLI (find-candidates, ingest-session,
-                discover-hearings, ingest-hearings, entity/backfill jobs)
-  wa-dd-api/    read-only HTTP API the Next.js frontend reads from (:8080)
+  wa-dd/        operator CLI. One file per subcommand (cmd_*.go). Covers
+                ingestion (ingest-session, discover-hearings, ingest-hearings,
+                ingest-legislators, ingest-contracts, ingest-pdc-*,
+                ingest-irs-bmf-wa, ingest-usaspending-wa-awards, …),
+                diarization (audio-cache, diarize-event, diarize-pending,
+                extract-speaker-evidence,
+                backfill-speaker-evidence), and entity/org workflows
+                (populate-organizations,
+                generate-vendor-entity-matches, decide-entity-match,
+                verify-organizations, prune-junk-organizations).
+  wa-dd-api/    read-only HTTP API the Next.js frontend reads from (:8080).
+                Routes split per resource (bill/hearing/org/...); registry in
+                routes.go.
 internal/
-  sources/{lws,csi,committeeschedules,tvw,pdc,socrata,...}/
+  sources/{lws,csi,committeeschedules,tvw,pdc,socrata,datawa,fiscalwa,
+           usaspending,irsbmf,bls,census,epa,fema,hud,sao,seattle,
+           seattleauditor,kingcounty,webs,connector,...}/
                 connectors. Each follows Fetch / StoreRaw / Parse / Normalize.
                 Phase status table lives in internal/sources/README.md.
   sources/httpx/ shared retry + per-host rate-limit + RawSink hook
   jobs/         pipeline steps (ingest-bill, ingest-csi, ingest-tvw,
                 segment-transcript, match-speakers, pdc-context, discover)
-  candidate/    find-candidates implementation (CSI committee scan)
+  diarization/  provider-neutral diarization (Provider interface, Deepgram +
+                pyannoteAI implementations, MergeConsecutiveSegments,
+                self-introduction evidence extractor).
+  entitymatch/  organization/vendor entity-match candidate generation +
+                decision recording.
+  common/       shared civic value objects (BillKey, BillAgendaTarget)
   storage/db/   pgx wrapper, hand-written Pool.Query methods on *Store,
-                source_record helpers, RawSink
-  storage/objectstore/  filesystem object store for raw API responses
-  pageassembly/  API response assemblers + DB→BillAgendaTarget lookups
-  domain/       shared civic-domain value objects (BillKey, BillAgendaTarget)
+                source_record helpers, BillAgendaTarget lookups, RawSink
+  storage/objectstore/  filesystem + S3/R2 object store for raw API responses
 db/migrations/  goose-style SQL; project-pinned via tools/goose
 db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
                 Pool.Query methods on *Store, not codegen. Don't add to this
@@ -52,11 +68,15 @@ apps/web/       Next.js 16 + React 19 + TS + Tailwind 4. Server Components
                 fetch the Go API by absolute URL (process.env.WADD_API_URL)
                 because they don't go through next.config.ts rewrites.
                 Client components use the rewrite (/api/v1/* → :8080).
-config/         operator-edited YAML (issue_keywords.yml)
+                /admin uses Clerk in production; bypassed in non-prod via
+                NODE_ENV gate (see src/lib/adminAuth.ts and src/proxy.ts).
 data/raw/       immutable raw API responses (gitignored)
-data/processed/ run-summary JSONs and derived artifacts (gitignored)
+data/processed/ run-summary JSONs, diarization output, and derived
+                artifacts (gitignored)
 docs/           ingestion.md is the canonical implementation doc.
-                phase0-spike-report.md is the frozen Phase 0 findings.
+                hearing-diarization-and-review.md covers the diarization +
+                speaker-review pipeline. organization-matching-and-review.md
+                covers the org/vendor entity-match flow.
 ```
 
 ## Common commands
@@ -154,10 +174,13 @@ E2E tests live in `apps/web/e2e/`. Accessibility checks use `@axe-core/playwrigh
 - **No generated page snapshots.** The old generated snapshot path has been removed. Public/frontend page data should come from route-specific API objects assembled from Postgres.
 - **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `billPageHandler` and `searchTranscriptsHandler` for examples.
 - **Frontend fetch path.** Server Components fetch by absolute URL (`process.env.WADD_API_URL ?? "http://localhost:8080"`) because they don't traverse `next.config.ts` rewrites. Client components use the rewrite path `/api/v1/...` so requests stay same-origin.
+- **Diarization providers.** `internal/diarization` is provider-neutral. Deepgram (`nova-3`) is the legacy default; pyannoteAI (`precision-2`) is the higher-fidelity option that fixed Deepgram's long-gap false-merge bug, with optional bundled ASR (`faster-whisper-large-v3-turbo`). See `docs/hearing-diarization-and-review.md` for tradeoffs and run commands.
+- **Local admin auth.** `/admin` routes bypass Clerk when `NODE_ENV !== "production"` — see `apps/web/src/lib/adminAuth.ts`, `apps/web/src/proxy.ts`, and `cmd/wa-dd-api/auth.go`'s `localDevAdminBypass`. The web Dockerfile has a separate `web-dev` stage (`NODE_ENV=development`, `next dev`) used by `infra/docker-compose.yml`; the final `web` stage stays production-default for Railway.
+- **Backwards compatibility** Typically, you do not need to make changes backwards compatible. Only include backwards compatibility if the user explicitly says so.
 
 ## What lives where in the wiki
 
-- `~/Documents/main/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md` — current product/architecture record. The MVP phases through public beta are marked complete; do not reintroduce stale "next steps" or Phase 4 roadmap language unless Nolan asks.
-- `~/Documents/main/wiki/politics/Washington Digital Democracy - First Page Implementation Blueprint.md` — older implementation blueprint; useful historical context, but the Comprehensive Plan and repo code are the current source of truth.
-- `~/Documents/main/wiki/politics/data-sources/` — per-source connector specs.
+- `~/Documents/v1/wiki/politics/Washington Digital Democracy - Comprehensive Plan.md` — current product/architecture record. The MVP phases through public beta are marked complete; do not reintroduce stale "next steps" or Phase 4 roadmap language unless Nolan asks.
+- `~/Documents/v1/wiki/politics/Washington Digital Democracy - Canonical Data Sources.md` — source-of-truth list of upstream data sources.
+- `~/Documents/v1/wiki/politics/data-sources/` — per-source connector specs.
 - The wiki is the project-level intent; `docs/ingestion.md` is the implementation walkthrough.

@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 package db_test
 
 import (
@@ -23,35 +20,9 @@ func gotHash(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Run with:
-//
-//	make migrate-fresh
-//	go test -tags=integration ./internal/storage/db/...
-//
-// Reads DSN from WADD_TEST_DSN, defaulting to the docker-compose Postgres.
 func TestRawSinkRoundTrip(t *testing.T) {
-	dsn := os.Getenv("WADD_TEST_DSN")
-	if dsn == "" {
-		dsn = "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"
-	}
-
+	store := newTestStore(t)
 	ctx := context.Background()
-	store, err := db.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("db open: %v", err)
-	}
-	t.Cleanup(store.Close)
-	t.Cleanup(func() {
-		_, err := store.Pool.Exec(ctx, `
-DELETE FROM source_record
- WHERE source_system = 'lws'
-   AND source_endpoint IN ('TestService.Ping', 'TestService.Other')
-   AND source_url LIKE 'http://127.0.0.1:%'
-   AND content_hash = $1`, gotHash(`{"hello":"world"}`))
-		if err != nil {
-			t.Errorf("cleanup source_record: %v", err)
-		}
-	})
 
 	root := filepath.Join(t.TempDir(), "raw")
 	objs, err := objectstore.NewFS(root)

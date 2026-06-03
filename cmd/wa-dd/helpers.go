@@ -2,47 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/candidate"
 )
-
-func runStub(cmd string, args []string, phase string) {
-	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "wa-dd %s: not yet implemented (planned for %s)\n", cmd, phase)
-	}
-	_ = fs.Parse(args)
-	fmt.Fprintf(os.Stderr, "wa-dd %s: not yet implemented (planned for %s)\n", cmd, phase)
-	os.Exit(64)
-}
-func printTop(cs []candidate.Candidate, n int) {
-	fmt.Fprintln(os.Stderr, "Top candidates (highest score, most recent first):")
-	fmt.Fprintln(os.Stderr, "  score  bill          chamber  meeting             testifiers (Pro/Con/Other)  orgs  agenda_item")
-	for i, c := range cs {
-		if i >= n {
-			break
-		}
-		bill := c.BillID
-		if bill == "" {
-			bill = "(no bill)"
-		}
-		meeting := "-"
-		if !c.MeetingDateTime.IsZero() {
-			meeting = c.MeetingDateTime.Format("2006-01-02 15:04")
-		}
-		fmt.Fprintf(os.Stderr, "  %5d  %-13s %-7s  %-19s   %2d (%d/%d/%d)              %4d  %s\n",
-			c.Score, bill, c.Chamber, meeting,
-			c.TestifierCount, c.ProCount, c.ConCount, c.OtherCount,
-			c.UniqueOrganizations, c.AgendaItemID)
-	}
-	fmt.Fprintln(os.Stderr, "\nUse discover-hearings and ingest-hearings to enrich selected agenda items from the database.")
-}
 
 func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {

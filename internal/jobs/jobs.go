@@ -16,7 +16,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
@@ -31,7 +31,7 @@ type Pipeline struct {
 	CSI   *csi.Client
 	TVW   *tvw.Client
 	PDC   *pdc.Client
-	Demo  *domain.BillAgendaTarget
+	Demo  *common.BillAgendaTarget
 
 	// SourceRecordIDFor returns the source_record id for the connector's
 	// most recent fetch of a given URL. Populated during a run by reading

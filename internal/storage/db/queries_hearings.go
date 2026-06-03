@@ -295,6 +295,9 @@ SELECT id
 			orgID = &id
 		}
 	}
+	if rawOrg == "" && orgID == nil {
+		return nil
+	}
 
 	relationshipType := "signed_in_for"
 	if in.Testified {

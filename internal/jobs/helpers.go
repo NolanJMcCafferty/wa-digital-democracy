@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 )
 
@@ -63,7 +63,7 @@ func parseLWSDate(s string) (time.Time, error) {
 // We deliberately do NOT fall back to the first arbitrary hearing — that
 // led to a real bug where a House-origin bill's first hearing in the
 // House Housing committee shadowed the demo's Senate Housing hearing.
-func pickHearingForDemo(in []lws.Hearing, demo *domain.BillAgendaTarget) *lws.Hearing {
+func pickHearingForDemo(in []lws.Hearing, demo *common.BillAgendaTarget) *lws.Hearing {
 	if len(in) == 0 {
 		return nil
 	}

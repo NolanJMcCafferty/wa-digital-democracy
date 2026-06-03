@@ -14,10 +14,9 @@ The short version:
 2. `PopulateOrganizations` seeds canonical `organization` rows from those CSI
    strings and records source-backed `organization_source_mention` rows.
 3. Optional source-context ingests bring in PDC lobbying employers, DataWA
-   contract/vendor rows, FiscalWA vendor payments, USAspending recipients, and
-   Deepgram organization mentions.
-4. `generate-vendor-entity-matches` and `generate-deepgram-org-evidence` create
-   reviewable `vendor_entity_match_candidate` rows by normalized-name matching.
+   contract/vendor rows, FiscalWA vendor payments, and USAspending recipients.
+4. `generate-vendor-entity-matches` creates reviewable
+   `vendor_entity_match_candidate` rows by normalized-name matching.
 5. Humans use `/admin/review/entities` to confirm, reject, or leave candidates
    in `needs_review`.
 6. Public pages read confirmed matches through `reviewed_vendor_entity_match`;
@@ -220,13 +219,6 @@ go run ./cmd/wa-dd ingest-usaspending-wa-awards \
 
 Writes `federal_award` rows with normalized recipient names.
 
-### Deepgram organization mentions
-
-Deepgram entity extraction during hearing diarization can create
-`entity_mention` rows with `entity_type = ORGANIZATION`. These are speech
-mentions, not confirmed organization identities. They become reviewable
-organization evidence through `generate-deepgram-org-evidence`.
-
 ## Cross-source verification
 
 After loading PDC employers and/or IRS BMF rows, run:
@@ -276,26 +268,6 @@ For each source row, the generator:
    confidence, marking them as `reviewed_by = system:entitymatch`.
 
 Everything else remains `needs_review` until a human decides.
-
-### Deepgram organization evidence candidates
-
-```sh
-go run ./cmd/wa-dd generate-deepgram-org-evidence \
-  --min-confidence 0.85 \
-  --limit 10000
-```
-
-This scans high-confidence Deepgram `ORGANIZATION` entity mentions and:
-
-1. normalizes the mention text;
-2. skips junk/false-positive-risk names;
-3. records an `organization_source_mention` with `source_kind = deepgram_entity`;
-4. creates `vendor_entity_match_candidate` rows with
-   `source_kind = deepgram_organization_mention` where normalized names match
-   existing organizations.
-
-The admin UI shows transcript context around these candidates so reviewers can
-judge whether the mention actually refers to the organization.
 
 ## Manual human review
 
@@ -390,8 +362,6 @@ Before relying on organization/entity context publicly:
 - [ ] Junk placeholder organizations have been pruned or left unlinked.
 - [ ] Relevant source-context rows have been ingested.
 - [ ] `generate-vendor-entity-matches` has been run after source-context ingest.
-- [ ] `generate-deepgram-org-evidence` has been run if transcript organization
-      mentions are being reviewed.
 - [ ] High-confidence candidates have explicit decisions.
 - [ ] Public pages read confirmed matches through `reviewed_vendor_entity_match`.
 - [ ] UI language describes public-record context without implying causation.

@@ -11,14 +11,14 @@ GOOSE ?= $(GO) run -modfile=tools/goose/go.mod github.com/pressly/goose/v3/cmd/g
 SCHEMASPY_IMAGE ?= schemaspy/schemaspy:latest
 SCHEMASPY_OUT ?= docs/db/schemaspy
 COVERAGE_THRESHOLD ?= 50.0
-COVERAGE_PKGS ?= ./internal/sources/... ./internal/candidate ./internal/domain
+COVERAGE_PKGS ?= ./internal/sources/... ./internal/common
 
 ifneq (,$(wildcard $(ENV_FILE)))
 include $(ENV_FILE)
 export
 endif
 
-.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web railway-bootstrap railway-deploy vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings daily
+.PHONY: help up up-db down nuke ps logs logs-api logs-web logs-postgres logs-migrate analytics metabase metabase-open psql migrate-up migrate-down migrate-fresh integration-db seed-test-fixtures seed-e2e-fixtures db-docs test integration e2e e2e-install coverage build docker-build-api docker-build-cli docker-build-migrate docker-build-railway docker-build-web railway-bootstrap railway-deploy vet fmt tidy api ingest-legislators ingest-session discover-hearings ingest-hearings ingest-pdc-employers daily
 
 help:
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -92,11 +92,11 @@ db-docs: up-db ## Generate SchemaSpy HTML docs and open them in the default brow
 		$(SCHEMASPY_IMAGE)
 	@xdg-open "$(CURDIR)/$(SCHEMASPY_OUT)/index.html" >/dev/null 2>&1 || echo "Open $(CURDIR)/$(SCHEMASPY_OUT)/index.html"
 
-test:         ## Run unit tests
+test:         ## Run unit tests (db package boots a Postgres testcontainer; set WADD_SKIP_DB_TESTS=1 to skip)
 	$(GO) test ./...
 
 integration: integration-db seed-test-fixtures ## Run backend integration tests against a real Postgres DB
-	WADD_TEST_DSN="$(DSN)" $(GO) test -tags=integration ./...
+	WADD_TEST_DSN="$(DSN)" $(GO) test ./...
 
 e2e-install: ## Install Playwright browser dependencies for end-to-end tests
 	cd apps/web && pnpm exec playwright install --with-deps chromium
@@ -168,4 +168,7 @@ ingest-hearings: ## Discover hearing IDs, then run the full pipeline for every d
 	$(GO) run ./cmd/wa-dd discover-hearings --biennium $${BIENNIUM:-2025-26}
 	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26}
 
-daily: ingest-legislators ingest-session ingest-hearings ## One-call nightly: roster + metadata + hearing discovery + auto-ingest
+ingest-pdc-employers: ## Pull PDC lobbyist-employer registrations into person/org context
+	$(GO) run ./cmd/wa-dd ingest-pdc-employers
+
+daily: ingest-legislators ingest-session ingest-hearings ingest-pdc-employers ## One-call nightly: roster + metadata + hearing discovery + PDC context

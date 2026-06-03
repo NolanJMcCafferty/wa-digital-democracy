@@ -10,7 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/pageassembly"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
@@ -25,15 +24,15 @@ const (
 )
 
 type hearingAgendaItemResponse struct {
-	CSIAgendaItemID string                          `json:"csi_agenda_item_id"`
-	AgendaItemLabel string                          `json:"agenda_item_label"`
-	Biennium        string                          `json:"biennium"`
-	BillID          string                          `json:"bill_id"`
-	BillPrefix      string                          `json:"bill_prefix"`
-	BillNumber      int                             `json:"bill_number"`
-	TestifierCount  int                             `json:"testifier_count"`
-	TestifiedCount  int                             `json:"testified_count"`
-	Section         *pageassembly.AgendaItemSection `json:"section,omitempty"`
+	CSIAgendaItemID string             `json:"csi_agenda_item_id"`
+	AgendaItemLabel string             `json:"agenda_item_label"`
+	Biennium        string             `json:"biennium"`
+	BillID          string             `json:"bill_id"`
+	BillPrefix      string             `json:"bill_prefix"`
+	BillNumber      int                `json:"bill_number"`
+	TestifierCount  int                `json:"testifier_count"`
+	TestifiedCount  int                `json:"testified_count"`
+	Section         *AgendaItemSection `json:"section,omitempty"`
 }
 
 type hearingResponse struct {
@@ -177,15 +176,15 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 		// The list endpoint deliberately omits these to keep the payload
 		// small.
 		for i := range resp.AgendaItems {
-			demo, err := pageassembly.LookupBillAgendaTargetByAgendaItem(req.Context(), store, resp.AgendaItems[i].CSIAgendaItemID)
+			demo, err := store.LookupBillAgendaTargetByAgendaItem(req.Context(), resp.AgendaItems[i].CSIAgendaItemID)
 			if err != nil {
-				if errors.Is(err, pageassembly.ErrBillNotFound) {
+				if errors.Is(err, db.ErrBillNotFound) {
 					continue
 				}
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			section, err := pageassembly.BuildAgendaItemSection(req.Context(), store, demo)
+			section, err := BuildAgendaItemSection(req.Context(), store, demo)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 )
@@ -161,8 +161,8 @@ func runIngestSession(args []string) int {
 			defer wg.Done()
 			for j := range jobsCh {
 				b := j.bill
-				demo := &domain.BillAgendaTarget{
-					Bill: domain.BillKey{Biennium: b.biennium, Prefix: b.prefix, Number: b.number},
+				demo := &common.BillAgendaTarget{
+					Bill: common.BillKey{Biennium: b.biennium, Prefix: b.prefix, Number: b.number},
 				}
 				prefix := fmt.Sprintf("[%d/%d] %s", j.index+1, len(bills), demo.Bill.ID())
 				t0 := time.Now()

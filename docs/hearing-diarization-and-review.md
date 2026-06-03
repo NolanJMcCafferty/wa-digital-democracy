@@ -11,10 +11,10 @@ The short version:
 1. `ingest-hearings` gets each hearing's CSI agenda/testifier data plus TVW /
    Invintus video, audio, and caption metadata.
 2. `diarize-event` or `diarize-pending` sends the TVW/Invintus audio/video URL
-   to Deepgram with diarization, punctuation, utterances, and entity detection
-   enabled.
-3. The Deepgram output is normalized into anonymous speaker clusters and merged
-   speech segments.
+   to a diarization provider (Deepgram or pyannoteAI) with diarization,
+   punctuation, utterances, and entity detection enabled.
+3. The provider output is normalized into anonymous speaker clusters and merged
+   speech segments via `internal/diarization`'s provider-neutral types.
 4. `extract-speaker-evidence` scans the diarized text for conservative identity
    clues, currently mostly self-introductions.
 5. Human reviewers use `/admin/review/speakers` to accept, reject, request more
@@ -24,8 +24,9 @@ The short version:
 
 ## Why this exists
 
-Deepgram can answer **"which spans sound like the same speaker?"** It cannot be
-trusted to answer **"who is this person?"** for public-facing civic records.
+Diarization providers can answer **"which spans sound like the same speaker?"**
+They cannot be trusted to answer **"who is this person?"** for public-facing
+civic records.
 
 The system therefore separates:
 
@@ -118,14 +119,56 @@ The relevant tables are introduced mainly by:
 
 The provider boundary lives in `internal/diarization`.
 
-Deepgram is currently the supported provider. `diarize-event` calls Deepgram's
-prerecorded endpoint with these query options:
+Two providers are supported: Deepgram (default) and pyannoteAI. They share
+the `diarization.Provider` interface, so downstream storage, evidence
+extraction, and the review UI are provider-agnostic.
+
+### Deepgram
+
+`diarize-event --provider deepgram` calls Deepgram's prerecorded endpoint with:
 
 - `diarize=true`
 - `punctuate=true`
 - `utterances=true`
 - `detect_entities=true`
 - `model=<model>`, default `nova-3`
+
+Deepgram's diarizer is prone to **false-merge across long silences** —
+unrelated speakers that share rough acoustic similarity sometimes collapse
+into a single cluster after a multi-minute gap. We saw this on
+`event_id=2026021094` where four distinct testifiers landed in `SPEAKER_58`.
+That hearing motivated the pyannoteAI integration; reach for pyannoteAI
+when speaker fidelity matters more than ASR quality.
+
+### pyannoteAI
+
+`diarize-event --provider pyannoteai` (model `precision-2`) submits an async
+job to `https://api.pyannote.ai/v1/diarize` and polls `/v1/jobs/{id}` every
+5s. Wall-clock is typically 15–30 min for a 1–2 hour hearing.
+
+By default the job is requested with `transcription=true` and ASR backend
+`faster-whisper-large-v3-turbo` so the response includes word- and
+turn-level transcripts already aligned to clusters. Each turn becomes one
+`Segment` with `Text` populated, which feeds the same evidence-extraction
+pipeline used for Deepgram. Set `--transcription=false` for diarize-only.
+
+ASR backends:
+
+- `faster-whisper-large-v3-turbo` (default) — multilingual, stronger on
+  proper nouns and procedural language; better for legislator/testifier
+  names.
+- `parakeet-tdt-0.6b-v3` — English-only, faster, weaker on proper nouns.
+
+Caveats:
+
+- Only `AudioInput.URL` is supported (no direct byte uploads). The TVW/
+  Invintus source URL is publicly fetchable, so `--use-source-url=true`
+  works as-is. MP4 video URLs are accepted even though pyannoteAI's docs
+  only enumerate audio formats — they decode with ffmpeg server-side.
+- Result JSON expires 24 hours after job completion; `diarize-event`
+  persists `Raw` to `data/processed/diarization/...` so re-merge stays
+  possible.
+- pyannoteAI requires a work-domain email at signup (no Gmail/Outlook).
 
 The normalized provider-neutral result contains:
 
@@ -154,11 +197,13 @@ DEEPGRAM_API_KEY=... \
 Useful flags:
 
 ```txt
---provider deepgram              # currently the only supported provider
---model nova-3                   # Deepgram model; default nova-3
+--provider deepgram              # or pyannoteai
+--model nova-3                   # default; auto-switches to precision-2 for pyannoteai
 --out-dir data/processed/diarization
 --use-source-url=true            # default: send provider the TVW/Invintus URL
---api-key ...                    # defaults to DEEPGRAM_API_KEY
+--api-key ...                    # defaults to DEEPGRAM_API_KEY or PYANNOTEAI_API_KEY
+--transcription=true             # pyannoteai only: bundle ASR with diarization
+--asr-model faster-whisper-large-v3-turbo  # pyannoteai only ASR backend
 --dsn ...                        # defaults to WADD_DSN or local dev DSN
 ```
 
@@ -201,17 +246,6 @@ Useful flags:
 
 `diarize-pending` retries transient failures. Each event gets its own
 `diarization_job`; failed jobs preserve the error for debugging.
-
-### Re-merge stored raw results
-
-If merge behavior changes, reprocess stored Deepgram JSON without recalling the
-provider:
-
-```sh
-go run ./cmd/wa-dd merge-segments --event-id <tvw_event_id>
-```
-
-Use `--dry-run` to inspect how many merged segments would be written.
 
 ## Extracting speaker evidence
 
@@ -378,12 +412,6 @@ usable URL exists, re-run TVW ingest for the hearing and inspect `tvw_event` and
 Run `audio-cache --event-id ...` and retry `diarize-event --use-source-url=false`.
 This uploads local normalized WAV bytes instead of asking Deepgram to fetch the
 remote URL.
-
-### Too many tiny transcript blocks
-
-Run `merge-segments` for the event/job. The current parser already merges
-same-speaker runs, but `merge-segments` is useful after parser changes or when
-old raw results were stored before a merge fix.
 
 ### Bad speaker candidate
 

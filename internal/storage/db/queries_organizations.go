@@ -194,6 +194,20 @@ type OrganizationPublicContext struct {
 	Evidence        []string
 }
 
+type OrganizationPersonAffiliation struct {
+	PersonID            int64
+	PersonName          string
+	RelationshipType    string
+	RoleTitle           string
+	SourceKind          string
+	SourceLabel         string
+	RawOrganizationName string
+	RecordYears         string
+	SourceCount         int
+	SourceRecordID      int64
+	Confidence          string
+}
+
 // GetOrganizationAppearances returns every (agenda_item, org) appearance
 // where at least one testifier from that org signed in.
 func (s *Store) GetOrganizationAppearances(ctx context.Context, organizationID int64) ([]OrganizationAppearance, error) {
@@ -242,6 +256,70 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
 		}
 		if billNumber != nil {
 			a.BillNumber = *billNumber
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetOrganizationPersonAffiliations(ctx context.Context, organizationID int64) ([]OrganizationPersonAffiliation, error) {
+	const q = `
+SELECT COALESCE(p.id, 0) AS person_id,
+       COALESCE(NULLIF(p.display_name, ''), NULLIF(poa.raw_person_name, ''), 'Unknown person') AS person_name,
+       poa.relationship_type::text,
+       COALESCE(NULLIF(poa.role_title, ''), '') AS role_title,
+       poa.source_kind::text,
+       CASE poa.source_kind::text
+         WHEN 'csi_testifier' THEN 'Committee Sign In'
+         WHEN 'pdc_lobbyist_employment' THEN 'PDC lobbyist employment'
+         WHEN 'pdc_lobbyist_compensation' THEN 'PDC lobbyist compensation'
+         WHEN 'pdc_contribution' THEN 'PDC contribution'
+         WHEN 'webs_vendor_contact' THEN 'WEBS vendor contact'
+         WHEN 'deepgram_speaker' THEN 'Transcript speaker'
+         WHEN 'legislator_roster' THEN 'Legislator roster'
+         ELSE poa.source_kind::text
+       END AS source_label,
+       COALESCE(NULLIF(poa.raw_organization_name, ''), '') AS raw_organization_name,
+       COALESCE(
+         array_to_string(
+           array_agg(DISTINCT poa.record_year ORDER BY poa.record_year DESC)
+             FILTER (WHERE poa.record_year IS NOT NULL),
+           ', '
+         ),
+         ''
+       ) AS record_years,
+       COUNT(*)::int AS source_count,
+       MAX(COALESCE(poa.source_record_id, 0)) AS source_record_id,
+       CASE
+         WHEN bool_or(poa.confidence = 'confirmed') THEN 'confirmed'
+         WHEN bool_or(poa.confidence = 'probable') THEN 'probable'
+         WHEN bool_or(poa.confidence = 'possible') THEN 'possible'
+         ELSE 'unmatched'
+       END AS confidence
+  FROM person_organization_affiliation poa
+  LEFT JOIN person p ON p.id = poa.person_id
+ WHERE poa.organization_id = $1
+ GROUP BY p.id, p.display_name, poa.raw_person_name, poa.relationship_type,
+          poa.role_title, poa.source_kind, poa.raw_organization_name
+ ORDER BY CASE poa.relationship_type::text
+            WHEN 'lobbyist_for' THEN 0
+            WHEN 'testified_for' THEN 1
+            WHEN 'signed_in_for' THEN 2
+            ELSE 3
+          END,
+          person_name;`
+	rows, err := s.Pool.Query(ctx, q, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("organization person affiliations: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationPersonAffiliation{}
+	for rows.Next() {
+		var a OrganizationPersonAffiliation
+		if err := rows.Scan(&a.PersonID, &a.PersonName, &a.RelationshipType, &a.RoleTitle,
+			&a.SourceKind, &a.SourceLabel, &a.RawOrganizationName, &a.RecordYears,
+			&a.SourceCount, &a.SourceRecordID, &a.Confidence); err != nil {
+			return nil, fmt.Errorf("scan organization person affiliation: %w", err)
 		}
 		out = append(out, a)
 	}

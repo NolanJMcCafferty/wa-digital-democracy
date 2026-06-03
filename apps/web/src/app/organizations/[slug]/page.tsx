@@ -1,5 +1,10 @@
 import { notFound } from "next/navigation";
-import { listOrganizations, loadOrganizationPage, type HearingPage } from "@/lib/api";
+import {
+  listOrganizations,
+  loadOrganizationPage,
+  type HearingPage,
+  type OrganizationPersonAffiliation,
+} from "@/lib/api";
 import type { Position } from "@/lib/pageTypes";
 import {
   HearingSearchResults,
@@ -56,6 +61,21 @@ export default async function OrganizationPage({
         <Metric label="Appearances" value={org.appearances.length.toLocaleString()} />
         <Metric label="Public records" value={org.contexts.length.toLocaleString()} />
       </section>
+
+      {org.personAffiliations.length > 0 ? (
+        <section aria-labelledby="people-heading" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="people-heading" className="text-xl font-semibold text-stone-900">
+              Affiliated people
+            </h2>
+            <p className="text-sm text-stone-600">
+              Source-backed person-organization relationships from testimony
+              sign-ins and public records.
+            </p>
+          </div>
+          <AffiliatedPeopleTable people={org.personAffiliations} />
+        </section>
+      ) : null}
 
       {org.contexts.length > 0 ? (
         <section aria-labelledby="context-heading" className="space-y-4">
@@ -141,6 +161,66 @@ export default async function OrganizationPage({
   );
 }
 
+function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliation[] }) {
+  return (
+    <div className="overflow-x-auto rounded border border-stone-300 bg-white">
+      <table className="min-w-full divide-y divide-stone-200 text-sm">
+        <thead className="bg-stone-50 text-left text-xs uppercase tracking-wider text-stone-500">
+          <tr>
+            <th scope="col" className="px-4 py-3 font-medium">
+              Person
+            </th>
+            <th scope="col" className="px-4 py-3 font-medium">
+              Relationship
+            </th>
+            <th scope="col" className="px-4 py-3 font-medium">
+              Source
+            </th>
+            <th scope="col" className="px-4 py-3 font-medium">
+              Years
+            </th>
+            <th scope="col" className="px-4 py-3 text-right font-medium">
+              Records
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-stone-200">
+          {people.map((person, idx) => (
+            <tr key={`${person.personId ?? "raw"}-${person.relationshipType}-${person.sourceKind}-${idx}`}>
+              <td className="px-4 py-3 align-top">
+                <div className="font-medium text-stone-900">{person.personName}</div>
+                {person.roleTitle ? (
+                  <div className="mt-1 text-xs text-stone-500">{person.roleTitle}</div>
+                ) : null}
+              </td>
+              <td className="px-4 py-3 align-top">
+                <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
+                {person.rawOrganizationName ? (
+                  <div className="mt-1 text-xs text-stone-500">
+                    As listed: {person.rawOrganizationName}
+                  </div>
+                ) : null}
+              </td>
+              <td className="px-4 py-3 align-top">
+                <div className="text-stone-800">{person.sourceLabel}</div>
+                <span className="mt-1 inline-flex rounded border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs text-stone-600">
+                  {confidenceLabel(person.confidence)}
+                </span>
+              </td>
+              <td className="px-4 py-3 align-top text-stone-700">
+                {person.recordYears || "-"}
+              </td>
+              <td className="px-4 py-3 text-right align-top text-stone-700">
+                {person.sourceCount.toLocaleString()}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-stone-300 bg-stone-50 p-3">
@@ -148,6 +228,46 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-semibold text-stone-900">{value}</div>
     </div>
   );
+}
+
+function relationshipLabel(value: string): string {
+  switch (value) {
+    case "lobbyist_for":
+      return "Lobbyist";
+    case "testified_for":
+      return "Testified";
+    case "signed_in_for":
+      return "Signed in";
+    case "lobbying_firm_for":
+      return "Lobbying firm";
+    case "paid_lobbying_for":
+      return "Paid lobbying";
+    case "employed_by":
+      return "Employed by";
+    case "vendor_contact_for":
+      return "Vendor contact";
+    case "campaign_contributor_affiliation":
+      return "Contributor affiliation";
+    case "spoke_for_org":
+      return "Spoke for organization";
+    case "reviewed_manual":
+      return "Reviewed affiliation";
+    default:
+      return value.replaceAll("_", " ");
+  }
+}
+
+function confidenceLabel(value: string): string {
+  switch (value) {
+    case "confirmed":
+      return "Confirmed";
+    case "probable":
+      return "Probable";
+    case "possible":
+      return "Possible";
+    default:
+      return "Unmatched";
+  }
 }
 
 function contextLabel(contextType: string): string {

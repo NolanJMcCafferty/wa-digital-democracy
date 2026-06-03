@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/diarization"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/csi"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
@@ -107,7 +107,7 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 }
 
 type liveIngestionTarget struct {
-	Demo    *domain.BillAgendaTarget
+	Demo    *common.BillAgendaTarget
 	Hearing db.HearingForDiscovery
 }
 
@@ -121,7 +121,7 @@ func findLiveIngestionTarget(
 	biennium string,
 ) liveIngestionTarget {
 	t.Helper()
-	candidates := []domain.BillKey{
+	candidates := []common.BillKey{
 		{Biennium: biennium, Prefix: "HB", Number: 2747},
 		{Biennium: biennium, Prefix: "HB", Number: 1501},
 		{Biennium: biennium, Prefix: "HB", Number: 1234},
@@ -148,10 +148,10 @@ func tryLiveIngestionTarget(
 	lwsClient *lws.Client,
 	csiClient *csi.Client,
 	tvwClient *tvw.Client,
-	bill domain.BillKey,
+	bill common.BillKey,
 ) (liveIngestionTarget, bool, string) {
 	t.Helper()
-	metadataDemo := &domain.BillAgendaTarget{Bill: bill}
+	metadataDemo := &common.BillAgendaTarget{Bill: bill}
 	metadataPipeline := &jobs.Pipeline{Store: store, LWS: lwsClient, Demo: metadataDemo}
 	if err := metadataPipeline.RunMetadataOnly(ctx, func(string) {}, jobs.NewIDs()); err != nil {
 		return liveIngestionTarget{}, false, err.Error()
@@ -187,20 +187,20 @@ func tryLiveIngestionTarget(
 		}
 		return liveIngestionTarget{
 			Hearing: h,
-			Demo: &domain.BillAgendaTarget{
+			Demo: &common.BillAgendaTarget{
 				Bill: bill,
-				Committee: domain.CommitteeRef{
+				Committee: common.CommitteeRef{
 					Chamber: h.Chamber,
 					Acronym: h.CommitteeAcronym,
 					CSIID:   res.CSICommitteeID,
 				},
-				AgendaItem: domain.AgendaItemRef{
+				AgendaItem: common.AgendaItemRef{
 					CSIMeetingFamilyID:    res.CSIMeetingFamilyID,
 					CSIAgendaItemFamilyID: res.CSIAgendaItemFamilyID,
 					CSIAgendaItemID:       res.CSIAgendaItemID,
 					Label:                 res.AgendaItemLabel,
 				},
-				TVW: domain.TVWRef{EventID: res.TVWEventID},
+				TVW: common.TVWRef{EventID: res.TVWEventID},
 			},
 		}, true, ""
 	}
@@ -365,7 +365,7 @@ SELECT j.status::text,
 	}
 }
 
-func hearingsForBill(ctx context.Context, store *db.Store, bill domain.BillKey) ([]db.HearingForDiscovery, error) {
+func hearingsForBill(ctx context.Context, store *db.Store, bill common.BillKey) ([]db.HearingForDiscovery, error) {
 	const q = `
 SELECT h.id, b.id, b.prefix, b.number,
        h.committee_name, COALESCE(h.committee_acronym, ''), h.chamber,
@@ -430,7 +430,7 @@ func cleanupLiveTargetRows(t *testing.T, store *db.Store, target liveIngestionTa
 	}
 }
 
-func cleanupLiveBillRows(t *testing.T, store *db.Store, bill domain.BillKey) {
+func cleanupLiveBillRows(t *testing.T, store *db.Store, bill common.BillKey) {
 	t.Helper()
 	ctx := context.Background()
 	stmts := []struct {

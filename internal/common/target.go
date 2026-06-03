@@ -1,6 +1,5 @@
-// Package domain holds shared civic-domain value objects used across
-// ingestion, storage-backed lookup, and page assembly.
-package domain
+// Package common holds small shared civic value objects used across packages.
+package common
 
 import "fmt"
 

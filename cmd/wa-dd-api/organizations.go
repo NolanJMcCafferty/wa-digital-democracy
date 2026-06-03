@@ -85,16 +85,30 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		MatchConfidence string   `json:"match_confidence"`
 		Evidence        []string `json:"evidence"`
 	}
+	type personAffiliation struct {
+		PersonID            int64  `json:"person_id,omitempty"`
+		PersonName          string `json:"person_name"`
+		RelationshipType    string `json:"relationship_type"`
+		RoleTitle           string `json:"role_title,omitempty"`
+		SourceKind          string `json:"source_kind"`
+		SourceLabel         string `json:"source_label"`
+		RawOrganizationName string `json:"raw_organization_name,omitempty"`
+		RecordYears         string `json:"record_years,omitempty"`
+		SourceCount         int    `json:"source_count"`
+		SourceRecordID      int64  `json:"source_record_id,omitempty"`
+		Confidence          string `json:"confidence"`
+	}
 	type body struct {
-		Slug            string          `json:"slug"`
-		CanonicalName   string          `json:"canonical_name"`
-		Aliases         []string        `json:"aliases"`
-		MatchConfidence string          `json:"match_confidence"`
-		MatchNotes      string          `json:"match_notes,omitempty"`
-		TestifierCount  int             `json:"testifier_count"`
-		Positions       map[string]int  `json:"positions"`
-		Appearances     []appearance    `json:"appearances"`
-		Contexts        []publicContext `json:"contexts"`
+		Slug               string              `json:"slug"`
+		CanonicalName      string              `json:"canonical_name"`
+		Aliases            []string            `json:"aliases"`
+		MatchConfidence    string              `json:"match_confidence"`
+		MatchNotes         string              `json:"match_notes,omitempty"`
+		TestifierCount     int                 `json:"testifier_count"`
+		Positions          map[string]int      `json:"positions"`
+		Appearances        []appearance        `json:"appearances"`
+		Contexts           []publicContext     `json:"contexts"`
+		PersonAffiliations []personAffiliation `json:"person_affiliations"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		slug := chi.URLParam(req, "slug")
@@ -120,6 +134,11 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 		contextsRaw, err := store.GetOrganizationPublicContexts(req.Context(), match.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		affiliationsRaw, err := store.GetOrganizationPersonAffiliations(req.Context(), match.ID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -160,6 +179,22 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				Evidence:        evidence,
 			})
 		}
+		affiliations := make([]personAffiliation, 0, len(affiliationsRaw))
+		for _, a := range affiliationsRaw {
+			affiliations = append(affiliations, personAffiliation{
+				PersonID:            a.PersonID,
+				PersonName:          a.PersonName,
+				RelationshipType:    a.RelationshipType,
+				RoleTitle:           a.RoleTitle,
+				SourceKind:          a.SourceKind,
+				SourceLabel:         a.SourceLabel,
+				RawOrganizationName: a.RawOrganizationName,
+				RecordYears:         a.RecordYears,
+				SourceCount:         a.SourceCount,
+				SourceRecordID:      a.SourceRecordID,
+				Confidence:          a.Confidence,
+			})
+		}
 		aliases := match.Aliases
 		if aliases == nil {
 			aliases = []string{}
@@ -175,8 +210,9 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				"Pro": match.ProCount, "Con": match.ConCount,
 				"Other": match.OtherCount, "Unknown": match.UnknownCount,
 			},
-			Appearances: apps,
-			Contexts:    contexts,
+			Appearances:        apps,
+			Contexts:           contexts,
+			PersonAffiliations: affiliations,
 		})
 	}
 }

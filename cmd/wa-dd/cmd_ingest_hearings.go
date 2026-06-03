@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
-
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/pageassembly"
 )
 
 func init() {
@@ -66,7 +64,7 @@ func runIngestHearings(args []string) int {
 	failures := 0
 
 	for i, r := range rows {
-		demo, err := pageassembly.LookupBillAgendaTargetByAgendaItem(ctx, deps.store, r.CSIAgendaItemID)
+		demo, err := deps.store.LookupBillAgendaTargetByAgendaItem(ctx, r.CSIAgendaItemID)
 		if err != nil {
 			failures++
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s lookup FAIL: %v\n", i+1, len(rows), r.CSIAgendaItemID, err)

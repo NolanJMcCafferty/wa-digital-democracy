@@ -1,4 +1,4 @@
-package pageassembly
+package db
 
 import (
 	"context"
@@ -7,14 +7,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 )
 
-// ErrBillNotFound signals the API layer that no ingested bill+hearing was
-// found for the requested (biennium, prefix, number). The handler maps
-// this to HTTP 404; everything else propagates as 500.
-var ErrBillNotFound = errors.New("pageassembly: bill not ingested")
+// ErrBillNotFound signals that no ingested bill or bill/agenda target was
+// found for the requested lookup.
+var ErrBillNotFound = errors.New("db: bill not ingested")
 
 // LookupBillAgendaTarget reconstructs a BillAgendaTarget for a bill by joining
 // against the agenda_item + hearing tables the ingestion pipeline populated.
@@ -23,12 +21,11 @@ var ErrBillNotFound = errors.New("pageassembly: bill not ingested")
 // referral), the most recent hearing wins. That's the v1 default; if a
 // page renders the wrong chamber's hearing, add a `?hearing=<chamber>`
 // query param and route it through here.
-func LookupBillAgendaTarget(
+func (s *Store) LookupBillAgendaTarget(
 	ctx context.Context,
-	store *db.Store,
 	biennium, prefix string,
 	number int,
-) (*domain.BillAgendaTarget, error) {
+) (*common.BillAgendaTarget, error) {
 	const q = `
 SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
        a.csi_agenda_item_family_id, a.label,
@@ -45,7 +42,7 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 		csiAgendaItemID, csiMeetingFamilyID, csiAgendaItemFamilyID string
 		label, tvwEventID, committeeAcronym, chamber               string
 	)
-	err := store.Pool.QueryRow(ctx, q, biennium, prefix, number).Scan(
+	err := s.Pool.QueryRow(ctx, q, biennium, prefix, number).Scan(
 		&csiAgendaItemID, &csiMeetingFamilyID, &csiAgendaItemFamilyID,
 		&label, &tvwEventID, &committeeAcronym, &chamber,
 	)
@@ -56,9 +53,9 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 		return nil, fmt.Errorf("lookup bill agenda target: %w", err)
 	}
 
-	demo := &domain.BillAgendaTarget{
-		Bill:      domain.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
-		Committee: domain.CommitteeRef{Chamber: chamber},
+	demo := &common.BillAgendaTarget{
+		Bill:      common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
+		Committee: common.CommitteeRef{Chamber: chamber},
 	}
 	demo.Committee.Acronym = committeeAcronym
 	demo.AgendaItem.CSIAgendaItemID = csiAgendaItemID
@@ -73,12 +70,11 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 // to the bill, ordered most-recent-first. The bill-detail page uses this
 // to render every hearing (House referral, Senate referral, work session,
 // etc.) instead of just the latest one.
-func LookupBillAgendaTargetsForBill(
+func (s *Store) LookupBillAgendaTargetsForBill(
 	ctx context.Context,
-	store *db.Store,
 	biennium, prefix string,
 	number int,
-) ([]*domain.BillAgendaTarget, error) {
+) ([]*common.BillAgendaTarget, error) {
 	const q = `
 SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
        a.csi_agenda_item_family_id, a.label,
@@ -90,12 +86,12 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
   JOIN hearing     h ON h.id = a.hearing_id
  WHERE b.biennium = $1 AND b.prefix = $2 AND b.number = $3
  ORDER BY h.meeting_datetime DESC;`
-	rows, err := store.Pool.Query(ctx, q, biennium, prefix, number)
+	rows, err := s.Pool.Query(ctx, q, biennium, prefix, number)
 	if err != nil {
 		return nil, fmt.Errorf("lookup bill agenda targets: %w", err)
 	}
 	defer rows.Close()
-	var out []*domain.BillAgendaTarget
+	var out []*common.BillAgendaTarget
 	for rows.Next() {
 		var (
 			csiAgendaItemID, csiMeetingFamilyID, csiAgendaItemFamilyID string
@@ -107,9 +103,9 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 		); err != nil {
 			return nil, fmt.Errorf("scan bill agenda target: %w", err)
 		}
-		demo := &domain.BillAgendaTarget{
-			Bill:      domain.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
-			Committee: domain.CommitteeRef{Chamber: chamber},
+		demo := &common.BillAgendaTarget{
+			Bill:      common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
+			Committee: common.CommitteeRef{Chamber: chamber},
 		}
 		demo.Committee.Acronym = committeeAcronym
 		demo.AgendaItem.CSIAgendaItemID = csiAgendaItemID
@@ -128,11 +124,10 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 // LookupBillAgendaTargetByAgendaItem reconstructs a BillAgendaTarget by pivoting
 // on the CSI agenda item ID. Hearing ingestion and the hearing-detail API use
 // this to build per-agenda-item sections without first knowing bill IDs.
-func LookupBillAgendaTargetByAgendaItem(
+func (s *Store) LookupBillAgendaTargetByAgendaItem(
 	ctx context.Context,
-	store *db.Store,
 	csiAgendaItemID string,
-) (*domain.BillAgendaTarget, error) {
+) (*common.BillAgendaTarget, error) {
 	const q = `
 SELECT b.biennium, b.prefix, b.number,
        a.csi_agenda_item_id, a.csi_meeting_family_id,
@@ -151,7 +146,7 @@ SELECT b.biennium, b.prefix, b.number,
 		gotCSIAgendaItemID, csiMeetingFamilyID, csiAgendaItemFamilyID string
 		label, tvwEventID, committeeAcronym, chamber                  string
 	)
-	err := store.Pool.QueryRow(ctx, q, csiAgendaItemID).Scan(
+	err := s.Pool.QueryRow(ctx, q, csiAgendaItemID).Scan(
 		&biennium, &prefix, &number,
 		&gotCSIAgendaItemID, &csiMeetingFamilyID, &csiAgendaItemFamilyID,
 		&label, &tvwEventID, &committeeAcronym, &chamber,
@@ -163,9 +158,9 @@ SELECT b.biennium, b.prefix, b.number,
 		return nil, fmt.Errorf("lookup bill agenda target by agenda item: %w", err)
 	}
 
-	demo := &domain.BillAgendaTarget{
-		Bill:      domain.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
-		Committee: domain.CommitteeRef{Chamber: chamber},
+	demo := &common.BillAgendaTarget{
+		Bill:      common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
+		Committee: common.CommitteeRef{Chamber: chamber},
 	}
 	demo.Committee.Acronym = committeeAcronym
 	demo.AgendaItem.CSIAgendaItemID = gotCSIAgendaItemID

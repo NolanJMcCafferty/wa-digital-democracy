@@ -104,10 +104,9 @@ apps/
 internal/
   candidate/              # candidate hearing finder
   diarization/            # speaker diarization/evidence helpers
-  domain/                 # shared civic-domain value objects
+  common/                 # shared civic value objects
   entitymatch/            # organization/entity matching logic
   jobs/                   # ingestion and enrichment pipeline steps
-  pageassembly/           # API response assemblers
   sources/                # external source connectors
   sources/httpx/          # shared HTTP retry/rate-limit/raw sink hook
   storage/db/             # pgx store, source records, query helpers
@@ -115,8 +114,6 @@ internal/
 db/
   fixtures/               # deterministic test/e2e fixture data
   migrations/             # goose-style SQL migrations
-config/
-  issue_keywords.yml
 infra/
   docker-compose.yml      # local services
   railway/                # Railway bootstrap config and deployment docs

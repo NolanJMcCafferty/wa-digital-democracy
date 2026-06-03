@@ -13,7 +13,7 @@ import (
 func init() {
 	register(Command{
 		Name:     "daily",
-		Synopsis: "Run the hosted nightly chain: roster, session, discovery, hearings",
+		Synopsis: "Run the hosted nightly chain: roster, session, hearings, PDC",
 		Run:      runDaily,
 	})
 }
@@ -49,6 +49,7 @@ func runDaily(args []string) int {
 	defer release()
 
 	base := []string{"--biennium", *biennium, "--dsn", *dsn, "--raw-dir", *rawDir, "--out-dir", *outDir}
+	pdcBase := []string{"--dsn", *dsn, "--raw-dir", *rawDir}
 	steps := []struct {
 		name string
 		code func([]string) int
@@ -83,6 +84,11 @@ func runDaily(args []string) int {
 				"--rate", fmt.Sprintf("%g", *rateLimit),
 				"--limit", strconv.Itoa(*hearingLimit),
 			),
+		},
+		{
+			name: "ingest-pdc-employers",
+			code: runIngestPDCEmployers,
+			args: append(append([]string{}, pdcBase...), "--rate", fmt.Sprintf("%g", *rateLimit)),
 		},
 	}
 	for _, step := range steps {

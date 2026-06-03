@@ -238,6 +238,21 @@ export type OrganizationPage = OrganizationListEntry & {
     testifierCount: number;
   }>;
   contexts: PublicRecordContext[];
+  personAffiliations: OrganizationPersonAffiliation[];
+};
+
+export type OrganizationPersonAffiliation = {
+  personId?: number;
+  personName: string;
+  relationshipType: string;
+  roleTitle?: string;
+  sourceKind: string;
+  sourceLabel: string;
+  rawOrganizationName?: string;
+  recordYears?: string;
+  sourceCount: number;
+  sourceRecordId?: number;
+  confidence: OrganizationSummary["match_confidence"];
 };
 
 export type PublicRecordContext = {
@@ -818,6 +833,19 @@ type orgDetailResponse = orgListItem & {
     match_confidence: OrganizationSummary["match_confidence"];
     evidence?: string[];
   }>;
+  person_affiliations: Array<{
+    person_id?: number;
+    person_name: string;
+    relationship_type: string;
+    role_title?: string;
+    source_kind: string;
+    source_label: string;
+    raw_organization_name?: string;
+    record_years?: string;
+    source_count: number;
+    source_record_id?: number;
+    confidence: OrganizationSummary["match_confidence"];
+  }>;
 };
 
 function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
@@ -885,6 +913,19 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       url: c.url,
       sourceRecordId: c.source_record_id,
       evidence: c.evidence ?? [],
+    })),
+    personAffiliations: (detail.person_affiliations ?? []).map((a) => ({
+      personId: a.person_id,
+      personName: a.person_name,
+      relationshipType: a.relationship_type,
+      roleTitle: a.role_title,
+      sourceKind: a.source_kind,
+      sourceLabel: a.source_label,
+      rawOrganizationName: a.raw_organization_name,
+      recordYears: a.record_years,
+      sourceCount: a.source_count,
+      sourceRecordId: a.source_record_id,
+      confidence: a.confidence,
     })),
   };
 }

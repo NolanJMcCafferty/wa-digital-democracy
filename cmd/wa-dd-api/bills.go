@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/pageassembly"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
@@ -164,9 +163,9 @@ func billPageHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 
-		page, err := pageassembly.BuildBillDetailResponse(req.Context(), store, biennium, prefix, number)
+		page, err := BuildBillDetailResponse(req.Context(), store, biennium, prefix, number)
 		if err != nil {
-			if errors.Is(err, pageassembly.ErrBillNotFound) {
+			if errors.Is(err, db.ErrBillNotFound) {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not ingested"})
 				return
 			}

@@ -37,14 +37,6 @@ func init() {
 			},
 		})
 	}
-	register(Command{
-		Name:     "inspect-candidate",
-		Synopsis: "Print joined source state for a single candidate (not yet implemented)",
-		Run: func(args []string) int {
-			runStub("inspect-candidate", args, "phase 3")
-			return 64
-		},
-	})
 }
 
 func main() {

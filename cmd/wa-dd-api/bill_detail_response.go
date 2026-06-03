@@ -1,18 +1,16 @@
-// Package pageassembly assembles source-linked API response payloads from Postgres state.
-package pageassembly
+package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/domain"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/common"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
@@ -137,18 +135,18 @@ func BuildBillDetailResponse(
 	biennium, prefix string,
 	number int,
 ) (*BillDetailResponse, error) {
-	demo := &domain.BillAgendaTarget{
-		Bill: domain.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
+	demo := &common.BillAgendaTarget{
+		Bill: common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
 	}
 	bill, status, err := loadBill(ctx, store, demo)
 	if err != nil {
-		if errors.Is(err, ErrBillNotFound) {
+		if errors.Is(err, db.ErrBillNotFound) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("bill: %w", err)
 	}
 
-	demos, err := LookupBillAgendaTargetsForBill(ctx, store, biennium, prefix, number)
+	demos, err := store.LookupBillAgendaTargetsForBill(ctx, biennium, prefix, number)
 	if err != nil {
 		return nil, fmt.Errorf("hearing lookup: %w", err)
 	}
@@ -179,7 +177,7 @@ func BuildBillDetailResponse(
 // BuildAgendaItemSection returns the page section tied to one agenda_item. The
 // hearing-detail handler reuses this for each agenda item rendered under a
 // committee hearing.
-func BuildAgendaItemSection(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (*AgendaItemSection, error) {
+func BuildAgendaItemSection(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (*AgendaItemSection, error) {
 	hearing, err := loadHearingAndAgenda(ctx, store, demo)
 	if err != nil {
 		return nil, fmt.Errorf("hearing: %w", err)
@@ -204,7 +202,7 @@ func BuildAgendaItemSection(ctx context.Context, store *db.Store, demo *domain.B
 	}, nil
 }
 
-func loadBill(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (BillSummary, BillStatus, error) {
+func loadBill(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (BillSummary, BillStatus, error) {
 	const q = `
 SELECT id, biennium, bill_number, title, description, chamber_origin,
        current_status, status_date, official_url
@@ -224,7 +222,7 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		&currentStatus, &statusDate, &officialURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return BillSummary{}, BillStatus{}, fmt.Errorf("%w: %s in %s", ErrBillNotFound, demo.Bill.ID(), demo.Bill.Biennium)
+		return BillSummary{}, BillStatus{}, fmt.Errorf("%w: %s in %s", db.ErrBillNotFound, demo.Bill.ID(), demo.Bill.Biennium)
 	}
 	if err != nil {
 		return BillSummary{}, BillStatus{}, err
@@ -288,7 +286,7 @@ SELECT action_date, history_line FROM bill_status_change
 	return bill, status, rows2.Err()
 }
 
-func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (HearingSummary, error) {
+func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (HearingSummary, error) {
 	const q = `
 SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
        h.location, h.official_agenda_url, h.tvw_url, h.tvw_event_id,
@@ -331,7 +329,7 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 	}, nil
 }
 
-func loadTestifiers(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) ([]TestifierSummary, error) {
+func loadTestifiers(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) ([]TestifierSummary, error) {
 	const q = `
 SELECT t.raw_name, t.raw_organization, t.position, t.testified,
        t.time_signed_in, t.normalized_org_id
@@ -366,7 +364,7 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 	return out, rows.Err()
 }
 
-func loadTranscript(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) (*TranscriptSection, error) {
+func loadTranscript(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (*TranscriptSection, error) {
 	// Caption URL + agenda-bound segment range.
 	const headQ = `
 SELECT te.caption_url,
@@ -447,7 +445,7 @@ SELECT ts.start_ms, ts.end_ms, ts.text, ts.speaker_label, ts.speaker_confidence:
 	return tr, rows.Err()
 }
 
-func loadOrganizations(ctx context.Context, store *db.Store, demo *domain.BillAgendaTarget) ([]OrganizationSummary, error) {
+func loadOrganizations(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) ([]OrganizationSummary, error) {
 	const q = `
 SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_notes,
        MIN(t.position::text) AS pos,
@@ -493,7 +491,7 @@ func summarizeOrganizationContexts(contexts []db.OrganizationPublicContext) []st
 		label := ""
 		switch c.ContextType {
 		case "lobbying_registration":
-			label = "Lobbying record"
+			continue
 		case "state_contract":
 			label = "Contract record"
 		case "state_vendor":
@@ -602,16 +600,6 @@ func computeBillPageLimitations(page *BillDetailResponse) []string {
 		out = append(out, "Organization context section is empty — run populate-organizations and source-specific entity matching to surface reviewed organization records.")
 	}
 	return out
-}
-
-func legislatorPhotoURLs(lwsSponsorID string) (string, string) {
-	id := strings.TrimSpace(lwsSponsorID)
-	if id == "" {
-		return "", ""
-	}
-	escaped := url.PathEscape(id)
-	return "https://leg.wa.gov/memberphoto/" + escaped + ".jpg",
-		"https://leg.wa.gov/memberthumbnail/" + escaped + ".jpg"
 }
 
 func deref(s *string) string {

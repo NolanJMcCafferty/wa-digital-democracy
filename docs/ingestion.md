@@ -213,8 +213,8 @@ fetch the actual testimony, video captions, and downstream derivatives.
 
 - Reads `(csi_agenda_item_id, biennium, bill_prefix, bill_number)` rows
   via `Store.ListDiscoveredAgendaItems`.
-- For each row, calls `pageassembly.LookupBillAgendaTargetByAgendaItem` to
-  rebuild a `*domain.BillAgendaTarget` from the DB (no YAML parsing).
+- For each row, calls `Store.LookupBillAgendaTargetByAgendaItem` to
+  rebuild a `*common.BillAgendaTarget` from the DB (no YAML parsing).
 - Calls `ingestOne`, which runs `Pipeline.Run`'s 6 ingestion steps.
   Page JSON is assembled later on demand by `wa-dd-api`; this pass no
   longer writes generated page snapshots.
@@ -304,7 +304,7 @@ for the whole chain; if another daily run is active, the new run exits cleanly.
 operator work through Make:
 
 ```makefile
-daily: ingest-legislators ingest-session ingest-hearings
+daily: ingest-legislators ingest-session ingest-hearings ingest-pdc-employers
 ```
 
 The order matters when fresh:
@@ -321,6 +321,11 @@ The order matters when fresh:
 4. `ingest-hearings` runs the full pipeline against discovered agenda
    items. `--hearing-limit` applies to both discovery and hearing ingest
    in `wa-dd daily` for smoke tests.
+5. `ingest-pdc-employers` refreshes PDC lobbyist-employer registrations,
+   seeds `person` rows keyed by `pdc_lobbyist_id`, and records
+   `lobbyist_for` person-organization affiliations. This runs after
+   hearing ingest so affiliations can attach to organizations created from
+   CSI testimony in the same daily run.
 
 For an old-school local cron, one line still works:
 
@@ -418,11 +423,9 @@ All daily stages are safe to re-run. What changes:
 ## Optional source-context: PDC and IRS organization verification
 
 `wa-dd ingest-pdc-employers` ingests PDC lobbyist-employer registrations from
-DataWA/Socrata (`xhn7-64im`) into `pdc_employer`:
-
-```sh
-wa-dd ingest-pdc-employers --limit 1000
-```
+DataWA/Socrata (`xhn7-64im`) into `pdc_employer`, `person`, and
+`person_organization_affiliation`. It is part of `wa-dd daily`; run the
+command directly only for ad hoc backfills or repairs.
 
 `wa-dd ingest-irs-bmf-wa` ingests the IRS Business Master File Washington
 501(c) extract into `irs_bmf_organization`:

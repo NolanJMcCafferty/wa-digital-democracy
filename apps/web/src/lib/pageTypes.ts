@@ -1,5 +1,5 @@
-// Shared API response/domain types returned by the Go API. Keep these in sync
-// with cmd/wa-dd-api and internal/pageassembly response structs.
+// Shared API response types returned by the Go API. Keep these in sync with
+// cmd/wa-dd-api response structs.
 
 export type AgendaItemSection = {
   hearing: HearingSummary;
