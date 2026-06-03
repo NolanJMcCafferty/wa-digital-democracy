@@ -5,7 +5,7 @@ tracked in `~/Documents/main/wiki/politics/data-sources/0X *.md` files.
 
 | Package | Source | Current status | Notes |
 |---|---|---|---|
-| `httpx` | shared HTTP client | shipped | retry, per-host rate limit, RawSink hook |
+| `httpx` | shared HTTP client | shipped | retry, per-host rate limit |
 | `lws` | Washington Legislative Web Services (SOAP/XML) | shipped | live-tested via `-tags=integration` |
 | `csi` | Committee Sign In | shipped | read-only; never call /Testimony/Add |
 | `committeeschedules` | Committee Schedules ASP.NET app | shipped | search-form date params ignored without CSRF (Phase 0 finding) |

@@ -9,9 +9,8 @@ const STATUS_STYLE = {
   planned: "bg-stone-200 text-stone-700",
 };
 
-// Live status dashboard — always reflect the current source_record table
-// rather than a 60-second-stale snapshot. The cost is one extra API hit
-// per page render; the data is small and the page is rarely loaded.
+// Live source-status dashboard. The cost is one extra API hit per page render;
+// the data is small and the page is rarely loaded.
 export const revalidate = 0;
 
 export default async function SourcesPage() {
@@ -53,8 +52,8 @@ export default async function SourcesPage() {
           What “source-linked” means here
         </h2>
         <ul className="list-disc space-y-2 pl-5 text-sm text-stone-700">
-          <li>Official/public sources are fetched through clients that preserve raw responses.</li>
-          <li>Normalized facts point back to source records with URLs, timestamps, and content hashes.</li>
+          <li>Official/public sources are fetched through source-specific clients.</li>
+          <li>Normalized facts keep official URLs, stable source IDs, and raw fields where useful.</li>
           <li>Human-reviewed matches and inferred joins are labeled with confidence rather than presented as certainty.</li>
           <li>Money, lobbying, and contract records are shown as context, not proof of causation.</li>
         </ul>

@@ -251,7 +251,6 @@ export type OrganizationPersonAffiliation = {
   rawOrganizationName?: string;
   recordYears?: string;
   sourceCount: number;
-  sourceRecordId?: number;
   confidence: OrganizationSummary["match_confidence"];
 };
 
@@ -265,7 +264,6 @@ export type PublicRecordContext = {
   recordYear?: number;
   recordDate?: string;
   url?: string;
-  sourceRecordId?: number;
   evidence: string[];
 };
 
@@ -654,9 +652,7 @@ type sourceResponseItem = {
 };
 
 export async function listSourceSummaries(): Promise<SourceSummary[]> {
-  // Always refetch — this powers the /sources status dashboard which
-  // should reflect the current source_record table rather than a
-  // ~60s-old snapshot.
+  // Always refetch; the sources page is small and rarely loaded.
   const res = await apiFetch(`${API_BASE}/api/v1/sources`, {
     cache: "no-store",
   });
@@ -829,7 +825,6 @@ type orgDetailResponse = orgListItem & {
     record_year?: number;
     record_date?: string;
     url?: string;
-    source_record_id?: number;
     match_confidence: OrganizationSummary["match_confidence"];
     evidence?: string[];
   }>;
@@ -843,7 +838,6 @@ type orgDetailResponse = orgListItem & {
     raw_organization_name?: string;
     record_years?: string;
     source_count: number;
-    source_record_id?: number;
     confidence: OrganizationSummary["match_confidence"];
   }>;
 };
@@ -911,7 +905,6 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       recordYear: c.record_year,
       recordDate: c.record_date,
       url: c.url,
-      sourceRecordId: c.source_record_id,
       evidence: c.evidence ?? [],
     })),
     personAffiliations: (detail.person_affiliations ?? []).map((a) => ({
@@ -924,7 +917,6 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       rawOrganizationName: a.raw_organization_name,
       recordYears: a.record_years,
       sourceCount: a.source_count,
-      sourceRecordId: a.source_record_id,
       confidence: a.confidence,
     })),
   };

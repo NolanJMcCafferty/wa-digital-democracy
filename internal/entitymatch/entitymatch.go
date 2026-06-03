@@ -39,14 +39,13 @@ func NormalizedName(name string) string {
 // confidence and evidence. SourceRecordIDs point at the raw rows that produced
 // the candidate; they are not required to be exhaustive.
 type Candidate struct {
-	SourceKind      string   `json:"source_kind"`
-	SourceName      string   `json:"source_name"`
-	NormalizedName  string   `json:"normalized_name"`
-	OrganizationID  int64    `json:"organization_id"`
-	CanonicalName   string   `json:"canonical_name"`
-	Confidence      string   `json:"confidence"`
-	Evidence        []string `json:"evidence"`
-	SourceRecordIDs []int64  `json:"source_record_ids,omitempty"`
+	SourceKind     string   `json:"source_kind"`
+	SourceName     string   `json:"source_name"`
+	NormalizedName string   `json:"normalized_name"`
+	OrganizationID int64    `json:"organization_id"`
+	CanonicalName  string   `json:"canonical_name"`
+	Confidence     string   `json:"confidence"`
+	Evidence       []string `json:"evidence"`
 }
 
 // Decision stores an explicit human/system review decision for a candidate.

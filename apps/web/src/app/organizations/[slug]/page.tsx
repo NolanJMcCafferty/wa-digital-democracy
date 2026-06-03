@@ -90,7 +90,7 @@ export default async function OrganizationPage({
           </div>
           <ul className="divide-y divide-stone-300 rounded border border-stone-300 bg-white">
             {org.contexts.map((c, idx) => (
-              <li key={`${c.sourceKind}-${c.sourceRecordId ?? "x"}-${idx}`} className="p-4">
+              <li key={`${c.sourceKind}-${idx}`} className="p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">

@@ -81,7 +81,6 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		RecordYear      int      `json:"record_year,omitempty"`
 		RecordDate      string   `json:"record_date,omitempty"`
 		URL             string   `json:"url,omitempty"`
-		SourceRecordID  int64    `json:"source_record_id,omitempty"`
 		MatchConfidence string   `json:"match_confidence"`
 		Evidence        []string `json:"evidence"`
 	}
@@ -95,7 +94,6 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		RawOrganizationName string `json:"raw_organization_name,omitempty"`
 		RecordYears         string `json:"record_years,omitempty"`
 		SourceCount         int    `json:"source_count"`
-		SourceRecordID      int64  `json:"source_record_id,omitempty"`
 		Confidence          string `json:"confidence"`
 	}
 	type body struct {
@@ -174,7 +172,6 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				RecordYear:      c.RecordYear,
 				RecordDate:      c.RecordDate,
 				URL:             c.URL,
-				SourceRecordID:  c.SourceRecordID,
 				MatchConfidence: c.MatchConfidence,
 				Evidence:        evidence,
 			})
@@ -191,7 +188,6 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				RawOrganizationName: a.RawOrganizationName,
 				RecordYears:         a.RecordYears,
 				SourceCount:         a.SourceCount,
-				SourceRecordID:      a.SourceRecordID,
 				Confidence:          a.Confidence,
 			})
 		}

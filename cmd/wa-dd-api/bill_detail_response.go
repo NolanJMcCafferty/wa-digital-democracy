@@ -110,22 +110,15 @@ type OrganizationSummary struct {
 	ContextSummary    []string `json:"context_summary,omitempty"`
 }
 
-type SourceRecordSummary struct {
-	System    string    `json:"system"`
-	Endpoint  string    `json:"endpoint"`
-	URL       string    `json:"url"`
-	FetchedAt time.Time `json:"fetched_at"`
-}
-
 // BillDetailResponse is the API response shape for the bill detail route.
 // It has bill-level fields plus explicit per-hearing agenda-item sections.
 type BillDetailResponse struct {
-	GeneratedAt      time.Time             `json:"generated_at"`
-	Bill             BillSummary           `json:"bill"`
-	Status           BillStatus            `json:"status"`
-	Hearings         []AgendaItemSection   `json:"hearings"`
-	Sources          []SourceRecordSummary `json:"sources"`
-	KnownLimitations []string              `json:"known_limitations,omitempty"`
+	GeneratedAt      time.Time           `json:"generated_at"`
+	Bill             BillSummary         `json:"bill"`
+	Status           BillStatus          `json:"status"`
+	Hearings         []AgendaItemSection `json:"hearings"`
+	Sources          []any               `json:"sources"`
+	KnownLimitations []string            `json:"known_limitations,omitempty"`
 }
 
 // BuildBillDetailResponse assembles the bill detail response for any bill row
@@ -161,16 +154,12 @@ func BuildBillDetailResponse(
 		hearings = append(hearings, *section)
 	}
 
-	sources, err := loadSourcesForSections(ctx, store, hearings)
-	if err != nil {
-		return nil, fmt.Errorf("sources: %w", err)
-	}
 	page := &BillDetailResponse{
 		GeneratedAt: time.Now().UTC(),
 		Bill:        bill,
 		Status:      status,
 		Hearings:    hearings,
-		Sources:     sources,
+		Sources:     []any{},
 	}
 	page.KnownLimitations = computeBillPageLimitations(page)
 	return page, nil
@@ -518,54 +507,6 @@ func summarizeOrganizationContexts(contexts []db.OrganizationPublicContext) []st
 	}
 	sort.Strings(out)
 	return out
-}
-
-func loadSourcesForSections(ctx context.Context, store *db.Store, sections []AgendaItemSection) ([]SourceRecordSummary, error) {
-	csiIDs := make([]string, 0, len(sections))
-	for _, section := range sections {
-		if section.Hearing.CSIAgendaItemID != "" {
-			csiIDs = append(csiIDs, section.Hearing.CSIAgendaItemID)
-		}
-	}
-	return loadSourcesForAgendaItems(ctx, store, csiIDs)
-}
-
-// loadSourcesForAgendaItems surfaces every distinct source_record touched by
-// the rendered agenda items (joined via bill, hearing, agenda_item, testifier,
-// tvw_event, and bill_status_change).
-//
-// Per the wiki: "every public fact needs provenance" — the source panel
-// is part of the product, not engineering metadata.
-func loadSourcesForAgendaItems(ctx context.Context, store *db.Store, csiIDs []string) ([]SourceRecordSummary, error) {
-	if len(csiIDs) == 0 {
-		return []SourceRecordSummary{}, nil
-	}
-	const q = `
-SELECT DISTINCT sr.source_system, sr.source_endpoint, sr.source_url, sr.fetched_at
-  FROM source_record sr
- WHERE sr.id IN (
-   SELECT source_record_id FROM bill                WHERE id IN (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
-   UNION SELECT source_record_id FROM hearing       WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
-   UNION SELECT source_record_id FROM agenda_item   WHERE csi_agenda_item_id = ANY($1)
-   UNION SELECT source_record_id FROM testifier     WHERE agenda_item_id IN (SELECT id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
-   UNION SELECT source_record_id FROM tvw_event     WHERE tvw_event_id IN (SELECT tvw_event_id FROM hearing WHERE id IN (SELECT hearing_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1)))
-   UNION SELECT source_record_id FROM bill_status_change WHERE bill_id IN (SELECT bill_id FROM agenda_item WHERE csi_agenda_item_id = ANY($1))
- )
- ORDER BY sr.fetched_at DESC;`
-	rows, err := store.Pool.Query(ctx, q, csiIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []SourceRecordSummary{}
-	for rows.Next() {
-		var s SourceRecordSummary
-		if err := rows.Scan(&s.System, &s.Endpoint, &s.URL, &s.FetchedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
 }
 
 func computeBillPageLimitations(page *BillDetailResponse) []string {

@@ -35,7 +35,6 @@ import (
 )
 
 const (
-	// SystemName matches source_record.source_system.
 	SystemName = "tvw"
 	// InvintusSystemName is used when recording the Invintus event-detail
 	// fetch — it's a different host with different terms-of-use.

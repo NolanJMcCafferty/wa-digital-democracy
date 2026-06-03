@@ -189,7 +189,6 @@ type OrganizationPublicContext struct {
 	RecordYear      int
 	RecordDate      string
 	URL             string
-	SourceRecordID  int64
 	MatchConfidence string
 	Evidence        []string
 }
@@ -204,7 +203,6 @@ type OrganizationPersonAffiliation struct {
 	RawOrganizationName string
 	RecordYears         string
 	SourceCount         int
-	SourceRecordID      int64
 	Confidence          string
 }
 
@@ -289,7 +287,6 @@ SELECT COALESCE(p.id, 0) AS person_id,
          ''
        ) AS record_years,
        COUNT(*)::int AS source_count,
-       0 AS source_record_id,
        CASE
          WHEN bool_or(poa.confidence = 'confirmed') THEN 'confirmed'
          WHEN bool_or(poa.confidence = 'probable') THEN 'probable'
@@ -318,7 +315,7 @@ SELECT COALESCE(p.id, 0) AS person_id,
 		var a OrganizationPersonAffiliation
 		if err := rows.Scan(&a.PersonID, &a.PersonName, &a.RelationshipType, &a.RoleTitle,
 			&a.SourceKind, &a.SourceLabel, &a.RawOrganizationName, &a.RecordYears,
-			&a.SourceCount, &a.SourceRecordID, &a.Confidence); err != nil {
+			&a.SourceCount, &a.Confidence); err != nil {
 			return nil, fmt.Errorf("scan organization person affiliation: %w", err)
 		}
 		out = append(out, a)
@@ -338,8 +335,7 @@ WITH ctx AS (
          CASE WHEN pe.last_employment_year ~ '^[0-9]+$' THEN pe.last_employment_year::int ELSE 0 END AS record_year,
          ''::text AS record_date,
          COALESCE(pe.last_employment_url, '') AS url,
-         0 AS source_record_id,
-         m.match_confidence::text AS match_confidence,
+           m.match_confidence::text AS match_confidence,
          m.evidence AS evidence
     FROM (
       SELECT DISTINCT ON (source_row_id) *
@@ -477,7 +473,7 @@ SELECT DISTINCT ON (source_kind, source_name, detail)
 		var evidence []byte
 		if err := rows.Scan(&c.ContextType, &c.SourceKind, &c.SourceLabel, &c.SourceName,
 			&c.Detail, &c.Amount, &c.RecordYear, &c.RecordDate, &c.URL,
-			&c.SourceRecordID, &c.MatchConfidence, &evidence); err != nil {
+			&c.MatchConfidence, &evidence); err != nil {
 			return nil, fmt.Errorf("scan organization public context: %w", err)
 		}
 		if len(evidence) > 0 {

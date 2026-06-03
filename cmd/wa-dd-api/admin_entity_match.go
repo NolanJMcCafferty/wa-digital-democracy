@@ -45,7 +45,6 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 		CanonicalName       string             `json:"canonical_name"`
 		CandidateConfidence string             `json:"candidate_confidence"`
 		Evidence            []string           `json:"evidence"`
-		SourceRecordID      int64              `json:"source_record_id,omitempty"`
 		Decision            string             `json:"decision"`
 		ReviewedConfidence  string             `json:"reviewed_confidence,omitempty"`
 		Transcript          *transcriptContext `json:"transcript,omitempty"`
@@ -97,8 +96,7 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 				SourceName: c.SourceName, NormalizedName: c.NormalizedName,
 				OrganizationID: c.OrganizationID, CanonicalName: c.CanonicalName,
 				CandidateConfidence: c.CandidateConfidence, Evidence: evidence,
-				SourceRecordID: c.SourceRecordID,
-				Decision:       c.Decision, ReviewedConfidence: c.ReviewedConfidence,
+				Decision: c.Decision, ReviewedConfidence: c.ReviewedConfidence,
 			}
 			if tc, ok := ctxByID[c.ID]; ok {
 				segs := make([]segment, 0, len(tc.Surrounding))

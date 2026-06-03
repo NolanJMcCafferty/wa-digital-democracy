@@ -78,7 +78,7 @@ const soapEnvelopeTmpl = `<?xml version="1.0" encoding="utf-8"?>
 var envelopeTmpl = template.Must(template.New("env").Parse(soapEnvelopeTmpl))
 
 // callRaw posts a SOAP envelope and returns the parsed body. The op name is
-// used both for the SOAPAction header and source_record.source_endpoint.
+// used for the SOAPAction header and request metadata.
 // inner must be a valid <Op xmlns="…">…</Op> XML fragment.
 func (c *Client) callRaw(ctx context.Context, service, op, inner string) ([]byte, error) {
 	var env bytes.Buffer

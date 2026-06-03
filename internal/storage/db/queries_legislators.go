@@ -27,8 +27,6 @@ type UpsertLegislatorParams struct {
 	Email     string
 	Phone     string
 	Acronym   string
-
-	SourceRecordID int64
 }
 
 func (s *Store) UpsertLegislator(ctx context.Context, p UpsertLegislatorParams) (int64, error) {
@@ -152,18 +150,17 @@ INSERT INTO person_source_mention (
   source_role, context, confidence, review_status
 )
 VALUES ($1, 'legislator_roster', 'legislator_roster_membership', $2, $3,
-        wa_dd_normalize_entity_name($4), $5, $6::jsonb, 'confirmed', 'auto', $7)
+        wa_dd_normalize_entity_name($4), $5, $6::jsonb, 'confirmed', 'auto')
 ON CONFLICT (source_kind, source_table, source_pk, source_row_id, source_name) DO UPDATE SET
   person_id = COALESCE(person_source_mention.person_id, EXCLUDED.person_id),
   normalized_name = COALESCE(person_source_mention.normalized_name, EXCLUDED.normalized_name),
   source_role = EXCLUDED.source_role,
   context = EXCLUDED.context,
   confidence = EXCLUDED.confidence,
-  0 = COALESCE(EXCLUDED.person_source_mention.0),
   last_seen_at = NOW();`
 	if _, err := tx.Exec(ctx, mentionQ,
 		personID, biennium+":"+p.LWSSponsorID, display, normalized,
-		legislatorRoleLabel(p.Chamber), contextJSON, int64OrNull(p.SourceRecordID),
+		legislatorRoleLabel(p.Chamber), contextJSON,
 	); err != nil {
 		return 0, fmt.Errorf("upsert legislator person mention: %w", err)
 	}
@@ -173,7 +170,7 @@ INSERT INTO legislator_roster_membership (
   person_id, biennium, chamber, district, party, lws_sponsor_id,
   roster_name, first_name, last_name, email, phone, acronym
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (biennium, lws_sponsor_id) DO UPDATE SET
   person_id = EXCLUDED.person_id,
   chamber = EXCLUDED.chamber,
@@ -185,14 +182,13 @@ ON CONFLICT (biennium, lws_sponsor_id) DO UPDATE SET
   email = COALESCE(EXCLUDED.email, legislator_roster_membership.email),
   phone = COALESCE(EXCLUDED.phone, legislator_roster_membership.phone),
   acronym = COALESCE(EXCLUDED.acronym, legislator_roster_membership.acronym),
-  0 = COALESCE(EXCLUDED.legislator_roster_membership.0),
   updated_at = NOW()
 RETURNING id;`
 	var membershipID int64
 	if err := tx.QueryRow(ctx, membershipQ,
 		personID, biennium, p.Chamber, strOrNull(p.District), strOrNull(p.Party),
 		p.LWSSponsorID, display, strOrNull(p.FirstName), strOrNull(p.LastName),
-		strOrNull(p.Email), strOrNull(p.Phone), strOrNull(p.Acronym), int64OrNull(p.SourceRecordID),
+		strOrNull(p.Email), strOrNull(p.Phone), strOrNull(p.Acronym),
 	).Scan(&membershipID); err != nil {
 		return 0, fmt.Errorf("upsert legislator roster membership: %w", err)
 	}

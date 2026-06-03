@@ -81,7 +81,7 @@ func New(h *httpx.Client) *Client {
 func (c *Client) Descriptor() connector.Descriptor { return descriptor }
 
 // Fetch downloads the WA extract and returns the raw CSV bytes plus the
-// httpx.RawFetch metadata so callers can persist a source_record for it.
+// httpx.RawFetch metadata so callers can inspect the request metadata.
 func (c *Client) Fetch(ctx context.Context) ([]byte, httpx.RawFetch, error) {
 	headers := http.Header{}
 	headers.Set("Accept", "text/csv")

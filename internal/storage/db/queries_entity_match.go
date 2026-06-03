@@ -22,7 +22,6 @@ type VendorEntityMatchCandidate struct {
 	CanonicalName       string
 	CandidateConfidence string
 	Evidence            []string
-	SourceRecordID      int64
 	Decision            string
 	ReviewedConfidence  string
 }
@@ -48,7 +47,6 @@ type UpsertVendorEntityMatchCandidateParams struct {
 	OrganizationID      int64
 	CandidateConfidence string
 	Evidence            []string
-	SourceRecordID      int64
 }
 
 func (s *Store) UpsertVendorEntityMatchCandidate(ctx context.Context, p UpsertVendorEntityMatchCandidateParams) (int64, error) {
@@ -158,7 +156,7 @@ func (s *Store) GetVendorEntityMatchCandidate(ctx context.Context, id int64) (Ve
 SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
        COALESCE(c.source_dataset_id,''), COALESCE(c.source_row_id,''), c.source_name,
        c.normalized_name, c.organization_id, o.canonical_name,
-       c.candidate_confidence::text, c.evidence, 0,
+       c.candidate_confidence::text, c.evidence,
        COALESCE(d.decision::text, 'needs_review'), COALESCE(d.reviewed_confidence::text, '')
   FROM vendor_entity_match_candidate c
   JOIN organization o ON o.id = c.organization_id
@@ -169,7 +167,7 @@ SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
 	if err := s.Pool.QueryRow(ctx, q, id).Scan(&c.ID, &c.SourceKind, &c.SourceTable, &c.SourcePK,
 		&c.SourceDatasetID, &c.SourceRowID, &c.SourceName, &c.NormalizedName,
 		&c.OrganizationID, &c.CanonicalName, &c.CandidateConfidence,
-		&evidence, &c.SourceRecordID, &c.Decision, &c.ReviewedConfidence); err != nil {
+		&evidence, &c.Decision, &c.ReviewedConfidence); err != nil {
 		return VendorEntityMatchCandidate{}, fmt.Errorf("get vendor entity match candidate: %w", err)
 	}
 	if len(evidence) > 0 {
@@ -199,7 +197,7 @@ SELECT COUNT(*)
 SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
        COALESCE(c.source_dataset_id,''), COALESCE(c.source_row_id,''), c.source_name,
        c.normalized_name, c.organization_id, o.canonical_name,
-       c.candidate_confidence::text, c.evidence, 0,
+       c.candidate_confidence::text, c.evidence,
        COALESCE(d.decision::text, 'needs_review'), COALESCE(d.reviewed_confidence::text, '')
   FROM vendor_entity_match_candidate c
   JOIN organization o ON o.id = c.organization_id
@@ -221,7 +219,7 @@ SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
 		if err := rows.Scan(&c.ID, &c.SourceKind, &c.SourceTable, &c.SourcePK,
 			&c.SourceDatasetID, &c.SourceRowID, &c.SourceName, &c.NormalizedName,
 			&c.OrganizationID, &c.CanonicalName, &c.CandidateConfidence,
-			&evidence, &c.SourceRecordID, &c.Decision, &c.ReviewedConfidence); err != nil {
+			&evidence, &c.Decision, &c.ReviewedConfidence); err != nil {
 			return nil, 0, fmt.Errorf("scan vendor entity match candidate: %w", err)
 		}
 		if len(evidence) > 0 {
@@ -366,12 +364,11 @@ func (s *Store) GenerateVendorEntityMatchCandidatesWithProgress(ctx context.Cont
 	emit("processing", scanned, len(out), autoConfirmed, skipped, "")
 	for rows.Next() {
 		var sourceKind, sourceTable, sourceDatasetID, sourceRowID, sourceName, normalizedName string
-		var sourcePK, sourceRecordID int64
-		var orgID int64
+		var sourcePK, orgID int64
 		var sourceMatchCount int
 		var canonical string
 		var aliases []string
-		if err := rows.Scan(&sourceKind, &sourceTable, &sourcePK, &sourceDatasetID, &sourceRowID, &sourceName, &normalizedName, &sourceRecordID, &orgID, &canonical, &aliases, &sourceMatchCount); err != nil {
+		if err := rows.Scan(&sourceKind, &sourceTable, &sourcePK, &sourceDatasetID, &sourceRowID, &sourceName, &normalizedName, &orgID, &canonical, &aliases, &sourceMatchCount); err != nil {
 			return nil, fmt.Errorf("scan vendor entity candidate source: %w", err)
 		}
 		scanned++
@@ -403,7 +400,6 @@ func (s *Store) GenerateVendorEntityMatchCandidatesWithProgress(ctx context.Cont
 			OrganizationID:      orgID,
 			CandidateConfidence: confidence,
 			Evidence:            evidence,
-			SourceRecordID:      sourceRecordID,
 		})
 		if err != nil {
 			return nil, err
@@ -429,7 +425,7 @@ func (s *Store) GenerateVendorEntityMatchCandidatesWithProgress(ctx context.Cont
 			ID: id, SourceKind: sourceKind, SourceTable: sourceTable, SourcePK: sourcePK,
 			SourceDatasetID: sourceDatasetID, SourceRowID: sourceRowID, SourceName: sourceName,
 			NormalizedName: normalizedName, OrganizationID: orgID, CanonicalName: canonical,
-			CandidateConfidence: confidence, Evidence: evidence, SourceRecordID: sourceRecordID,
+			CandidateConfidence: confidence, Evidence: evidence,
 			Decision: decision, ReviewedConfidence: reviewedConfidence,
 		})
 		if scanned == 1 || scanned%1000 == 0 || time.Since(lastProgress) >= 10*time.Second {
@@ -510,14 +506,14 @@ SELECT DISTINCT id, canonical_name, aliases, normalized_name
  WHERE normalized_name IS NOT NULL
 ), matches AS (
 SELECT s.source_kind, s.source_table, s.source_pk, s.source_dataset_id, s.source_row_id,
-       s.source_name, s.normalized_name, 0,
+       s.source_name, s.normalized_name,
        o.id, o.canonical_name, o.aliases,
        COUNT(*) OVER (PARTITION BY s.source_kind, s.source_dataset_id, s.source_row_id, s.source_name) AS source_match_count
   FROM limited_source_names s
   JOIN org_names o ON o.normalized_name = s.normalized_name
 )
 SELECT s.source_kind, s.source_table, s.source_pk, s.source_dataset_id, s.source_row_id,
-       s.source_name, s.normalized_name, 0,
+       s.source_name, s.normalized_name,
        s.id, s.canonical_name, s.aliases, s.source_match_count
   FROM matches s
  ORDER BY s.source_kind, s.normalized_name, s.canonical_name;`

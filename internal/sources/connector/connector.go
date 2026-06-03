@@ -22,7 +22,7 @@ import (
 
 // Descriptor describes a single upstream data source.
 //
-// System matches the value written to source_record.source_system. It
+// System is the connector key. It
 // is the stable identifier used across raw object storage paths,
 // provenance rows, and operator commands.
 //
