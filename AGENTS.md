@@ -50,7 +50,7 @@ internal/
            seattleauditor,kingcounty,webs,connector,...}/
                 connectors. Each follows Fetch / StoreRaw / Parse / Normalize.
                 Phase status table lives in internal/sources/README.md.
-  sources/httpx/ shared retry + per-host rate-limit + RawSink hook
+  sources/httpx/ shared retry + per-host rate-limit client
   jobs/         pipeline step primitives (ingest-bill, ingest-csi, ingest-tvw,
                 segment-transcript, populate-organizations, discover)
   diarization/  provider-neutral diarization (Provider interface, Deepgram +
@@ -60,8 +60,7 @@ internal/
                 decision recording.
   common/       shared civic value objects (BillKey, BillAgendaTarget)
   storage/db/   pgx wrapper, hand-written Pool.Query methods on *Store,
-                source_record helpers, BillAgendaTarget lookups, RawSink
-  storage/objectstore/  filesystem + S3/R2 object store for raw API responses
+                BillAgendaTarget lookups and query helpers
 db/migrations/  goose-style SQL; project-pinned via tools/goose
 db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
                 Pool.Query methods on *Store, not codegen. Don't add to this
@@ -72,7 +71,6 @@ apps/web/       Next.js 16 + React 19 + TS + Tailwind 4. Server Components
                 Client components use the rewrite (/api/v1/* → :8080).
                 /admin uses Clerk in production; bypassed in non-prod via
                 NODE_ENV gate (see src/lib/adminAuth.ts and src/proxy.ts).
-data/raw/       immutable raw API responses (gitignored)
 data/processed/ run-summary JSONs, diarization output, and derived
                 artifacts (gitignored)
 docs/           ingestion.md is the canonical implementation doc.

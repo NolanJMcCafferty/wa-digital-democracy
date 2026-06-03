@@ -33,7 +33,6 @@ const allEnvSpecs = [
     branch: env("RAILWAY_PRODUCTION_BRANCH") || "main",
     appEnv: "production",
     suffix: "PRODUCTION",
-    bucketDefault: "wa-dd-raw-prod",
     siteUrlDefault: env("PRODUCTION_WEB_PUBLIC_URL") || env("WEB_PUBLIC_URL") || "",
   },
   {
@@ -41,7 +40,6 @@ const allEnvSpecs = [
     branch: env("RAILWAY_STAGING_BRANCH") || "staging",
     appEnv: "staging",
     suffix: "STAGING",
-    bucketDefault: "wa-dd-raw-staging",
     siteUrlDefault: env("STAGING_WEB_PUBLIC_URL") || "",
   },
 ];
@@ -570,8 +568,6 @@ function buildVariables(envSpec, domains) {
   const internalApiToken = requiredEnv(`WADD_INTERNAL_API_TOKEN_${suffix}`, "WADD_INTERNAL_API_TOKEN");
   const webPublicUrl = env(`${suffix}_WEB_PUBLIC_URL`) || domains.get("web") || envSpec.siteUrlDefault;
   const apiPublicUrl = env(`${suffix}_API_PUBLIC_URL`) || domains.get("api") || "";
-  const cloudflareAccountId = env(`${suffix}_CLOUDFLARE_ACCOUNT_ID`) || env("CLOUDFLARE_ACCOUNT_ID");
-  const r2Endpoint = cloudflareAccountId ? `https://${cloudflareAccountId}.r2.cloudflarestorage.com` : "";
 
   return {
     postgis: {
@@ -605,14 +601,6 @@ function buildVariables(envSpec, domains) {
       APP_ENV: appEnv,
       LOG_LEVEL: env(`${suffix}_LOG_LEVEL`) || env("LOG_LEVEL") || "info",
       DATABASE_URL: databaseUrl,
-      OBJECT_STORE: env(`${suffix}_OBJECT_STORE`) || env("OBJECT_STORE") || "s3",
-      S3_ENDPOINT_URL: env(`${suffix}_S3_ENDPOINT_URL`) || env("S3_ENDPOINT_URL") || r2Endpoint,
-      S3_REGION: env(`${suffix}_S3_REGION`) || env("S3_REGION") || "auto",
-      S3_BUCKET_RAW: env(`${suffix}_S3_BUCKET_RAW`) || env("S3_BUCKET_RAW") || envSpec.bucketDefault,
-      S3_ACCESS_KEY_ID: requiredEnv(`S3_ACCESS_KEY_ID_${suffix}`, "S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID"),
-      S3_SECRET_ACCESS_KEY: requiredEnv(`S3_SECRET_ACCESS_KEY_${suffix}`, "S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY"),
-      S3_FORCE_PATH_STYLE: env(`${suffix}_S3_FORCE_PATH_STYLE`) || env("S3_FORCE_PATH_STYLE") || "false",
-      S3_PREFIX: env(`${suffix}_S3_PREFIX`) || env("S3_PREFIX") || "raw",
       INVINTUS_EMBEDDER_KEY: requiredEnv(`INVINTUS_EMBEDDER_KEY_${suffix}`, "INVINTUS_EMBEDDER_KEY"),
       SOCRATA_APP_TOKEN: env(`SOCRATA_APP_TOKEN_${suffix}`) || env("SOCRATA_APP_TOKEN"),
       SOURCE_USER_AGENT: env("SOURCE_USER_AGENT") || "wa-dd/0.0.1 (https://github.com/NolanJMcCafferty/wa-digital-democracy; contact: nolan-mccafferty)",
@@ -747,8 +735,6 @@ Required secrets can be environment-specific, falling back to shared names:
   CLERK_SECRET_KEY[_PRODUCTION|_STAGING]
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY[_PRODUCTION|_STAGING]
   CLERK_JWT_ISSUER[_PRODUCTION|_STAGING]
-  S3_ACCESS_KEY_ID[_PRODUCTION|_STAGING] or R2_ACCESS_KEY_ID
-  S3_SECRET_ACCESS_KEY[_PRODUCTION|_STAGING] or R2_SECRET_ACCESS_KEY
 
 Optional:
   RAILWAY_WORKSPACE_ID
@@ -756,6 +742,5 @@ Optional:
   PRODUCTION_API_PUBLIC_URL / STAGING_API_PUBLIC_URL
   PRODUCTION_WEB_CUSTOM_DOMAIN / STAGING_WEB_CUSTOM_DOMAIN
   PRODUCTION_API_CUSTOM_DOMAIN / STAGING_API_CUSTOM_DOMAIN
-  CLOUDFLARE_ACCOUNT_ID
 `);
 }

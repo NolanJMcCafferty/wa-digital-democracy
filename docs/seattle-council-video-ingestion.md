@@ -310,7 +310,6 @@ CREATE TABLE seattle_legistar_event (
   minutes_file_url TEXT,
   event_media_url TEXT,
   insite_url TEXT,
-  source_record_id BIGINT REFERENCES source_record(id),
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -346,7 +345,6 @@ CREATE TABLE seattle_channel_video (
   mp4_url TEXT,
   srt_url TEXT,
   description TEXT,
-  source_record_id BIGINT REFERENCES source_record(id),
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
