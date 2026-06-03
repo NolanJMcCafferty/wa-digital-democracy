@@ -244,11 +244,11 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 
 	// Sponsors.
 	const sponsorQ = `
-SELECT l.name, l.chamber, bs.sponsor_type, COALESCE(l.lws_sponsor_id, '')
+SELECT lrm.roster_name, lrm.chamber, bs.sponsor_type, COALESCE(lrm.lws_sponsor_id, '')
   FROM bill_sponsor bs
-  JOIN legislator l ON l.id = bs.legislator_id
+  JOIN legislator_roster_membership lrm ON lrm.id = bs.legislator_roster_membership_id
  WHERE bs.bill_id = $1
- ORDER BY CASE bs.sponsor_type WHEN 'Primary' THEN 0 ELSE 1 END, l.name;`
+ ORDER BY CASE bs.sponsor_type WHEN 'Primary' THEN 0 ELSE 1 END, lrm.roster_name;`
 	rows, err := store.Pool.Query(ctx, sponsorQ, billRowID)
 	if err != nil {
 		return BillSummary{}, BillStatus{}, err

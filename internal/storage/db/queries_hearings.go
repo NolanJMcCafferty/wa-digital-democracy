@@ -232,14 +232,26 @@ func upsertCSITestifierPersonAffiliation(ctx context.Context, tx pgx.Tx, in csiP
 	}
 
 	const personQ = `
-INSERT INTO person (display_name, normalized_name, match_confidence, match_notes)
-VALUES ($1, $2, 'possible', 'Auto-seeded from CSI testifier sign-in; same-name identity is not reviewed.')
-ON CONFLICT (display_name) DO UPDATE SET
-  normalized_name = COALESCE(person.normalized_name, EXCLUDED.normalized_name),
-  updated_at = NOW()
-RETURNING id;`
+WITH existing AS (
+  SELECT person_id
+    FROM person_source_mention
+   WHERE source_kind = 'csi_testifier'
+     AND source_table = 'testifier'
+     AND source_pk = $3
+     AND source_name = $1
+   LIMIT 1
+), inserted AS (
+  INSERT INTO person (display_name, normalized_name, match_confidence, match_notes)
+  SELECT $1, $2, 'possible', 'Auto-seeded from CSI testifier sign-in; same-name identity is not reviewed.'
+   WHERE NOT EXISTS (SELECT 1 FROM existing WHERE person_id IS NOT NULL)
+  RETURNING id
+)
+SELECT id FROM inserted
+UNION ALL
+SELECT person_id FROM existing WHERE person_id IS NOT NULL
+LIMIT 1;`
 	var personID int64
-	if err := tx.QueryRow(ctx, personQ, rawName, normalizedName).Scan(&personID); err != nil {
+	if err := tx.QueryRow(ctx, personQ, rawName, normalizedName, in.TestifierID).Scan(&personID); err != nil {
 		return fmt.Errorf("upsert CSI person: %w", err)
 	}
 
@@ -288,6 +300,10 @@ SELECT id
 	if in.Testified {
 		relationshipType = "testified_for"
 	}
+	rawOrgForAffiliation := rawOrg
+	if rawOrgForAffiliation == "" {
+		rawOrgForAffiliation = "<no organization>"
+	}
 	const affQ = `
 INSERT INTO person_organization_affiliation (
   person_id, person_mention_id, organization_id, raw_person_name, raw_organization_name,
@@ -311,7 +327,7 @@ ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row
 		return fmt.Errorf("marshal affiliation evidence: %w", err)
 	}
 	if _, err := tx.Exec(ctx, affQ,
-		personID, mentionID, orgID, rawName, strOrNull(rawOrg),
+		personID, mentionID, orgID, rawName, rawOrgForAffiliation,
 		relationshipType, in.TestifierID, in.SourceRecordID,
 		contextJSON, evidenceJSON,
 	); err != nil {

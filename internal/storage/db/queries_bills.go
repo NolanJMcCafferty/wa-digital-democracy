@@ -59,8 +59,17 @@ func (s *Store) UpsertBillSponsor(ctx context.Context, billID, legislatorID int6
 	const q = `
 INSERT INTO bill_sponsor (bill_id, legislator_id, sponsor_type)
 VALUES ($1, $2, $3)
-ON CONFLICT (bill_id, legislator_id, sponsor_type) DO NOTHING;`
+ON CONFLICT DO NOTHING;`
 	_, err := s.Pool.Exec(ctx, q, billID, legislatorID, sponsorType)
+	return err
+}
+
+func (s *Store) UpsertBillSponsorMembership(ctx context.Context, billID, membershipID, personID int64, sponsorType string) error {
+	const q = `
+INSERT INTO bill_sponsor (bill_id, legislator_roster_membership_id, person_id, sponsor_type)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING;`
+	_, err := s.Pool.Exec(ctx, q, billID, membershipID, personID, sponsorType)
 	return err
 }
 
@@ -209,9 +218,9 @@ func (s *Store) SearchBills(ctx context.Context, p BillSearchParams) ([]ListedBi
 EXISTS (
   SELECT 1
     FROM bill_sponsor sponsor_filter_bs
-    JOIN legislator sponsor_filter_l ON sponsor_filter_l.id = sponsor_filter_bs.legislator_id
+    JOIN legislator_roster_membership sponsor_filter_lrm ON sponsor_filter_lrm.id = sponsor_filter_bs.legislator_roster_membership_id
    WHERE sponsor_filter_bs.bill_id = b.id
-     AND trim(both '-' from regexp_replace(replace(lower(sponsor_filter_l.name), '&', ' and '), '[^a-z0-9]+', '-', 'g')) = $%d
+     AND trim(both '-' from regexp_replace(replace(lower(sponsor_filter_lrm.roster_name), '&', ' and '), '[^a-z0-9]+', '-', 'g')) = $%d
 )`, idx))
 	}
 	if p.LeadSponsor != "" {
@@ -275,14 +284,15 @@ EXISTS (
 	const baseFROM = `
 FROM bill b
 LEFT JOIN LATERAL (
-  SELECT l.name, COALESCE(l.first_name, '') AS first_name,
-         COALESCE(l.last_name, '') AS last_name,
-         COALESCE(l.party, '') AS party,
-         COALESCE(l.lws_sponsor_id, '') AS lws_sponsor_id
+  SELECT lrm.roster_name AS name, COALESCE(lrm.first_name, p.first_name, '') AS first_name,
+         COALESCE(lrm.last_name, p.last_name, '') AS last_name,
+         COALESCE(lrm.party, '') AS party,
+         COALESCE(lrm.lws_sponsor_id, '') AS lws_sponsor_id
     FROM bill_sponsor bs
-    JOIN legislator l ON l.id = bs.legislator_id
+    JOIN legislator_roster_membership lrm ON lrm.id = bs.legislator_roster_membership_id
+    JOIN person p ON p.id = lrm.person_id
    WHERE bs.bill_id = b.id AND bs.sponsor_type = 'Primary'
-   ORDER BY l.id
+   ORDER BY lrm.id
    LIMIT 1
 ) primary_sponsor ON TRUE`
 
@@ -365,7 +375,7 @@ func (s *Store) ListBillSearchFacets(ctx context.Context) (BillSearchFacets, err
 	}
 	rows.Close()
 
-	rows, err = s.Pool.Query(ctx, `SELECT DISTINCT party FROM legislator WHERE party IS NOT NULL AND party <> '' ORDER BY party`)
+	rows, err = s.Pool.Query(ctx, `SELECT DISTINCT party FROM legislator_roster_membership WHERE party IS NOT NULL AND party <> '' ORDER BY party`)
 	if err != nil {
 		return f, fmt.Errorf("facets party: %w", err)
 	}

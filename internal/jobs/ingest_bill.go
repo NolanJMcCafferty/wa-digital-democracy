@@ -54,7 +54,7 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	}
 	ids.BillID = id
 
-	// 2. GetSponsors → bill_sponsor. The legislator table is owned by
+	// 2. GetSponsors → bill_sponsor. Roster membership rows are owned by
 	// ingest-legislators, so missing sponsor IDs are warning-only skips.
 	body, _, err = lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetSponsors", map[string]string{
 		"biennium": biennium,
@@ -69,17 +69,17 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	}
 	missingSponsors := 0
 	for _, s := range lws.NormalizeSponsors(sps) {
-		legID, ok, err := p.Store.FindLegislatorIDByLWSSponsorID(ctx, s.LWSSponsorID)
+		membershipID, personID, ok, err := p.Store.FindLegislatorRosterMembershipByLWSSponsorID(ctx, biennium, s.LWSSponsorID)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			missingSponsors++
-			fmt.Fprintf(stderrSink, "  warn: %s sponsor %s %q missing from legislator roster; skipping bill_sponsor\n",
-				billID, s.LWSSponsorID, s.LongName)
+			fmt.Fprintf(stderrSink, "  warn: %s sponsor %s %q missing from legislator roster for %s; skipping bill_sponsor\n",
+				billID, s.LWSSponsorID, s.LongName, biennium)
 			continue
 		}
-		if err := p.Store.UpsertBillSponsor(ctx, ids.BillID, legID, s.SponsorType); err != nil {
+		if err := p.Store.UpsertBillSponsorMembership(ctx, ids.BillID, membershipID, personID, s.SponsorType); err != nil {
 			return err
 		}
 	}

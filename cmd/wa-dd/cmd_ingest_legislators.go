@@ -72,18 +72,18 @@ func runIngestLegislators(args []string) int {
 	failures := 0
 
 	upsert := func(m lws.Member) {
-		_, err := deps.store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
+		_, err := deps.store.UpsertLegislatorRosterMembership(ctx, db.UpsertLegislatorParams{
+			Biennium:     *biennium,
 			LWSSponsorID: m.ID,
-			Name:         m.LongName, // "Senator Alvarado" — keeps existing rows that
-			//                          IngestBill wrote in this form joinable.
-			Chamber:   m.Agency,
-			District:  m.District,
-			Party:     m.Party,
-			FirstName: m.FirstName,
-			LastName:  m.LastName,
-			Email:     m.Email,
-			Phone:     m.Phone,
-			Acronym:   m.Acronym,
+			Name:         m.LongName,
+			Chamber:      m.Agency,
+			District:     m.District,
+			Party:        m.Party,
+			FirstName:    m.FirstName,
+			LastName:     m.LastName,
+			Email:        m.Email,
+			Phone:        m.Phone,
+			Acronym:      m.Acronym,
 		})
 		if err != nil {
 			failures++

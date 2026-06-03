@@ -188,7 +188,7 @@ func seedSponsorOrderingFixture(t *testing.T, store *db.Store) {
 	if err != nil {
 		t.Fatalf("insert source record: %v", err)
 	}
-	fixtureLegislatorID, err := store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
+	_, err = store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
 		LWSSponsorID: "990001",
 		Name:         "Representative Fixture Sponsor",
 		Chamber:      "House",
@@ -200,7 +200,7 @@ func seedSponsorOrderingFixture(t *testing.T, store *db.Store) {
 	if err != nil {
 		t.Fatalf("upsert fixture legislator: %v", err)
 	}
-	leadLegislatorID, err := store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
+	_, err = store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
 		LWSSponsorID: "990002",
 		Name:         "Representative Ordering Lead",
 		Chamber:      "House",
@@ -239,13 +239,21 @@ func seedSponsorOrderingFixture(t *testing.T, store *db.Store) {
 	if err != nil {
 		t.Fatalf("upsert primary bill: %v", err)
 	}
-	if err := store.UpsertBillSponsor(ctx, secondaryBillID, leadLegislatorID, "Primary"); err != nil {
+	leadMembershipID, leadPersonID, ok, err := store.FindLegislatorRosterMembershipByLWSSponsorID(ctx, "2025-26", "990002")
+	if err != nil || !ok {
+		t.Fatalf("find lead membership: ok=%v err=%v", ok, err)
+	}
+	fixtureMembershipID, fixturePersonID, ok, err := store.FindLegislatorRosterMembershipByLWSSponsorID(ctx, "2025-26", "990001")
+	if err != nil || !ok {
+		t.Fatalf("find fixture membership: ok=%v err=%v", ok, err)
+	}
+	if err := store.UpsertBillSponsorMembership(ctx, secondaryBillID, leadMembershipID, leadPersonID, "Primary"); err != nil {
 		t.Fatalf("upsert secondary bill primary sponsor: %v", err)
 	}
-	if err := store.UpsertBillSponsor(ctx, secondaryBillID, fixtureLegislatorID, "Secondary"); err != nil {
+	if err := store.UpsertBillSponsorMembership(ctx, secondaryBillID, fixtureMembershipID, fixturePersonID, "Secondary"); err != nil {
 		t.Fatalf("upsert secondary bill secondary sponsor: %v", err)
 	}
-	if err := store.UpsertBillSponsor(ctx, primaryBillID, fixtureLegislatorID, "Primary"); err != nil {
+	if err := store.UpsertBillSponsorMembership(ctx, primaryBillID, fixtureMembershipID, fixturePersonID, "Primary"); err != nil {
 		t.Fatalf("upsert primary bill primary sponsor: %v", err)
 	}
 }
