@@ -31,7 +31,6 @@ ENTRYPOINT ["wa-dd-api"]
 FROM gcr.io/distroless/static-debian12 AS cli
 WORKDIR /app
 COPY --from=go-build /out/wa-dd /usr/local/bin/wa-dd
-COPY config /app/config
 COPY db/migrations /app/db/migrations
 USER nonroot:nonroot
 ENTRYPOINT ["wa-dd"]
@@ -56,7 +55,6 @@ RUN apt-get update \
 COPY --from=go-build /out/wa-dd-api /usr/local/bin/wa-dd-api
 COPY --from=go-build /out/wa-dd /usr/local/bin/wa-dd
 COPY --from=goose-build /out/goose /usr/local/bin/goose
-COPY config /app/config
 COPY db/migrations /app/db/migrations
 RUN mkdir -p /app/data/raw /app/data/processed /app/data/audio \
   && chown -R nonroot:nonroot /app/data
