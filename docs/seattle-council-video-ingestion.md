@@ -331,7 +331,6 @@ CREATE TABLE seattle_legistar_event_item (
   matter_file TEXT,
   matter_type TEXT,
   matter_status TEXT,
-  source_record_id BIGINT REFERENCES source_record(id)
 );
 
 CREATE TABLE seattle_channel_video (

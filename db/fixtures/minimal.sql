@@ -1,8 +1,8 @@
 -- Minimal deterministic test fixture for integration and e2e smoke tests.
 --
 -- Idempotent by design: safe to rerun against a migrated database. Values are
--- synthetic and intentionally use a high bill number / fixture-specific source
--- URLs so they do not collide with normal ingested records.
+-- synthetic and intentionally use high bill/source IDs so they do not collide
+-- with normal ingested records.
 
 BEGIN;
 
@@ -20,23 +20,6 @@ BEGIN
     END IF;
   END IF;
 END $$;
-
-INSERT INTO source_record (
-  source_system, source_endpoint, source_url, source_id, fetched_at,
-  content_hash, raw_path, content_type, transform_version
-) VALUES (
-  'lws',
-  'Fixture.Minimal',
-  'fixture://wa-dd/minimal',
-  'wa-dd-minimal-fixture',
-  TIMESTAMPTZ '2026-01-01 00:00:00+00',
-  'fixture-minimal-v1',
-  'fixtures/minimal.json',
-  'application/json',
-  'fixture-v1'
-)
-ON CONFLICT (source_system, source_endpoint, source_url, content_hash, transform_version)
-  DO UPDATE SET fetched_at = EXCLUDED.fetched_at;
 
 INSERT INTO legislator (
   lws_sponsor_id, name, chamber, district, party, official_url,
@@ -69,9 +52,8 @@ ON CONFLICT (lws_sponsor_id) DO UPDATE SET
 
 INSERT INTO bill (
   biennium, prefix, number, title, description, chamber_origin,
-  current_status, status_date, official_url, source_record_id
-)
-SELECT
+  current_status, status_date, official_url
+) VALUES (
   '2099-00',
   'HB',
   9001,
@@ -80,14 +62,8 @@ SELECT
   'House',
   'Public hearing scheduled',
   DATE '2099-01-10',
-  'https://example.test/bills/HB9001',
-  sr.id
-FROM source_record sr
-WHERE sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
+  'https://example.test/bills/HB9001'
+)
 ON CONFLICT (biennium, prefix, number) DO UPDATE SET
   title = EXCLUDED.title,
   description = EXCLUDED.description,
@@ -95,7 +71,6 @@ ON CONFLICT (biennium, prefix, number) DO UPDATE SET
   current_status = EXCLUDED.current_status,
   status_date = EXCLUDED.status_date,
   official_url = EXCLUDED.official_url,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();
 
 INSERT INTO bill_sponsor (bill_id, legislator_id, sponsor_type)
@@ -108,14 +83,9 @@ ON CONFLICT (bill_id, legislator_id, sponsor_type) DO NOTHING;
 DELETE FROM bill_status_change
 WHERE bill_id IN (SELECT id FROM bill WHERE biennium = '2099-00' AND prefix = 'HB' AND number = 9001);
 
-INSERT INTO bill_status_change (bill_id, action_date, history_line, actor, source_record_id)
-SELECT b.id, x.action_date, x.history_line, x.actor, sr.id
+INSERT INTO bill_status_change (bill_id, action_date, history_line, actor)
+SELECT b.id, x.action_date, x.history_line, x.actor
 FROM bill b
-JOIN source_record sr ON sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
 CROSS JOIN (VALUES
   (DATE '2099-01-08', 'First reading, referred to Housing.', 'House'),
   (DATE '2099-01-10', 'Public hearing in the House Committee on Housing.', 'House')
@@ -128,9 +98,8 @@ INSERT INTO tvw_event (
   start_datetime, caption_url, thumbnail_url, custom_id, location_name,
   total_runtime, total_runtime_seconds, published_audio_url,
   audio_download_url, video_download_url, streaming_uris, raw_categories,
-  raw_keywords, raw_wp_tags, raw_wp_categories, source_record_id
-)
-SELECT
+  raw_keywords, raw_wp_tags, raw_wp_categories
+) VALUES (
   'fixture-tvw-event-9001',
   9001,
   'fixture-tvw-event-9001',
@@ -148,17 +117,11 @@ SELECT
   'https://example.test/audio-download/fixture-tvw-event-9001.mp3',
   'https://example.test/video/fixture-tvw-event-9001.mp4',
   '{}'::jsonb,
-  '["fixture", "housing"]'::jsonb,
-  '["fixture", "housing"]'::jsonb,
+  ARRAY['fixture', 'housing'],
+  ARRAY['fixture', 'housing'],
   '[]'::jsonb,
-  '[]'::jsonb,
-  sr.id
-FROM source_record sr
-WHERE sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
+  '[]'::jsonb
+)
 ON CONFLICT (tvw_event_id) DO UPDATE SET
   title = EXCLUDED.title,
   description = EXCLUDED.description,
@@ -179,14 +142,13 @@ ON CONFLICT (tvw_event_id) DO UPDATE SET
   raw_keywords = EXCLUDED.raw_keywords,
   raw_wp_tags = EXCLUDED.raw_wp_tags,
   raw_wp_categories = EXCLUDED.raw_wp_categories,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();
 
 INSERT INTO hearing (
   bill_id, committee_name, committee_acronym, chamber, meeting_datetime,
   location, lws_meeting_id, committee_schedule_agenda_id,
   committee_schedule_video_id, tvw_event_id, official_agenda_url,
-  tvw_url, source_record_id
+  tvw_url
 )
 SELECT
   b.id,
@@ -200,14 +162,8 @@ SELECT
   'fixture-video-9001',
   'fixture-tvw-event-9001',
   'https://example.test/agendas/fixture-9001',
-  'https://example.test/tvw/fixture-tvw-event-9001',
-  sr.id
+  'https://example.test/tvw/fixture-tvw-event-9001'
 FROM bill b
-JOIN source_record sr ON sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
 WHERE b.biennium = '2099-00' AND b.prefix = 'HB' AND b.number = 9001
   AND NOT EXISTS (
     SELECT 1 FROM hearing h
@@ -226,14 +182,8 @@ SET bill_id = b.id,
     tvw_event_id = 'fixture-tvw-event-9001',
     official_agenda_url = 'https://example.test/agendas/fixture-9001',
     tvw_url = 'https://example.test/tvw/fixture-tvw-event-9001',
-    source_record_id = sr.id,
     updated_at = NOW()
 FROM bill b
-JOIN source_record sr ON sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
 WHERE h.chamber = 'House'
   AND h.committee_name = 'House Committee on Housing'
   AND h.meeting_datetime = TIMESTAMPTZ '2099-01-10 17:30:00+00'
@@ -241,8 +191,7 @@ WHERE h.chamber = 'House'
 
 INSERT INTO agenda_item (
   hearing_id, bill_id, label, csi_meeting_family_id,
-  csi_agenda_item_family_id, csi_agenda_item_id, order_index,
-  source_record_id
+  csi_agenda_item_family_id, csi_agenda_item_id, order_index
 )
 SELECT
   h.id,
@@ -251,15 +200,9 @@ SELECT
   'fixture-meeting-family-9001',
   'fixture-agenda-family-9001',
   'fixture-agenda-item-9001',
-  1,
-  sr.id
+  1
 FROM hearing h
 JOIN bill b ON b.biennium = '2099-00' AND b.prefix = 'HB' AND b.number = 9001
-JOIN source_record sr ON sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
 WHERE h.chamber = 'House'
   AND h.committee_name = 'House Committee on Housing'
   AND h.meeting_datetime = TIMESTAMPTZ '2099-01-10 17:30:00+00'
@@ -269,8 +212,7 @@ ON CONFLICT (csi_agenda_item_id) DO UPDATE SET
   label = EXCLUDED.label,
   csi_meeting_family_id = EXCLUDED.csi_meeting_family_id,
   csi_agenda_item_family_id = EXCLUDED.csi_agenda_item_family_id,
-  order_index = EXCLUDED.order_index,
-  source_record_id = EXCLUDED.source_record_id;
+  order_index = EXCLUDED.order_index;
 
 INSERT INTO organization (canonical_name, aliases, match_confidence, match_notes)
 VALUES (
@@ -292,7 +234,7 @@ WHERE agenda_item_id IN (
 
 INSERT INTO testifier (
   agenda_item_id, raw_name, raw_organization, normalized_org_id,
-  position, testified, time_signed_in, source_record_id
+  position, testified, time_signed_in
 )
 SELECT
   a.id,
@@ -301,15 +243,9 @@ SELECT
   o.id,
   x.position::testifier_position,
   x.testified,
-  x.time_signed_in,
-  sr.id
+  x.time_signed_in
 FROM agenda_item a
 JOIN organization o ON o.canonical_name = 'Fixture Housing Coalition'
-JOIN source_record sr ON sr.source_system = 'lws'
-  AND sr.source_endpoint = 'Fixture.Minimal'
-  AND sr.source_url = 'fixture://wa-dd/minimal'
-  AND sr.content_hash = 'fixture-minimal-v1'
-  AND sr.transform_version = 'fixture-v1'
 CROSS JOIN (VALUES
   ('Alex Fixture', 'Fixture Housing Coalition', 'Pro', TRUE, TIMESTAMPTZ '2099-01-10 17:40:00+00'),
   ('Jordan Sample', 'Fixture Housing Coalition', 'Con', FALSE, TIMESTAMPTZ '2099-01-10 17:42:00+00')
@@ -338,17 +274,6 @@ CROSS JOIN (VALUES
   ('speaker_1', 6000,  11000, 'This housing fixture bill helps renters and homeowners understand the test flow.'),
   ('speaker_2', 12000, 16000, 'Members discuss housing supply, affordability, and fixture data quality.')
 ) AS x(cluster_label, start_ms, end_ms, text)
-WHERE j.tvw_event_id = 'fixture-tvw-event-9001'
-  AND j.status = 'succeeded';
-
-DELETE FROM agenda_item_window
-WHERE agenda_item_id IN (
-  SELECT id FROM agenda_item WHERE csi_agenda_item_id = 'fixture-agenda-item-9001'
-);
-
-INSERT INTO agenda_item_window (agenda_item_id, start_ms, end_ms, mentions)
-SELECT id, 1000, 16000, 1
-FROM agenda_item
-WHERE csi_agenda_item_id = 'fixture-agenda-item-9001';
+WHERE j.tvw_event_id = 'fixture-tvw-event-9001';
 
 COMMIT;

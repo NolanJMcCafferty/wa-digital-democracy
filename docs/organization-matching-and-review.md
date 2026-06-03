@@ -79,7 +79,7 @@ Normalized-name equality is a starting point, not truth.
     `organization`.
   - Contains source kind/table/row IDs, `source_name`, `normalized_name`,
     `organization_id`, candidate confidence, evidence strings, and optional
-    `source_record_id`.
+    stable source identifiers.
 
 - `vendor_entity_match_decision`
   - Human/system decision for one candidate.
@@ -157,7 +157,7 @@ go run ./cmd/wa-dd ingest-pdc-employers
 ```
 
 - Source: data.wa.gov / PDC lobbyist-employer dataset `xhn7-64im`.
-- Writes `pdc_employer` rows with normalized names and `source_record_id`.
+- Writes `pdc_employer` rows with normalized names.
 - Used both for cross-source verification and for reviewed public-record
   context.
 
