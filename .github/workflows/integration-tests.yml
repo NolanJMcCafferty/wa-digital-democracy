@@ -8,6 +8,12 @@ jobs:
   backend-tests:
     name: Run backend tests
     runs-on: ubuntu-latest
+    # The `services:` postgres backs the cmd/* integration tests that build-tag
+    # gate themselves with `integration` and read WADD_TEST_DSN. The
+    # internal/storage/db package boots its OWN postgis testcontainer per
+    # `go test` invocation (snapshot/restore semantics need an isolated DB),
+    # using the same image — Docker on ubuntu-latest already has it cached after
+    # the services block pulls it.
     services:
       postgres:
         image: postgis/postgis:16-3.5-alpine
