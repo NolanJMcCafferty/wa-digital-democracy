@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewDefaultsAndHelpers(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	if c.BaseURL != DefaultBaseURL {
 		t.Fatalf("BaseURL = %q", c.BaseURL)
 	}
@@ -65,7 +65,7 @@ showVideoModal(1, 100)`))
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	rows, err := c.Search(context.Background(), SearchParams{
 		StartDate:                time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC),
@@ -95,7 +95,7 @@ func TestSearchUsesExplicitSearchTypeAndPropagatesErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client(), RetryOn: []int{429}}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client(), RetryOn: []int{429}}))
 	c.BaseURL = srv.URL
 	_, err := c.Search(context.Background(), SearchParams{SearchType: "Bill"})
 	if err == nil {
@@ -121,7 +121,7 @@ func TestGetAgendaAndVideoModals(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	agenda, err := c.GetAgendaModal(context.Background(), "agenda id")
 	if err != nil {

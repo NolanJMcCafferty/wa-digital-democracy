@@ -59,7 +59,7 @@ func TestFetchDashboardAndReportsPage(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.S3BaseURL = srv.URL
 	c.DashboardID = "dash"
 	c.ReportsURL = srv.URL + "/reports"

@@ -26,7 +26,6 @@ func runIngestLegislators(args []string) int {
 	var (
 		biennium  = fs.String("biennium", "2025-26", "Biennium to fetch, e.g. 2025-26")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _legislators.json is written")
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for the LWS host")
 	)
@@ -37,7 +36,7 @@ func runIngestLegislators(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	deps, cleanup, err := newMetadataDeps(ctx, *dsn, *rawDir, *rateLimit)
+	deps, cleanup, err := newMetadataDeps(ctx, *dsn, *rateLimit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-legislators: %v\n", err)
 		return 1

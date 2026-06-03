@@ -17,7 +17,7 @@
 //   - LegislationService.GetLegislation              (biennium, billNumber)
 //   - LegislationService.GetCurrentStatus            (biennium, billNumber)
 //   - LegislationService.GetLegislativeStatusChangesByBillNumber
-//                                                    (biennium, billNumber, beginDate, endDate)
+//     (biennium, billNumber, beginDate, endDate)
 //   - LegislationService.GetSponsors                 (biennium, billId)
 //   - LegislationService.GetHearings                 (biennium, billNumber)
 //   - LegislationService.GetRollCalls                (biennium, billNumber)

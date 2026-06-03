@@ -12,7 +12,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func init() {
@@ -26,7 +25,6 @@ func runIngestPDCEmployers(args []string) int {
 	fs := flag.NewFlagSet("ingest-pdc-employers", flag.ContinueOnError)
 	var (
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
 		pageSize  = fs.Int("page-size", 50000, "Socrata page size")
 	)
@@ -42,15 +40,8 @@ func runIngestPDCEmployers(args []string) int {
 		return 1
 	}
 	defer store.Close()
-
-	objs, err := objectstore.NewConfigured(ctx, *rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ingest-pdc-employers: objectstore: %v\n", err)
-		return 1
-	}
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      120 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -78,13 +69,9 @@ func runIngestPDCEmployers(args []string) int {
 			break
 		}
 		q.Offset = offset
-		rows, fetch, err := client.FetchPageWithSource(ctx, pdc.DatasetLobbyistEmployment, q)
+		rows, _, err := client.FetchPageWithSource(ctx, pdc.DatasetLobbyistEmployment, q)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-pdc-employers: fetch page %d: %v\n", page, err)
-			return 1
-		}
-		if fetch.SourceRecordID == 0 {
-			fmt.Fprintln(os.Stderr, "ingest-pdc-employers: source record was not captured")
 			return 1
 		}
 		for _, r := range rows {
@@ -105,7 +92,6 @@ func runIngestPDCEmployers(args []string) int {
 				LastReportNumber:   emRow.ReportNumber,
 				LastEmploymentURL:  emRow.EmploymentURL,
 				Raw:                raw,
-				SourceRecordID:     fetch.SourceRecordID,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: upsert %s: %v\n", emRow.EmployerID, err)
 				return 1
@@ -120,7 +106,6 @@ func runIngestPDCEmployers(args []string) int {
 				EmploymentURL:    emRow.EmploymentURL,
 				EmploymentPeriod: emRow.EmploymentPeriod,
 				Raw:              raw,
-				SourceRecordID:   fetch.SourceRecordID,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: upsert lobbyist affiliation %s/%s: %v\n", emRow.LobbyistID, emRow.EmployerID, err)
 				return 1

@@ -35,7 +35,7 @@ func TestSearchAwardsWithSourceReturnsProvenance(t *testing.T) {
 		_, _ = w.Write([]byte(`{"limit":100,"page":1,"results":[{"Award ID":"A"}]}`))
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.BaseURL = srv.URL
 	got, fetch, err := c.SearchAwardsWithSource(context.Background(), AwardSearchRequest{Filters: map[string]any{}})
 	if err != nil || got.Page != 1 || len(got.Results) != 1 || fetch.System != SystemName || fetch.Endpoint != "search.spending_by_award" {
@@ -80,7 +80,7 @@ func TestSearchAwardsPostsDefaults(t *testing.T) {
 		_, _ = w.Write([]byte(`{"limit":100,"page":1,"results":[]}`))
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.BaseURL = srv.URL
 	got, err := c.SearchAwards(context.Background(), AwardSearchRequest{Filters: map[string]any{}})
 	if err != nil || got.Page != 1 {
@@ -96,7 +96,7 @@ func TestTopTierAgencies(t *testing.T) {
 		_, _ = w.Write([]byte(`{"results":[{"name":"Agency"}]}`))
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.BaseURL = srv.URL
 	got, err := c.TopTierAgencies(context.Background())
 	if err != nil || len(got) != 1 || got[0]["name"] != "Agency" {

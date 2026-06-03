@@ -69,7 +69,7 @@ func TestFetchEventDetailWithSourceUsesPlayerDownloadRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), "test-key")
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}), "test-key")
 	c.InvintusBaseURL = srv.URL
 
 	ev, _, err := c.FetchEventDetailWithSource(context.Background(), eventID, playerURL)

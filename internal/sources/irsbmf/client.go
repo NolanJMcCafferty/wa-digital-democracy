@@ -37,35 +37,35 @@ func init() { connector.Register(descriptor) }
 // (https://www.irs.gov/pub/irs-soi/eo_info.pdf). Numeric fields are parsed
 // where useful; the original raw map is preserved for forward compatibility.
 type Row struct {
-	EIN               string
-	Name              string
-	ICO               string
-	Street            string
-	City              string
-	State             string
-	Zip               string
-	GroupExemption    string
-	Subsection        string
-	Affiliation       string
-	Classification    string
-	Ruling            string
-	Deductibility     string
-	Foundation        string
-	Activity          string
-	Organization      string
-	Status            string
-	TaxPeriod         string
-	AssetCode         string
-	IncomeCode        string
-	FilingReqCode     string
-	PFFilingReqCode   string
-	AcctPeriod        string
-	AssetAmount       int64
-	IncomeAmount      int64
-	RevenueAmount     int64
-	NTEECode          string
-	SortName          string
-	Raw               map[string]string
+	EIN             string
+	Name            string
+	ICO             string
+	Street          string
+	City            string
+	State           string
+	Zip             string
+	GroupExemption  string
+	Subsection      string
+	Affiliation     string
+	Classification  string
+	Ruling          string
+	Deductibility   string
+	Foundation      string
+	Activity        string
+	Organization    string
+	Status          string
+	TaxPeriod       string
+	AssetCode       string
+	IncomeCode      string
+	FilingReqCode   string
+	PFFilingReqCode string
+	AcctPeriod      string
+	AssetAmount     int64
+	IncomeAmount    int64
+	RevenueAmount   int64
+	NTEECode        string
+	SortName        string
+	Raw             map[string]string
 }
 
 type Client struct {

@@ -8,34 +8,14 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// insertProvenance creates a fake source_record we can FK against.
-func insertProvenance(t *testing.T, store *db.Store, system, hash string) int64 {
-	t.Helper()
-	id, err := store.InsertSourceRecord(context.Background(), db.SourceRecordParams{
-		System:      system,
-		Endpoint:    "test." + system,
-		URL:         "http://example/" + hash,
-		FetchedAt:   time.Now().UTC(),
-		ContentHash: hash,
-		RawPath:     system + "/" + hash + ".bin",
-		ContentType: "application/json",
-	})
-	if err != nil {
-		t.Fatalf("source_record: %v", err)
-	}
-	return id
-}
-
 func TestUpsertBill_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "lws", "bill-test-1")
 
 	id1, err := store.UpsertBill(ctx, db.UpsertBillParams{
 		Biennium: "9999-99", Prefix: "HB", Number: 9990,
 		Title: "First version", ChamberOrigin: "House",
-		StatusDate:     time.Date(2025, 1, 13, 0, 0, 0, 0, time.UTC),
-		SourceRecordID: srID,
+		StatusDate: time.Date(2025, 1, 13, 0, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -43,7 +23,6 @@ func TestUpsertBill_Idempotent(t *testing.T) {
 	id2, err := store.UpsertBill(ctx, db.UpsertBillParams{
 		Biennium: "9999-99", Prefix: "HB", Number: 9990,
 		Title: "Second version", ChamberOrigin: "House",
-		SourceRecordID: srID,
 	})
 	if err != nil {
 		t.Fatalf("upsert 2: %v", err)
@@ -56,28 +35,25 @@ func TestUpsertBill_Idempotent(t *testing.T) {
 func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "csi", "test-csi-1")
 
 	// Need a hearing + agenda_item to satisfy FKs.
 	hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
 		CommitteeName: "Test Committee", Chamber: "House",
 		MeetingDateTime: time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC),
-		SourceRecordID:  srID,
 	})
 	if err != nil {
 		t.Fatalf("hearing: %v", err)
 	}
 	agendaID, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
 		HearingID: hearingID, Label: "HB 9991 Test", CSIAgendaItemID: "csi-test-9991",
-		SourceRecordID: srID,
 	})
 	if err != nil {
 		t.Fatalf("agenda: %v", err)
 	}
 
 	first := []db.InsertTestifierParams{
-		{AgendaItemID: agendaID, RawName: "Alice", Position: "Pro", Testified: true, SourceRecordID: srID},
-		{AgendaItemID: agendaID, RawName: "Bob", Position: "Con", Testified: true, SourceRecordID: srID},
+		{AgendaItemID: agendaID, RawName: "Alice", Position: "Pro", Testified: true},
+		{AgendaItemID: agendaID, RawName: "Bob", Position: "Con", Testified: true},
 	}
 	if err := store.ReplaceTestifiersForAgenda(ctx, agendaID, first); err != nil {
 		t.Fatalf("replace 1: %v", err)
@@ -91,7 +67,7 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 		t.Errorf("count after first = %d, want 2", got)
 	}
 	second := []db.InsertTestifierParams{
-		{AgendaItemID: agendaID, RawName: "Carol", Position: "Other", Testified: false, SourceRecordID: srID},
+		{AgendaItemID: agendaID, RawName: "Carol", Position: "Other", Testified: false},
 	}
 	if err := store.ReplaceTestifiersForAgenda(ctx, agendaID, second); err != nil {
 		t.Fatalf("replace 2: %v", err)
@@ -104,12 +80,10 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 func TestListDiscoveredHearingsForIngest_UsesHearingPipelineMarker(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "lws", "discovered-hearings-test-1")
 
 	billID, err := store.UpsertBill(ctx, db.UpsertBillParams{
 		Biennium: "9999-99", Prefix: "HB", Number: 9993,
 		Title: "Hearing Pipeline Marker Test", ChamberOrigin: "House",
-		SourceRecordID: srID,
 	})
 	if err != nil {
 		t.Fatalf("bill: %v", err)
@@ -120,7 +94,6 @@ func TestListDiscoveredHearingsForIngest_UsesHearingPipelineMarker(t *testing.T)
 			BillID: pInt64Test(billID), CommitteeName: "Hearing Pipeline Committee", Chamber: "House",
 			MeetingDateTime: time.Now().UTC().Add(offset),
 			TVWEventID:      tvwEventID,
-			SourceRecordID:  srID,
 		})
 		if err != nil {
 			t.Fatalf("hearing %s: %v", tvwEventID, err)
@@ -128,7 +101,7 @@ func TestListDiscoveredHearingsForIngest_UsesHearingPipelineMarker(t *testing.T)
 		for _, agendaID := range agendaIDs {
 			if _, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
 				HearingID: hearingID, BillID: pInt64Test(billID), Label: "HB 9993 Hearing Pipeline",
-				CSIAgendaItemID: agendaID, SourceRecordID: srID,
+				CSIAgendaItemID: agendaID,
 			}); err != nil {
 				t.Fatalf("agenda %s: %v", agendaID, err)
 			}
@@ -168,7 +141,6 @@ func pInt64Test(v int64) *int64 { return &v }
 func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "invintus", "tvw-media-test-1")
 
 	wpID := int64(77334)
 	if _, err := store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
@@ -192,12 +164,11 @@ func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
 		RawKeywords:         []string{"1501"},
 		RawWPTags:           []int{7507},
 		RawWPCategories:     []int{6090},
-		SourceRecordID:      srID,
 	}); err != nil {
 		t.Fatalf("upsert tvw_event: %v", err)
 	}
 	rows := []db.UpsertTVWMediaAssetParams{
-		{TVWEventID: "test-media-event", AssetID: "caption-1", AssetType: "caption", Name: "caption.vtt", FileURL: "https://example.com/caption.vtt", SourceRecordID: srID},
+		{TVWEventID: "test-media-event", AssetID: "caption-1", AssetType: "caption", Name: "caption.vtt", FileURL: "https://example.com/caption.vtt"},
 		{
 			TVWEventID:          "test-media-event",
 			AssetID:             "video-1",
@@ -208,7 +179,6 @@ func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
 			TotalRuntime:        "01:30:01",
 			TotalRuntimeSeconds: 5401,
 			AdvancedDetails:     map[string]any{"audio": []any{map[string]any{"channels": "2.0ch"}}},
-			SourceRecordID:      srID,
 		},
 	}
 	if err := store.ReplaceTVWMediaAssets(ctx, "test-media-event", rows); err != nil {
@@ -243,7 +213,6 @@ SELECT count(*), max(name) FROM tvw_media_asset WHERE tvw_event_id = 'test-media
 func TestUpsertDataWAContract_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "datawa_socrata", "datawa-contract-test-1")
 
 	params := db.UpsertDataWAContractParams{
 		SourceDatasetID: "test-contracts",
@@ -253,7 +222,6 @@ func TestUpsertDataWAContract_Idempotent(t *testing.T) {
 		ContractorName:  "Vendor A",
 		TotalAmount:     "123.45",
 		RawFields:       map[string]any{"source": "first"},
-		SourceRecordID:  srID,
 	}
 	if err := store.UpsertDataWAContract(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -282,7 +250,6 @@ SELECT count(*), max(contractor_name), max(total_amount)::text
 func TestUpsertDataWAMasterContractSale_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "datawa_socrata", "datawa-master-sale-test-1")
 
 	params := db.UpsertDataWAMasterContractSaleParams{
 		SourceDatasetID:    "n8q6-4twj",
@@ -299,7 +266,6 @@ func TestUpsertDataWAMasterContractSale_Idempotent(t *testing.T) {
 		Q4SalesReported:    "4.00",
 		TotalSalesReported: "10.00",
 		RawFields:          map[string]any{"source": "first"},
-		SourceRecordID:     srID,
 	}
 	if err := store.UpsertDataWAMasterContractSale(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -328,7 +294,6 @@ SELECT count(*), max(vendor_name), max(total_sales_reported)::text
 func TestUpsertDataWAITContract_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "datawa_socrata", "datawa-it-contract-test-1")
 	coop := true
 
 	params := db.UpsertDataWAITContractParams{
@@ -347,7 +312,6 @@ func TestUpsertDataWAITContract_Idempotent(t *testing.T) {
 		ContractAmountFY25:        "4864.66",
 		TotalContractAmount:       "71081.27",
 		RawFields:                 map[string]any{"source": "first"},
-		SourceRecordID:            srID,
 	}
 	if err := store.UpsertDataWAITContract(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -376,7 +340,6 @@ SELECT count(*), max(contractor_name), max(total_contract_amount)::text
 func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "datawa_socrata", "vendor-match-test-1")
 
 	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
 		CanonicalName:   "Acme Technologies Inc.",
@@ -397,7 +360,6 @@ func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 		ContractorName:  "ACME TECHNOLOGIES LLC",
 		TotalAmount:     "100.00",
 		RawFields:       map[string]any{"source": "contract"},
-		SourceRecordID:  srID,
 	}); err != nil {
 		t.Fatalf("upsert contract: %v", err)
 	}
@@ -442,7 +404,6 @@ func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 func TestUpsertDataWAWEBSVendor_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "datawa_socrata", "datawa-webs-vendor-test-1")
 
 	params := db.UpsertDataWAWEBSVendorParams{
 		SourceDatasetID:       "3kwi-7zsj",
@@ -458,7 +419,6 @@ func TestUpsertDataWAWEBSVendor_Idempotent(t *testing.T) {
 		SmallBusiness:         "Y",
 		VeteranOwned:          "N",
 		RawFields:             map[string]any{"source": "first"},
-		SourceRecordID:        srID,
 	}
 	if err := store.UpsertDataWAWEBSVendor(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -487,7 +447,6 @@ SELECT count(*), max(company_name), max(normalized_company_name)
 func TestUpsertFederalAward_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "usaspending", "usaspending-award-test-1")
 	start := time.Date(2025, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 
@@ -504,7 +463,6 @@ func TestUpsertFederalAward_Idempotent(t *testing.T) {
 		PlaceStateCode: "WA",
 		PlaceCounty:    "King",
 		RawFields:      map[string]any{"source": "first"},
-		SourceRecordID: srID,
 	}
 	if err := store.UpsertFederalAward(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -531,7 +489,6 @@ SELECT count(*), max(award_amount)::text
 func TestUpsertSeattleOperatingBudget_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "seattle_socrata", "seattle-operating-budget-test-1")
 
 	params := db.UpsertSeattleOperatingBudgetParams{
 		SourceDatasetID: "8u2j-imqx",
@@ -546,7 +503,6 @@ func TestUpsertSeattleOperatingBudget_Idempotent(t *testing.T) {
 		Description:     "Labor",
 		ApprovedAmount:  "1632174",
 		RawFields:       map[string]any{"source": "first"},
-		SourceRecordID:  srID,
 	}
 	if err := store.UpsertSeattleOperatingBudget(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)
@@ -573,7 +529,6 @@ SELECT count(*), max(approved_amount)::text
 func TestUpsertFiscalWAVendorPayment_Idempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	srID := insertProvenance(t, store, "fiscal_wa", "fiscalwa-vendor-payment-test-1")
 
 	params := db.UpsertFiscalWAVendorPaymentParams{
 		SourceDatasetID: "vendor-payments-2025-27",
@@ -590,7 +545,6 @@ func TestUpsertFiscalWAVendorPayment_Idempotent(t *testing.T) {
 		VendorName:      "HOME CARE MASTERS LLC",
 		Amount:          "1402.27",
 		RawFields:       map[string]any{"source": "first"},
-		SourceRecordID:  srID,
 	}
 	if err := store.UpsertFiscalWAVendorPayment(ctx, params); err != nil {
 		t.Fatalf("upsert 1: %v", err)

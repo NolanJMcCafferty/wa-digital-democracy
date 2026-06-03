@@ -14,7 +14,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func init() {
@@ -29,7 +28,6 @@ func runIngestMasterContractSales(args []string) int {
 	var (
 		limit     = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for data.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -44,14 +42,8 @@ func runIngestMasterContractSales(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewConfigured(ctx, *rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ingest-master-contract-sales: objectstore: %v\n", err)
-		return 1
-	}
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -64,13 +56,9 @@ func runIngestMasterContractSales(args []string) int {
 	if *limit > 0 {
 		query.Limit = *limit
 	}
-	rows, fetch, err := client.FetchMasterContractSalesWithSource(ctx, query)
+	rows, _, err := client.FetchMasterContractSalesWithSource(ctx, query)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-master-contract-sales: fetch: %v\n", err)
-		return 1
-	}
-	if fetch.SourceRecordID == 0 {
-		fmt.Fprintln(os.Stderr, "ingest-master-contract-sales: source record was not captured")
 		return 1
 	}
 
@@ -102,7 +90,6 @@ func runIngestMasterContractSales(args []string) int {
 			DiverseOptions:         sale.DiverseOptions,
 			Warnings:               sale.NormalizationWarning,
 			RawFields:              row,
-			SourceRecordID:         fetch.SourceRecordID,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-master-contract-sales: upsert row %s: %v\n", sale.SourceRowID, err)
 			return 1

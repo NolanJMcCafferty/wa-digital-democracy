@@ -35,15 +35,6 @@ type Pipeline struct {
 	TVW              *tvw.Client
 	PDC              *pdc.Client
 	BillAgendaTarget *common.BillAgendaTarget
-
-	// SourceRecordIDFor returns the source_record id for the connector's
-	// most recent fetch of a given URL. Populated during a run by reading
-	// the source_record row that the RawSink wrote. We maintain it here
-	// because connectors don't return source_record IDs through their
-	// public API — only through the httpx.RawFetch returned from Do.
-	//
-	// Phase 4 jobs work around that by re-fetching with httpx.RawFetch
-	// captured directly. See ingest_bill.go for the pattern.
 }
 
 // IDs is the running set of database IDs the pipeline accumulates as it

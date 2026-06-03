@@ -45,7 +45,7 @@ func TestTimeSeriesPostsRequestAndAddsRegistrationKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "reg-key")
+	c := New(httpx.New(httpx.Config{}), "reg-key")
 	c.BaseURL = srv.URL
 	got, err := c.TimeSeries(context.Background(), TimeSeriesRequest{SeriesID: []string{"CUUR0000SA0"}, StartYear: "2026", EndYear: "2026"})
 	if err != nil {

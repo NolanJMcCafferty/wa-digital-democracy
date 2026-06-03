@@ -19,7 +19,7 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 	// Discovery already resolved the TVW event ID. Fetch the authoritative
 	// Invintus event detail directly; WordPress post metadata is optional
 	// enrichment and should not block hearing ingest.
-	ev, evFetch, err := p.TVW.FetchEventDetailWithSource(ctx, eventID)
+	ev, _, err := p.TVW.FetchEventDetailWithSource(ctx, eventID)
 	if err != nil {
 		return fmt.Errorf("Event/getDetailed: %w", err)
 	}
@@ -46,7 +46,6 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 		RawKeywords:         norm.RawKeywords,
 		RawWPTags:           norm.RawWPTags,
 		RawWPCategories:     norm.RawWPCategories,
-		SourceRecordID:      evFetch.SourceRecordID,
 	}); err != nil {
 		return err
 	}
@@ -67,7 +66,6 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 			CurrentStatus:       a.CurrentStatus,
 			DateCreated:         a.DateCreated,
 			AdvancedDetails:     a.AdvancedDetails,
-			SourceRecordID:      evFetch.SourceRecordID,
 		})
 	}
 	if err := p.Store.ReplaceTVWMediaAssets(ctx, norm.TVWEventID, assetRows); err != nil {

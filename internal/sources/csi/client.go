@@ -3,10 +3,10 @@
 // CSI is the public source for testifier sign-ins, agenda item IDs, and
 // pro/con/other position records. Per data-sources/02:
 //
-//   1. GET /csi/<chamber>          — parse <select id="SelectedCommitteeId">
-//   2. GET /csi/Home/GetMeetings    — JSON option list (meetingFamilyId)
-//   3. GET /csi/Home/GetAgendaItems — HTML; parse onclick of class="agendaItem"
-//   4. GET /csi/Home/GetOtherTestifiers — HTML; parse data-json on the two tables
+//  1. GET /csi/<chamber>          — parse <select id="SelectedCommitteeId">
+//  2. GET /csi/Home/GetMeetings    — JSON option list (meetingFamilyId)
+//  3. GET /csi/Home/GetAgendaItems — HTML; parse onclick of class="agendaItem"
+//  4. GET /csi/Home/GetOtherTestifiers — HTML; parse data-json on the two tables
 //
 // Ethical/safety constraint (spec 02 line 53): READ-ONLY. Never call
 // /Testimony/Add, /Testifier/GetPanelTestifier, or any submit endpoint.

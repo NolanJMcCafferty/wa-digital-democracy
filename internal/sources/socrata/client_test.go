@@ -11,7 +11,7 @@ import (
 )
 
 func TestResourceURL(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "test", "https://data.example.gov", "tok")
+	c := New(httpx.New(httpx.Config{}), "test", "https://data.example.gov", "tok")
 	u, err := c.ResourceURL("abcd-1234", Query{Select: "count(*)", Where: "name='x'", Order: ":id", Limit: 10, Offset: 20})
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestFetchPageRecordsRequestShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "test_socrata", srv.URL, "")
+	c := New(httpx.New(httpx.Config{}), "test_socrata", srv.URL, "")
 	rows, err := c.FetchPage(context.Background(), "abcd-1234", Query{Limit: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestPageAllPaginatesAndStops(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "test_socrata", srv.URL, "")
+	c := New(httpx.New(httpx.Config{}), "test_socrata", srv.URL, "")
 	var ids []string
 	if err := c.PageAll(context.Background(), "abcd-1234", Query{Limit: 2}, func(r Row) bool {
 		ids = append(ids, r["id"].(string))
@@ -102,7 +102,7 @@ func TestCountParsesStringAndFloat(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
 			defer srv.Close()
-			c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "test_socrata", srv.URL, "")
+			c := New(httpx.New(httpx.Config{}), "test_socrata", srv.URL, "")
 			got, err := c.Count(context.Background(), "abcd-1234", "")
 			if err != nil || got != 42 {
 				t.Fatalf("Count = %d, %v", got, err)
@@ -123,7 +123,7 @@ func TestMetadataAndCatalog(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "test_socrata", srv.URL, "")
+	c := New(httpx.New(httpx.Config{}), "test_socrata", srv.URL, "")
 	m, err := c.Metadata(context.Background(), "abcd-1234")
 	if err != nil || m.ID != "abcd-1234" || m.Raw["name"] != "Dataset" {
 		t.Fatalf("metadata = %#v err=%v", m, err)

@@ -19,7 +19,7 @@ func TestFetchOperatingBudgetWithSourceReturnsProvenance(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, fetch, err := c.FetchOperatingBudgetWithSource(context.Background(), socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.8u2j-imqx" {

@@ -11,7 +11,7 @@ import (
 )
 
 func TestClientDefaultsAndValidation(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	if c.BaseURL != DefaultBaseURL {
 		t.Fatalf("BaseURL = %q", c.BaseURL)
 	}
@@ -35,7 +35,7 @@ func TestListCommitteesFetchesAndAnnotatesChamber(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	committees, err := c.ListCommittees(context.Background(), "House")
 	if err != nil {
@@ -68,7 +68,7 @@ func TestListMeetingsBuildsAjaxJSONRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	meetings, err := c.ListMeetings(context.Background(), "House", "31633")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestListAgendaItemsBuildsAjaxHTMLRequestAndAnnotatesChamber(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	items, err := c.ListAgendaItems(context.Background(), "Senate", "34109")
 	if err != nil {
@@ -122,7 +122,7 @@ func TestGetTestifiersBuildsRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	rows, err := c.GetTestifiers(context.Background(), "28599", "HB 1234")
 	if err != nil {
@@ -134,7 +134,7 @@ func TestGetTestifiersBuildsRequest(t *testing.T) {
 }
 
 func TestClientRequiredArgumentErrors(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	if _, err := c.ListMeetings(context.Background(), "House", ""); err == nil {
 		t.Fatal("ListMeetings missing committeeID succeeded")
 	}

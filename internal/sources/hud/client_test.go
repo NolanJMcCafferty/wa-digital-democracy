@@ -18,7 +18,7 @@ func TestFetchDatasetsPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.DatasetsURL = srv.URL
 	body, err := c.FetchDatasetsPage(context.Background())
 	if err != nil {
@@ -38,7 +38,7 @@ func TestFetchKnownFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	body, err := c.FetchKnownFile(context.Background(), srv.URL+"/file.csv")
 	if err != nil {
 		t.Fatal(err)

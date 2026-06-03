@@ -33,11 +33,11 @@ import (
 // failing — the pure-helper tests in queries_helpers_test.go still run.
 
 var (
-	pgContainer    *tcpostgres.PostgresContainer
-	pgConnString   string
-	pgSetupErr     error
-	pgSetupOnce    sync.Once
-	dockerSkipMsg  string
+	pgContainer   *tcpostgres.PostgresContainer
+	pgConnString  string
+	pgSetupErr    error
+	pgSetupOnce   sync.Once
+	dockerSkipMsg string
 )
 
 func TestMain(m *testing.M) {
@@ -116,6 +116,7 @@ func runMigrations(ctx context.Context, dsn string) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return err
 	}
+	goose.ResetGlobalMigrations()
 	return goose.UpContext(ctx, sqlDB, migrationsDir)
 }
 

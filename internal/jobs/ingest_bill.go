@@ -11,8 +11,7 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
 )
 
-// IngestBill fetches the LWS bill metadata package for the selected bill, persists raw
-// XML via the RawSink, and upserts bill / bill_sponsor /
+// IngestBill fetches the LWS bill metadata package for the selected bill and upserts bill / bill_sponsor /
 // bill_status_change. Legislator rows are owned by ingest-legislators;
 // sponsor joins resolve against that roster and skip missing members.
 func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
@@ -20,12 +19,10 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	billNumber := strconv.Itoa(p.BillAgendaTarget.Bill.Number)
 	billID := p.BillAgendaTarget.Bill.ID()
 
-	// We bypass the lws.Client wrappers and hit Do() directly so we can
-	// capture the source_record_id from the RawFetch each call returns.
 	httpClient := p.LWS.HTTP
 
 	// 1. GetLegislation → bill metadata + current status snapshot.
-	body, srBill, err := lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetLegislation", map[string]string{
+	body, err := lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetLegislation", map[string]string{
 		"biennium":   biennium,
 		"billNumber": billNumber,
 	})
@@ -38,16 +35,15 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	}
 	norm := lws.NormalizeBill(leg)
 	id, err := p.Store.UpsertBill(ctx, db.UpsertBillParams{
-		Biennium:       norm.Biennium,
-		Prefix:         norm.Prefix,
-		Number:         norm.Number,
-		Title:          norm.Title,
-		Description:    norm.Description,
-		ChamberOrigin:  norm.ChamberOrigin,
-		CurrentStatus:  norm.CurrentStatus,
-		StatusDate:     norm.StatusDate,
-		OfficialURL:    norm.OfficialURL,
-		SourceRecordID: srBill,
+		Biennium:      norm.Biennium,
+		Prefix:        norm.Prefix,
+		Number:        norm.Number,
+		Title:         norm.Title,
+		Description:   norm.Description,
+		ChamberOrigin: norm.ChamberOrigin,
+		CurrentStatus: norm.CurrentStatus,
+		StatusDate:    norm.StatusDate,
+		OfficialURL:   norm.OfficialURL,
 	})
 	if err != nil {
 		return err
@@ -56,7 +52,7 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 
 	// 2. GetSponsors → bill_sponsor. Roster membership rows are owned by
 	// ingest-legislators, so missing sponsor IDs are warning-only skips.
-	body, _, err = lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetSponsors", map[string]string{
+	body, err = lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetSponsors", map[string]string{
 		"biennium": biennium,
 		"billId":   billID,
 	})
@@ -90,7 +86,7 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	// 3. GetLegislativeStatusChangesByBillNumber → status timeline.
 	// LWS expects beginDate/endDate; cover the whole biennium generously.
 	begin, end := biennialBounds(biennium)
-	body, srStatus, err := lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetLegislativeStatusChangesByBillNumber", map[string]string{
+	body, err = lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetLegislativeStatusChangesByBillNumber", map[string]string{
 		"biennium":   biennium,
 		"billNumber": billNumber,
 		"beginDate":  begin,
@@ -109,10 +105,9 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 		for _, ch := range changes {
 			actDate, _ := parseLWSDate(ch.ActionDate)
 			params = append(params, db.InsertStatusChangeParams{
-				BillID:         ids.BillID,
-				ActionDate:     actDate,
-				HistoryLine:    ch.HistoryLine,
-				SourceRecordID: srStatus,
+				BillID:      ids.BillID,
+				ActionDate:  actDate,
+				HistoryLine: ch.HistoryLine,
 			})
 		}
 		if len(params) > 0 {
@@ -125,7 +120,7 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	// 4. GetHearings — used both to seed the hearing row (Step 3 will
 	// re-upsert with CSI/TVW IDs) and to give us the LWS AgendaId for
 	// the matching meeting.
-	body, srHr, err := lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetHearings", map[string]string{
+	body, err = lwsCall(ctx, httpClient, p.LWS.BaseURL, "GetHearings", map[string]string{
 		"biennium":   biennium,
 		"billNumber": billNumber,
 	})
@@ -154,7 +149,6 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 				MeetingDateTime:  nh.MeetingDateTime,
 				Location:         nh.Location,
 				LWSMeetingID:     nh.LWSMeetingID,
-				SourceRecordID:   srHr,
 			})
 			if err != nil {
 				return err
@@ -177,7 +171,6 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 			MeetingDateTime:  nh.MeetingDateTime,
 			Location:         nh.Location,
 			LWSMeetingID:     nh.LWSMeetingID,
-			SourceRecordID:   srHr,
 		}); err != nil {
 			return err
 		}
@@ -186,8 +179,8 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 }
 
 // lwsCall is a thin wrapper that builds the SOAP envelope, posts it via
-// the httpx client, and returns the response body plus the source_record id.
-func lwsCall(ctx context.Context, h *httpx.Client, baseURL, op string, params map[string]string) ([]byte, int64, error) {
+// the httpx client, and returns the response body.
+func lwsCall(ctx context.Context, h *httpx.Client, baseURL, op string, params map[string]string) ([]byte, error) {
 	// Render param XML preserving whatever order Go iterates the map in —
 	// LWS doesn't care about order.
 	pairs := make([][2]string, 0, len(params))
@@ -213,9 +206,9 @@ func lwsCall(ctx context.Context, h *httpx.Client, baseURL, op string, params ma
 		Body:     []byte(envelope),
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return fetch.Body, fetch.SourceRecordID, nil
+	return fetch.Body, nil
 }
 
 func lwsRenderOp(op string, params [][2]string) string {

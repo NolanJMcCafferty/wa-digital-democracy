@@ -111,12 +111,12 @@ func TestNullStringArray(t *testing.T) {
 
 func TestLowerTrim(t *testing.T) {
 	cases := map[string]string{
-		"":            "",
-		"FOO":         "foo",
-		"  Hello  ":   "hello",
-		"\tTAB":       "tab",
-		"MixED CaSe":  "mixed case",
-		"ünIcode":     "ünicode",
+		"":           "",
+		"FOO":        "foo",
+		"  Hello  ":  "hello",
+		"\tTAB":      "tab",
+		"MixED CaSe": "mixed case",
+		"ünIcode":    "ünicode",
 	}
 	for in, want := range cases {
 		if got := lowerTrim(in); got != want {
@@ -169,13 +169,13 @@ func TestHasMinLetterRatio(t *testing.T) {
 		ratio float64
 		want  bool
 	}{
-		{"", 0.5, false},        // empty → false
-		{"   ", 0.5, false},     // spaces are skipped → total 0
-		{"abc", 0.5, true},      // 100% letters
-		{"a1b2", 0.5, true},     // 50% letters, ratio 0.5
-		{"a123", 0.5, false},    // 25% letters
-		{"foo bar", 0.9, true},  // spaces ignored
-		{"###", 0.5, false},     // pure symbols
+		{"", 0.5, false},       // empty → false
+		{"   ", 0.5, false},    // spaces are skipped → total 0
+		{"abc", 0.5, true},     // 100% letters
+		{"a1b2", 0.5, true},    // 50% letters, ratio 0.5
+		{"a123", 0.5, false},   // 25% letters
+		{"foo bar", 0.9, true}, // spaces ignored
+		{"###", 0.5, false},    // pure symbols
 	}
 	for _, c := range cases {
 		if got := hasMinLetterRatio(c.s, c.ratio); got != c.want {

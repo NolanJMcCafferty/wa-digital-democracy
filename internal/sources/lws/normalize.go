@@ -9,20 +9,21 @@ import (
 // NormalizedBill is the subset of `bill` table fields populated from a
 // Legislation + CurrentStatus pair.
 type NormalizedBill struct {
-	Biennium       string
-	Prefix         string // "HB" | "SB" | "HJR" | etc.
-	Number         int    // 1234
-	Title          string // ShortDescription
-	Description    string // LongDescription
-	ChamberOrigin  string // OriginalAgency
-	CurrentStatus  string // CurrentStatus.HistoryLine
-	StatusDate     time.Time
-	OfficialURL    string
+	Biennium      string
+	Prefix        string // "HB" | "SB" | "HJR" | etc.
+	Number        int    // 1234
+	Title         string // ShortDescription
+	Description   string // LongDescription
+	ChamberOrigin string // OriginalAgency
+	CurrentStatus string // CurrentStatus.HistoryLine
+	StatusDate    time.Time
+	OfficialURL   string
 }
 
 // NormalizeBill maps a Legislation into the canonical bill shape. The
 // official-URL pattern is documented in Blueprint line 97:
-//   https://app.leg.wa.gov/billsummary?BillNumber=<n>&Year=<biennium-start>
+//
+//	https://app.leg.wa.gov/billsummary?BillNumber=<n>&Year=<biennium-start>
 func NormalizeBill(l *Legislation) NormalizedBill {
 	prefix, num := SplitBillID(l.BillID)
 	if num == 0 {
@@ -76,15 +77,15 @@ func NormalizeSponsors(in []Sponsor) []NormalizedSponsor {
 // from LWS alone — committee_schedule_*  and tvw_event_id come from
 // elsewhere).
 type NormalizedHearing struct {
-	BillID            string
-	Biennium          string
-	CommitteeName     string
-	CommitteeAcronym  string
-	Chamber           string
-	MeetingDateTime   time.Time
-	Location          string
-	LWSMeetingID      string // we reuse AgendaId as the meeting key
-	HearingType       string
+	BillID             string
+	Biennium           string
+	CommitteeName      string
+	CommitteeAcronym   string
+	Chamber            string
+	MeetingDateTime    time.Time
+	Location           string
+	LWSMeetingID       string // we reuse AgendaId as the meeting key
+	HearingType        string
 	HearingDescription string
 }
 

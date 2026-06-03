@@ -36,7 +36,6 @@ type UpsertDataWAContractParams struct {
 	VeteranOwned             string
 	Warnings                 []string
 	RawFields                map[string]any
-	SourceRecordID           int64
 }
 
 // UpsertDataWAContract inserts or updates one normalized data.wa.gov contract row.
@@ -56,11 +55,11 @@ INSERT INTO datawa_contract (
   statewide_vendor_number, description, start_date, end_date, period_start, period_end,
   federal_amount, state_amount, other_amount, total_amount, procurement_type,
   minority_woman_owned, small_business, veteran_owned, normalization_warnings,
-  raw_fields, source_record_id
+  raw_fields
 ) VALUES (
   $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
   NULLIF($16,'')::numeric, NULLIF($17,'')::numeric, NULLIF($18,'')::numeric, NULLIF($19,'')::numeric,
-  $20,$21,$22,$23,$24::jsonb,$25::jsonb,$26
+  $20,$21,$22,$23,$24::jsonb,$25::jsonb
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   fiscal_year = EXCLUDED.fiscal_year,
@@ -86,14 +85,13 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   veteran_owned = EXCLUDED.veteran_owned,
   normalization_warnings = EXCLUDED.normalization_warnings,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, p.FiscalYear, strOrNull(p.AgencyName), strOrNull(p.AgencyNumber),
 		strOrNull(p.ContractNumber), strOrNull(p.AmendmentNumber), strOrNull(p.ContractorName), strOrNull(defaultStr(p.NormalizedContractorName, entitymatch.NormalizedName(p.ContractorName))),
 		strOrNull(p.StatewideVendorNumber), strOrNull(p.Description), datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), datePtrOrNull(p.PeriodStart), datePtrOrNull(p.PeriodEnd),
 		p.FederalAmount, p.StateAmount, p.OtherAmount, p.TotalAmount, strOrNull(p.ProcurementType),
-		strOrNull(p.MinorityWomanOwned), strOrNull(p.SmallBusiness), strOrNull(p.VeteranOwned), string(warnings), string(raw), p.SourceRecordID,
+		strOrNull(p.MinorityWomanOwned), strOrNull(p.SmallBusiness), strOrNull(p.VeteranOwned), string(warnings), string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert datawa_contract: %w", err)
@@ -125,7 +123,6 @@ type UpsertDataWAMasterContractSaleParams struct {
 	DiverseOptions         string
 	Warnings               []string
 	RawFields              map[string]any
-	SourceRecordID         int64
 }
 
 // UpsertDataWAMasterContractSale inserts or updates one normalized DataWA
@@ -146,11 +143,11 @@ INSERT INTO datawa_master_contract_sale (
   normalized_vendor_name, report_year,
   q1_sales_reported, q2_sales_reported, q3_sales_reported, q4_sales_reported,
   total_sales_reported, omwbe, veteran_owned, small_business, diverse_options,
-  normalization_warnings, raw_fields, source_record_id
+  normalization_warnings, raw_fields
 ) VALUES (
   $1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10, 0),
   NULLIF($11,'')::numeric, NULLIF($12,'')::numeric, NULLIF($13,'')::numeric, NULLIF($14,'')::numeric,
-  NULLIF($15,'')::numeric, $16,$17,$18,$19,$20::jsonb,$21::jsonb,$22
+  NULLIF($15,'')::numeric, $16,$17,$18,$19,$20::jsonb,$21::jsonb
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   customer_type = EXCLUDED.customer_type,
@@ -172,7 +169,6 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   diverse_options = EXCLUDED.diverse_options,
   normalization_warnings = EXCLUDED.normalization_warnings,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, strOrNull(p.CustomerType), strOrNull(p.CustomerName),
@@ -180,7 +176,7 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 		strOrNull(defaultStr(p.NormalizedVendorName, entitymatch.NormalizedName(p.VendorName))), p.ReportYear,
 		p.Q1SalesReported, p.Q2SalesReported, p.Q3SalesReported, p.Q4SalesReported, p.TotalSalesReported,
 		strOrNull(p.OMWBE), strOrNull(p.VeteranOwned), strOrNull(p.SmallBusiness), strOrNull(p.DiverseOptions),
-		string(warnings), string(raw), p.SourceRecordID,
+		string(warnings), string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert datawa_master_contract_sale: %w", err)
@@ -237,7 +233,6 @@ type UpsertDataWAITContractParams struct {
 	ContractAmountExplanation string
 	Warnings                  []string
 	RawFields                 map[string]any
-	SourceRecordID            int64
 }
 
 // UpsertDataWAITContract inserts or updates one normalized DataWA IT contract
@@ -264,8 +259,7 @@ INSERT INTO datawa_it_contract (
   total_percentage, contract_amount_fy20, contract_amount_fy21, contract_amount_fy22,
   contract_amount_fy23, contract_amount_fy24, contract_amount_fy25, contract_amount_fy26,
   contract_amount_fy27, contract_amount_fy28, contract_amount_fy29, contract_amount_fy30,
-  total_contract_amount, contract_amount_explanation, normalization_warnings, raw_fields,
-  source_record_id
+  total_contract_amount, contract_amount_explanation, normalization_warnings, raw_fields
 ) VALUES (
   $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
   NULLIF($19,'')::numeric, NULLIF($20,'')::numeric, NULLIF($21,'')::numeric, NULLIF($22,'')::numeric,
@@ -274,7 +268,7 @@ INSERT INTO datawa_it_contract (
   NULLIF($31,'')::numeric, NULLIF($32,'')::numeric, NULLIF($33,'')::numeric, NULLIF($34,'')::numeric,
   NULLIF($35,'')::numeric, NULLIF($36,'')::numeric, NULLIF($37,'')::numeric, NULLIF($38,'')::numeric,
   NULLIF($39,'')::numeric, NULLIF($40,'')::numeric, NULLIF($41,'')::numeric, NULLIF($42,'')::numeric,
-  NULLIF($43,'')::numeric, $44, $45::jsonb, $46::jsonb, $47
+  NULLIF($43,'')::numeric, $44, $45::jsonb, $46::jsonb
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   report_fiscal_year = EXCLUDED.report_fiscal_year,
@@ -321,7 +315,6 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   contract_amount_explanation = EXCLUDED.contract_amount_explanation,
   normalization_warnings = EXCLUDED.normalization_warnings,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, p.ReportFiscalYear, strOrNull(p.AgencyNumberAgencyName),
@@ -334,7 +327,7 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
 		p.ITTowerNetwork, p.ITTowerOutput, p.ITTowerPlatform, p.ITTowerSecurity, p.ITTowerStorage, p.OtherNonIT, p.TotalPercentage,
 		p.ContractAmountFY20, p.ContractAmountFY21, p.ContractAmountFY22, p.ContractAmountFY23, p.ContractAmountFY24, p.ContractAmountFY25,
 		p.ContractAmountFY26, p.ContractAmountFY27, p.ContractAmountFY28, p.ContractAmountFY29, p.ContractAmountFY30, p.TotalContractAmount,
-		strOrNull(p.ContractAmountExplanation), string(warnings), string(raw), p.SourceRecordID,
+		strOrNull(p.ContractAmountExplanation), string(warnings), string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert datawa_it_contract: %w", err)
@@ -362,7 +355,6 @@ type UpsertDataWAWEBSVendorParams struct {
 	OtherCert2            string
 	Warnings              []string
 	RawFields             map[string]any
-	SourceRecordID        int64
 }
 
 // UpsertDataWAWEBSVendor inserts or updates one normalized WEBS vendor row.
@@ -380,9 +372,9 @@ INSERT INTO datawa_webs_vendor (
   source_dataset_id, source_row_id, company_name, normalized_company_name,
   dba_name, phone_number, contact_email, city, state, web_address,
   commodity_code, description_of_work, small_business, veteran_owned,
-  other_cert, other_cert_2, normalization_warnings, raw_fields, source_record_id
+  other_cert, other_cert_2, normalization_warnings, raw_fields
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,$19
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   company_name = EXCLUDED.company_name,
@@ -401,13 +393,12 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   other_cert_2 = EXCLUDED.other_cert_2,
   normalization_warnings = EXCLUDED.normalization_warnings,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, strOrNull(p.CompanyName), strOrNull(p.NormalizedCompanyName),
 		strOrNull(p.DBAName), strOrNull(p.PhoneNumber), strOrNull(p.ContactEmail), strOrNull(p.City), strOrNull(p.State), strOrNull(p.WebAddress),
 		strOrNull(p.CommodityCode), strOrNull(p.DescriptionOfWork), strOrNull(p.SmallBusiness), strOrNull(p.VeteranOwned),
-		strOrNull(p.OtherCert), strOrNull(p.OtherCert2), string(warnings), string(raw), p.SourceRecordID,
+		strOrNull(p.OtherCert), strOrNull(p.OtherCert2), string(warnings), string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert datawa_webs_vendor: %w", err)

@@ -25,7 +25,7 @@ func TestFetchParcels(t *testing.T) {
 		_, _ = w.Write([]byte(`[{":id":"row1","pin":"123"}]`))
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, err := c.FetchParcels(context.Background(), socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || rows[0]["pin"] != "123" {

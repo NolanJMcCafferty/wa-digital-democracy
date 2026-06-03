@@ -82,7 +82,7 @@ func TestNormalizeOrgName(t *testing.T) {
 }
 
 func TestClient_NewDefaults(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "TKN")
+	c := New(httpx.New(httpx.Config{}), "TKN")
 	if c.BaseURL != DefaultBaseURL || c.AppToken != "TKN" {
 		t.Fatalf("client = %+v", c)
 	}
@@ -101,8 +101,7 @@ func TestClient_FetchPageWithSourceReturnsRawFetch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sink := &sourceIDSink{id: 42}
-	c := newTestClient(httpx.New(httpx.Config{Sink: sink}), srv.URL, "")
+	c := newTestClient(httpx.New(httpx.Config{}), srv.URL, "")
 	rows, fetch, err := c.FetchPageWithSource(context.Background(), DatasetContributions, Query{Limit: 1})
 	if err != nil {
 		t.Fatalf("FetchPageWithSource: %v", err)
@@ -110,19 +109,9 @@ func TestClient_FetchPageWithSourceReturnsRawFetch(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("len(rows) = %d, want 1", len(rows))
 	}
-	if fetch.SourceRecordID != 42 {
-		t.Fatalf("SourceRecordID = %d, want 42", fetch.SourceRecordID)
-	}
 	if fetch.Endpoint != "resource."+DatasetContributions {
 		t.Fatalf("Endpoint = %q", fetch.Endpoint)
 	}
-}
-
-type sourceIDSink struct{ id int64 }
-
-func (s *sourceIDSink) Record(ctx context.Context, f *httpx.RawFetch) error {
-	f.SourceRecordID = s.id
-	return nil
 }
 
 func TestClient_URLEncoding(t *testing.T) {
@@ -136,7 +125,7 @@ func TestClient_URLEncoding(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), srv.URL, "TKN")
+	c := newTestClient(httpx.New(httpx.Config{}), srv.URL, "TKN")
 	_, err := c.FetchPage(context.Background(), DatasetContributions, Query{
 		Select: "id,filer_name,amount",
 		Where:  "election_year=2026",
@@ -189,7 +178,7 @@ func TestClient_CountAndMetadata(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), srv.URL, "TKN")
+	c := newTestClient(httpx.New(httpx.Config{HTTP: srv.Client()}), srv.URL, "TKN")
 	count, err := c.Count(context.Background(), DatasetContributions, "election_year=2026")
 	if err != nil {
 		t.Fatalf("Count: %v", err)
@@ -219,7 +208,7 @@ func TestClient_CountHandlesNumericEmptyAndUnexpectedTypes(t *testing.T) {
 	wantErr := []bool{false, false, true}
 	for i, body := range responses {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
-		c := newTestClient(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), srv.URL, "")
+		c := newTestClient(httpx.New(httpx.Config{HTTP: srv.Client()}), srv.URL, "")
 		got, err := c.Count(context.Background(), DatasetContributions, "")
 		srv.Close()
 		if (err != nil) != wantErr[i] {
@@ -246,7 +235,7 @@ func TestClient_PageAllStopsOnShortPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), srv.URL, "")
+	c := newTestClient(httpx.New(httpx.Config{}), srv.URL, "")
 	var ids []string
 	err := c.PageAll(context.Background(), "x-y", Query{Limit: 2}, func(r Row) bool {
 		ids = append(ids, str(r, "id"))

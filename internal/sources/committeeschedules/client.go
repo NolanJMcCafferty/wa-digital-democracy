@@ -8,11 +8,11 @@
 // Phase 0 finding: the search form's date params are ignored without an
 // anti-forgery token / session cookie. For the first-page MVP we either:
 //
-//   1. Run the search "as-is" and accept the upstream-default returned set
-//      (about 4 meetings, 75% of which carry a TVW event ID), OR
-//   2. Capture-and-replay an authenticated browser POST. That capture is
-//      operator work; this client just exposes the form fields so the
-//      operator can pass a captured __RequestVerificationToken.
+//  1. Run the search "as-is" and accept the upstream-default returned set
+//     (about 4 meetings, 75% of which carry a TVW event ID), OR
+//  2. Capture-and-replay an authenticated browser POST. That capture is
+//     operator work; this client just exposes the form fields so the
+//     operator can pass a captured __RequestVerificationToken.
 package committeeschedules
 
 import (

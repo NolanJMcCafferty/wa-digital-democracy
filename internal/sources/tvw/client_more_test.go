@@ -31,7 +31,7 @@ func TestFetchScheduleBuildsRequestAndParses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), "")
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}), "")
 	c.WPBaseURL = srv.URL
 
 	got, err := c.FetchSchedule(context.Background(), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC))
@@ -64,7 +64,7 @@ func TestFetchWPVideoArchivePaginatesAndClamps(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), "")
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}), "")
 	c.WPBaseURL = srv.URL
 
 	posts, err := c.FetchWPVideoArchive(context.Background(), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC), 2)
@@ -85,7 +85,7 @@ func TestFetchWPVideoArchiveStopsOnPaginationOver(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client(), RetryOn: []int{500}}), "")
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client(), RetryOn: []int{500}}), "")
 	c.WPBaseURL = srv.URL
 
 	posts, err := c.FetchWPVideoArchive(context.Background(), time.Now().Add(-24*time.Hour), time.Now(), 10)
@@ -106,7 +106,7 @@ func TestFetchWPVideoByEventIDFindsMatchingPost(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), "")
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}), "")
 	c.WPBaseURL = srv.URL
 
 	post, fetch, err := c.FetchWPVideoByEventID(context.Background(), "2026051301")
@@ -130,7 +130,7 @@ func TestFetchCaptionsParsesAndAnnotates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client()}), "")
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}), "")
 	segments, err := c.FetchCaptions(context.Background(), "2026051301", srv.URL+"/caption.vtt")
 	if err != nil {
 		t.Fatalf("FetchCaptions: %v", err)
@@ -144,7 +144,7 @@ func TestFetchCaptionsParsesAndAnnotates(t *testing.T) {
 }
 
 func TestFetchCaptionsEmptyURL(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	segments, err := c.FetchCaptions(context.Background(), "event", "")
 	if err != nil {
 		t.Fatalf("FetchCaptions empty: %v", err)

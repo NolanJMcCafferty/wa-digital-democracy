@@ -11,7 +11,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func acquireDailyLock(ctx context.Context, dsn string) (func(), bool, error) {
@@ -40,19 +39,12 @@ type buildDeps struct {
 	tvwClient  *tvw.Client
 }
 
-func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*buildDeps, func(), error) {
+func newBuildDeps(ctx context.Context, dsn string, rateLimit float64) (*buildDeps, func(), error) {
 	store, err := db.Open(ctx, dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("db open: %w", err)
 	}
 	cleanup := func() { store.Close() }
-
-	objs, err := objectstore.NewConfigured(ctx, rawDir)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("objectstore: %w", err)
-	}
-	sink := db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"}
 
 	embedderKey := os.Getenv("INVINTUS_EMBEDDER_KEY")
 	if embedderKey == "" {
@@ -62,7 +54,6 @@ func newBuildDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*
 
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         sink,
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -92,23 +83,15 @@ type metadataDeps struct {
 	lwsClient  *lws.Client
 }
 
-func newMetadataDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*metadataDeps, func(), error) {
+func newMetadataDeps(ctx context.Context, dsn string, rateLimit float64) (*metadataDeps, func(), error) {
 	store, err := db.Open(ctx, dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("db open: %w", err)
 	}
 	cleanup := func() { store.Close() }
 
-	objs, err := objectstore.NewConfigured(ctx, rawDir)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("objectstore: %w", err)
-	}
-	sink := db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"}
-
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         sink,
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -131,23 +114,15 @@ type discoveryDeps struct {
 	tvwClient  *tvw.Client
 }
 
-func newDiscoveryDeps(ctx context.Context, dsn, rawDir string, rateLimit float64) (*discoveryDeps, func(), error) {
+func newDiscoveryDeps(ctx context.Context, dsn string, rateLimit float64) (*discoveryDeps, func(), error) {
 	store, err := db.Open(ctx, dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("db open: %w", err)
 	}
 	cleanup := func() { store.Close() }
 
-	objs, err := objectstore.NewConfigured(ctx, rawDir)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("objectstore: %w", err)
-	}
-	sink := db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"}
-
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         sink,
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,

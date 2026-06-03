@@ -52,7 +52,7 @@ func TestQueryAndWashingtonDisasters(t *testing.T) {
 		_, _ = w.Write([]byte(`{"DisasterDeclarationsSummaries":[{"state":"WA"}]}`))
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.BaseURL = srv.URL
 	rows, err := c.WashingtonDisasters(context.Background())
 	if err != nil || len(rows) != 1 || calls != 1 {

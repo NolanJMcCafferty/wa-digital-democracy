@@ -8,14 +8,14 @@ import (
 // LobbyistEmployment is the subset of xhn7-64im fields the page panel uses.
 // Per spec 05 §"Entity fields to preserve". Raw map preserved separately.
 type LobbyistEmployment struct {
-	ReportNumber       string
-	LobbyistID         string
-	LobbyistName       string
-	EmployerID         string
-	EmployerName       string
-	EmploymentYear     string
-	EmploymentURL      string
-	EmploymentPeriod   string
+	ReportNumber     string
+	LobbyistID       string
+	LobbyistName     string
+	EmployerID       string
+	EmployerName     string
+	EmploymentYear   string
+	EmploymentURL    string
+	EmploymentPeriod string
 }
 
 // LobbyistCompensation is the subset of 9nnw-c693 fields used.

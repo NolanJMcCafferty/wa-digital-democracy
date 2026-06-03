@@ -24,7 +24,6 @@ type UpsertHearingParams struct {
 	TVWEventID                string
 	OfficialAgendaURL         string
 	TVWURL                    string
-	SourceRecordID            int64
 }
 
 // UpsertHearing inserts a hearing; uses (chamber, meeting_datetime,
@@ -42,8 +41,8 @@ SELECT id FROM hearing
 INSERT INTO hearing (bill_id, committee_name, committee_acronym, chamber, meeting_datetime,
                      location, lws_meeting_id, committee_schedule_agenda_id,
                      committee_schedule_video_id, tvw_event_id, official_agenda_url,
-                     tvw_url, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                     tvw_url)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 RETURNING id;`
 		err = s.Pool.QueryRow(ctx, insQ,
 			p.BillID, p.CommitteeName, strOrNull(p.CommitteeAcronym),
@@ -51,7 +50,6 @@ RETURNING id;`
 			strOrNull(p.LWSMeetingID), strOrNull(p.CommitteeScheduleAgendaID),
 			strOrNull(p.CommitteeScheduleVideoID), strOrNull(p.TVWEventID),
 			strOrNull(p.OfficialAgendaURL), strOrNull(p.TVWURL),
-			p.SourceRecordID,
 		).Scan(&id)
 		if err != nil {
 			return 0, fmt.Errorf("insert hearing: %w", err)
@@ -94,7 +92,6 @@ type UpsertAgendaItemParams struct {
 	CSIAgendaItemFamilyID string
 	CSIAgendaItemID       string
 	OrderIndex            int
-	SourceRecordID        int64
 }
 
 // UpsertAgendaItem inserts/updates keyed on csi_agenda_item_id.
@@ -102,22 +99,21 @@ func (s *Store) UpsertAgendaItem(ctx context.Context, p UpsertAgendaItemParams) 
 	const q = `
 INSERT INTO agenda_item (hearing_id, bill_id, label, csi_meeting_family_id,
                          csi_agenda_item_family_id, csi_agenda_item_id,
-                         order_index, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                         order_index)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
 ON CONFLICT (csi_agenda_item_id) DO UPDATE SET
   hearing_id = EXCLUDED.hearing_id,
   bill_id    = EXCLUDED.bill_id,
   label      = EXCLUDED.label,
   csi_meeting_family_id     = EXCLUDED.csi_meeting_family_id,
   csi_agenda_item_family_id = EXCLUDED.csi_agenda_item_family_id,
-  order_index               = EXCLUDED.order_index,
-  source_record_id          = EXCLUDED.source_record_id
+  order_index               = EXCLUDED.order_index
 RETURNING id;`
 	var id int64
 	err := s.Pool.QueryRow(ctx, q,
 		p.HearingID, p.BillID, p.Label,
 		strOrNull(p.CSIMeetingFamilyID), strOrNull(p.CSIAgendaItemFamilyID),
-		p.CSIAgendaItemID, p.OrderIndex, p.SourceRecordID,
+		p.CSIAgendaItemID, p.OrderIndex,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("upsert agenda_item: %w", err)
@@ -132,7 +128,6 @@ type InsertTestifierParams struct {
 	Position        string // testifier_position enum value
 	Testified       bool
 	TimeSignedIn    time.Time
-	SourceRecordID  int64
 }
 
 // ReplaceTestifiersForAgenda is the idempotent upsert pattern: delete the
@@ -168,14 +163,14 @@ DELETE FROM person_source_mention
 	}
 	const insQ = `
 INSERT INTO testifier (agenda_item_id, raw_name, raw_organization, position,
-                       testified, time_signed_in, source_record_id)
-VALUES ($1, $2, $3, $4::testifier_position, $5, $6, $7)
+                       testified, time_signed_in)
+VALUES ($1, $2, $3, $4::testifier_position, $5, $6)
 RETURNING id;`
 	for _, r := range rows {
 		var testifierID int64
 		if err := tx.QueryRow(ctx, insQ,
 			r.AgendaItemID, r.RawName, strOrNull(r.RawOrganization),
-			r.Position, r.Testified, timeOrNull(r.TimeSignedIn), r.SourceRecordID,
+			r.Position, r.Testified, timeOrNull(r.TimeSignedIn),
 		).Scan(&testifierID); err != nil {
 			return fmt.Errorf("insert testifier: %w", err)
 		}
@@ -195,7 +190,6 @@ func insertCSIPersonMentionAndAffiliation(ctx context.Context, tx pgx.Tx, testif
 		Position:        r.Position,
 		Testified:       r.Testified,
 		TimeSignedIn:    r.TimeSignedIn,
-		SourceRecordID:  r.SourceRecordID,
 	})
 }
 
@@ -207,7 +201,6 @@ type csiPersonAffiliationInput struct {
 	Position        string
 	Testified       bool
 	TimeSignedIn    time.Time
-	SourceRecordID  int64
 }
 
 func upsertCSITestifierPersonAffiliation(ctx context.Context, tx pgx.Tx, in csiPersonAffiliationInput) error {
@@ -258,19 +251,18 @@ LIMIT 1;`
 	const mentionQ = `
 INSERT INTO person_source_mention (
   person_id, source_kind, source_table, source_pk, source_name, normalized_name,
-  source_role, context, confidence, review_status, source_record_id
+  source_role, context, confidence, review_status
 )
 VALUES ($1, 'csi_testifier', 'testifier', $2, $3, $4,
-        'testifier', $5, 'possible', 'auto', $6)
+        'testifier', $5, 'possible', 'auto')
 ON CONFLICT (source_kind, source_table, source_pk, source_row_id, source_name) DO UPDATE SET
   person_id = COALESCE(person_source_mention.person_id, EXCLUDED.person_id),
   normalized_name = COALESCE(person_source_mention.normalized_name, EXCLUDED.normalized_name),
   context = EXCLUDED.context,
-  source_record_id = COALESCE(EXCLUDED.source_record_id, person_source_mention.source_record_id),
   last_seen_at = NOW()
 RETURNING id;`
 	var mentionID int64
-	if err := tx.QueryRow(ctx, mentionQ, personID, in.TestifierID, rawName, normalizedName, contextJSON, in.SourceRecordID).Scan(&mentionID); err != nil {
+	if err := tx.QueryRow(ctx, mentionQ, personID, in.TestifierID, rawName, normalizedName, contextJSON).Scan(&mentionID); err != nil {
 		return fmt.Errorf("upsert CSI person mention: %w", err)
 	}
 
@@ -310,17 +302,16 @@ SELECT id
 	const affQ = `
 INSERT INTO person_organization_affiliation (
   person_id, person_mention_id, organization_id, raw_person_name, raw_organization_name,
-  relationship_type, role_title, source_kind, source_table, source_pk, source_record_id,
+  relationship_type, role_title, source_kind, source_table, source_pk,
   context, confidence, review_status, evidence
 )
 VALUES ($1, $2, $3, $4, $5,
-        $6::person_org_affiliation_type, 'testifier', 'csi_testifier', 'testifier', $7, $8,
-        $9, 'possible', 'auto', $10)
+        $6::person_org_affiliation_type, 'testifier', 'csi_testifier', 'testifier', $7,
+        $8, 'possible', 'auto', $9)
 ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
   person_mention_id = COALESCE(person_organization_affiliation.person_mention_id, EXCLUDED.person_mention_id),
   organization_id = COALESCE(person_organization_affiliation.organization_id, EXCLUDED.organization_id),
   context = EXCLUDED.context,
-  source_record_id = COALESCE(EXCLUDED.source_record_id, person_organization_affiliation.source_record_id),
   evidence = EXCLUDED.evidence,
   updated_at = NOW();`
 	evidenceJSON, err := json.Marshal([]string{
@@ -331,7 +322,7 @@ ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row
 	}
 	if _, err := tx.Exec(ctx, affQ,
 		personID, mentionID, orgID, rawName, rawOrgForAffiliation,
-		relationshipType, in.TestifierID, in.SourceRecordID,
+		relationshipType, in.TestifierID,
 		contextJSON, evidenceJSON,
 	); err != nil {
 		return fmt.Errorf("upsert CSI person affiliation: %w", err)
@@ -352,7 +343,7 @@ func (s *Store) BackfillCSITestifierPersonAffiliationsForRawOrganizations(ctx co
 	}
 	const q = `
 SELECT id, agenda_item_id, raw_name, COALESCE(raw_organization, ''), position::text,
-       testified, time_signed_in, source_record_id
+       testified, time_signed_in
   FROM testifier
  WHERE lower(trim(raw_organization)) = ANY($1);`
 	rows, err := s.Pool.Query(ctx, q, lowers)
@@ -365,7 +356,7 @@ SELECT id, agenda_item_id, raw_name, COALESCE(raw_organization, ''), position::t
 	for rows.Next() {
 		var in csiPersonAffiliationInput
 		var signedAt *time.Time
-		if err := rows.Scan(&in.TestifierID, &in.AgendaItemID, &in.RawName, &in.RawOrganization, &in.Position, &in.Testified, &signedAt, &in.SourceRecordID); err != nil {
+		if err := rows.Scan(&in.TestifierID, &in.AgendaItemID, &in.RawName, &in.RawOrganization, &in.Position, &in.Testified, &signedAt); err != nil {
 			return fmt.Errorf("scan CSI testifier for person affiliation backfill: %w", err)
 		}
 		if signedAt != nil {
@@ -721,7 +712,6 @@ type HearingForDiscovery struct {
 	CommitteeAcronym string
 	Chamber          string
 	MeetingDateTime  time.Time
-	SourceRecordID   int64 // reused for the discovery-driven UpsertHearing call
 }
 
 // ListHearingsForDiscovery returns hearings whose CSI/TVW IDs are still
@@ -735,7 +725,7 @@ func (s *Store) ListHearingsForDiscovery(ctx context.Context, biennium string) (
 	const q = `
 SELECT h.id, b.id, b.prefix, b.number,
        h.committee_name, COALESCE(h.committee_acronym, ''), h.chamber,
-       h.meeting_datetime, h.source_record_id
+       h.meeting_datetime
   FROM hearing h
   JOIN bill b ON b.id = h.bill_id
  WHERE b.biennium = $1
@@ -754,7 +744,7 @@ SELECT h.id, b.id, b.prefix, b.number,
 		if err := rows.Scan(
 			&h.HearingID, &h.BillID, &h.BillPrefix, &h.BillNumber,
 			&h.CommitteeName, &h.CommitteeAcronym, &h.Chamber,
-			&h.MeetingDateTime, &h.SourceRecordID,
+			&h.MeetingDateTime,
 		); err != nil {
 			return nil, fmt.Errorf("scan hearing: %w", err)
 		}

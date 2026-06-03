@@ -75,7 +75,7 @@ func TestFetchAndVariablesUseExpectedEndpoints(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, err := c.Fetch(context.Background(), Query{Year: "2024", Dataset: "acs/acs5/profile", Get: []string{"NAME", "DP03_0128PE"}, For: "state:53"})
 	if err != nil || len(rows) != 1 || rows[0]["NAME"] != "Washington" {

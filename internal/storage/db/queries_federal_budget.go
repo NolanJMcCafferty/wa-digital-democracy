@@ -21,7 +21,6 @@ type UpsertFederalAwardParams struct {
 	PlaceStateCode string
 	PlaceCounty    string
 	RawFields      map[string]any
-	SourceRecordID int64
 }
 
 // UpsertFederalAward inserts or updates one USAspending award row.
@@ -35,9 +34,9 @@ INSERT INTO federal_award (
   award_id, recipient_name, recipient_uei, awarding_agency, funding_agency,
   award_type, award_amount, start_date, end_date, place_state_code,
   normalized_recipient_name,
-  place_county, raw_fields, source_record_id
+  place_county, raw_fields
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,NULLIF($7,'')::numeric,$8,$9,$10,wa_dd_normalize_entity_name($2),$11,$12::jsonb,$13
+  $1,$2,$3,$4,$5,$6,NULLIF($7,'')::numeric,$8,$9,$10,wa_dd_normalize_entity_name($2),$11,$12::jsonb
 )
 ON CONFLICT (award_id) DO UPDATE SET
   recipient_name = EXCLUDED.recipient_name,
@@ -52,12 +51,11 @@ ON CONFLICT (award_id) DO UPDATE SET
   normalized_recipient_name = EXCLUDED.normalized_recipient_name,
   place_county = EXCLUDED.place_county,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.AwardID, strOrNull(p.RecipientName), strOrNull(p.RecipientUEI), strOrNull(p.AwardingAgency), strOrNull(p.FundingAgency),
 		strOrNull(p.AwardType), p.AwardAmount, datePtrOrNull(p.StartDate), datePtrOrNull(p.EndDate), strOrNull(p.PlaceStateCode),
-		strOrNull(p.PlaceCounty), string(raw), p.SourceRecordID,
+		strOrNull(p.PlaceCounty), string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert federal_award: %w", err)
@@ -80,7 +78,6 @@ type UpsertSeattleOperatingBudgetParams struct {
 	Description     string
 	ApprovedAmount  string
 	RawFields       map[string]any
-	SourceRecordID  int64
 }
 
 // UpsertSeattleOperatingBudget inserts or updates one Seattle operating budget row.
@@ -92,10 +89,9 @@ func (s *Store) UpsertSeattleOperatingBudget(ctx context.Context, p UpsertSeattl
 	const q = `
 INSERT INTO seattle_operating_budget (
   source_dataset_id, source_row_id, fiscal_year, service, department, program,
-  fund, fund_type, expense_type, description, approved_amount, raw_fields,
-  source_record_id
+  fund, fund_type, expense_type, description, approved_amount, raw_fields
 ) VALUES (
-  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::numeric,$12::jsonb,$13
+  $1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::numeric,$12::jsonb
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   fiscal_year = EXCLUDED.fiscal_year,
@@ -108,12 +104,11 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   description = EXCLUDED.description,
   approved_amount = EXCLUDED.approved_amount,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, p.FiscalYear, strOrNull(p.Service), strOrNull(p.Department), strOrNull(p.Program),
 		strOrNull(p.Fund), strOrNull(p.FundType), strOrNull(p.ExpenseType), strOrNull(p.Description), p.ApprovedAmount,
-		string(raw), p.SourceRecordID,
+		string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert seattle_operating_budget: %w", err)
@@ -138,7 +133,6 @@ type UpsertFiscalWAVendorPaymentParams struct {
 	VendorName      string
 	Amount          string
 	RawFields       map[string]any
-	SourceRecordID  int64
 }
 
 // UpsertFiscalWAVendorPayment inserts or updates one fiscal.wa.gov vendor
@@ -152,9 +146,9 @@ func (s *Store) UpsertFiscalWAVendorPayment(ctx context.Context, p UpsertFiscalW
 INSERT INTO fiscalwa_vendor_payment (
   source_dataset_id, source_row_id, biennium, fiscal_year, fiscal_month,
   agency_number, agency_name, object_code, object_category, subobject_code,
-  subobject_name, vendor_name, normalized_vendor_name, amount, raw_fields, source_record_id
+  subobject_name, vendor_name, normalized_vendor_name, amount, raw_fields
 ) VALUES (
-  $1,$2,$3,NULLIF($4,0),$5,$6,$7,$8,$9,$10,$11,$12,wa_dd_normalize_entity_name($12),NULLIF($13,'')::numeric,$14::jsonb,$15
+  $1,$2,$3,NULLIF($4,0),$5,$6,$7,$8,$9,$10,$11,$12,wa_dd_normalize_entity_name($12),NULLIF($13,'')::numeric,$14::jsonb
 )
 ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   biennium = EXCLUDED.biennium,
@@ -170,12 +164,11 @@ ON CONFLICT (source_dataset_id, source_row_id) DO UPDATE SET
   normalized_vendor_name = EXCLUDED.normalized_vendor_name,
   amount = EXCLUDED.amount,
   raw_fields = EXCLUDED.raw_fields,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.SourceDatasetID, p.SourceRowID, strOrNull(p.Biennium), p.FiscalYear, strOrNull(p.FiscalMonth),
 		strOrNull(p.AgencyNumber), strOrNull(p.AgencyName), strOrNull(p.ObjectCode), strOrNull(p.ObjectCategory),
-		strOrNull(p.SubobjectCode), strOrNull(p.SubobjectName), strOrNull(p.VendorName), p.Amount, string(raw), p.SourceRecordID,
+		strOrNull(p.SubobjectCode), strOrNull(p.SubobjectName), strOrNull(p.VendorName), p.Amount, string(raw),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert fiscalwa_vendor_payment: %w", err)

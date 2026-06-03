@@ -10,15 +10,7 @@ import (
 	"time"
 )
 
-type recordingSink struct{ calls int32 }
-
-func (r *recordingSink) Record(ctx context.Context, f *RawFetch) error {
-	atomic.AddInt32(&r.calls, 1)
-	f.SourceRecordID = int64(atomic.LoadInt32(&r.calls)) // simulate id assignment
-	return nil
-}
-
-func TestClient_DoRecordsRawFetchOnSuccess(t *testing.T) {
+func TestClient_DoReturnsFetchOnSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
@@ -26,13 +18,8 @@ func TestClient_DoRecordsRawFetchOnSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sink := &recordingSink{}
-	c := New(Config{Sink: sink})
-	got, err := c.Do(context.Background(), Request{
-		System:   "test",
-		Endpoint: "ping",
-		URL:      srv.URL,
-	})
+	c := New(Config{})
+	got, err := c.Do(context.Background(), Request{System: "test", Endpoint: "ping", URL: srv.URL})
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -44,9 +31,6 @@ func TestClient_DoRecordsRawFetchOnSuccess(t *testing.T) {
 	}
 	if got.FetchedAt.IsZero() {
 		t.Fatal("fetched_at zero")
-	}
-	if atomic.LoadInt32(&sink.calls) != 1 {
-		t.Fatalf("sink calls = %d, want 1", sink.calls)
 	}
 }
 
@@ -62,12 +46,7 @@ func TestClient_DoRetriesTransient(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sink := &recordingSink{}
-	c := New(Config{
-		Sink:         sink,
-		MaxRetries:   3,
-		RetryBackoff: 1 * time.Millisecond,
-	})
+	c := New(Config{MaxRetries: 3, RetryBackoff: time.Millisecond})
 	got, err := c.Do(context.Background(), Request{System: "t", Endpoint: "e", URL: srv.URL})
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -89,8 +68,7 @@ func TestClient_DoNonRetryableErrorReturnsImmediately(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sink := &recordingSink{}
-	c := New(Config{Sink: sink, MaxRetries: 5, RetryBackoff: time.Millisecond})
+	c := New(Config{MaxRetries: 5, RetryBackoff: time.Millisecond})
 	got, err := c.Do(context.Background(), Request{System: "t", Endpoint: "e", URL: srv.URL})
 	if err == nil {
 		t.Fatal("expected error")
@@ -104,19 +82,4 @@ func TestClient_DoNonRetryableErrorReturnsImmediately(t *testing.T) {
 	if got.Status != http.StatusBadRequest || string(got.Body) != "bad" {
 		t.Fatalf("got status/body = %d/%q, want 400/bad", got.Status, got.Body)
 	}
-	if got.SourceRecordID == 0 {
-		t.Fatal("non-retryable HTTP error was not recorded via sink")
-	}
-	if atomic.LoadInt32(&sink.calls) != 1 {
-		t.Fatalf("sink calls = %d, want 1", sink.calls)
-	}
-}
-
-func TestClient_NewPanicsWithoutSink(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	_ = New(Config{})
 }

@@ -1,19 +1,8 @@
 // Package httpx is the shared HTTP client used by every source connector.
 //
-// Responsibilities (per the wiki's Recommended Tech Stack §Key Decisions
-// and the per-source spec docs §"Boundaries"):
-//
-//  1. Per-host token-bucket rate limiting — public legislative APIs have no
-//     stated SLA; be polite.
-//  2. Bounded retry/backoff for transient HTTP errors (5xx, network errors).
-//  3. A RawSink hook fired on every successful fetch, so connectors can record
-//     immutable provenance (raw bytes + URL + fetched_at + content hash) before
-//     parsing. This makes Architectural Decision #2 (raw records immutable)
-//     and #3 (every fact has provenance) impossible to forget.
-//
-// Connectors should use Client.Do directly and inspect the returned RawFetch
-// for provenance metadata. The four-layer split (Fetch / StoreRaw / Parse /
-// Normalize) from the per-source specs is enforced at the call sites.
+// It provides per-host rate limiting and bounded retry/backoff for transient
+// HTTP errors. Connectors use Client.Do directly and inspect RawFetch for
+// response metadata and body bytes.
 package httpx
 
 import (
@@ -46,30 +35,7 @@ type RawFetch struct {
 	Hash        string    // sha256 hex of Body
 	FetchedAt   time.Time // when the request returned
 
-	// SourceRecordID is the id assigned to this fetch in the source_record
-	// table by the RawSink. Sinks that don't talk to a database leave it 0.
-	SourceRecordID int64
 }
-
-// RawSink is invoked once per completed HTTP response, including non-2xx
-// responses. Implementations typically write the body to object storage and
-// insert a source_record row. Network failures with no HTTP response cannot be
-// recorded because there are no raw response bytes.
-//
-// Errors from the sink propagate back to the caller — provenance must not
-// silently fail.
-//
-// The fetch is passed by pointer so the sink can populate
-// f.SourceRecordID after persisting the row.
-type RawSink interface {
-	Record(ctx context.Context, f *RawFetch) error
-}
-
-// NopSink discards everything. Useful for tests and read-only exploratory
-// source discovery that does not need durable provenance.
-type NopSink struct{}
-
-func (NopSink) Record(ctx context.Context, f *RawFetch) error { return nil }
 
 // Config configures a Client.
 type Config struct {
@@ -79,12 +45,10 @@ type Config struct {
 	RetryBackoff  time.Duration      // base backoff; doubles each retry (default 500ms)
 	RetryOn       []int              // status codes to retry (default 429, 500, 502, 503, 504)
 	HostRateLimit map[string]float64 // requests/sec per host; missing host => unlimited
-	Sink          RawSink            // raw-bytes hook; required (use NopSink to opt out)
 	HTTP          *http.Client       // optional override
 }
 
-// Client is a polite HTTP client wrapping a per-host rate limiter, retries,
-// and the RawSink hook.
+// Client is a polite HTTP client wrapping a per-host rate limiter and retries.
 type Client struct {
 	cfg      Config
 	http     *http.Client
@@ -92,13 +56,8 @@ type Client struct {
 	limiters map[string]*rate.Limiter
 }
 
-// New builds a Client. Required: cfg.Sink (use NopSink{} explicitly to opt out).
+// New builds a Client.
 func New(cfg Config) *Client {
-	if cfg.Sink == nil {
-		// Provenance is non-negotiable; force callers to think about it.
-		// Tests can pass NopSink{} explicitly.
-		panic("httpx.New: cfg.Sink is required (use httpx.NopSink{} to opt out)")
-	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
@@ -169,9 +128,6 @@ func (c *Client) Do(ctx context.Context, req Request) (RawFetch, error) {
 
 		fetch, retry, err := c.attempt(ctx, req)
 		if fetch.Status != 0 {
-			if sinkErr := c.cfg.Sink.Record(ctx, &fetch); sinkErr != nil {
-				return fetch, fmt.Errorf("raw sink record: %w", sinkErr)
-			}
 			lastFetch = fetch
 		}
 		if err == nil {

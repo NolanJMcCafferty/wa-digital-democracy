@@ -25,7 +25,7 @@ func TestFacilitySearchDefaultsWashingtonAndJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.ECHOBaseURL = srv.URL
 	body, err := c.FacilitySearch(context.Background(), nil)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestFacilitySearchPreservesExplicitState(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.ECHOBaseURL = srv.URL
 	params := url.Values{"p_st": {"OR"}}
 	if _, err := c.FacilitySearch(context.Background(), params); err != nil {

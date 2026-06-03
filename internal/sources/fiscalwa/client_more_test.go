@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewDefaults(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	if c.BaseURL != DefaultBaseURL {
 		t.Fatalf("BaseURL = %q", c.BaseURL)
 	}
@@ -52,7 +52,7 @@ func TestFetchVendorPaymentsWithSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: &fiscalSourceIDSink{id: 77}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL
 	rows, fetch, err := c.FetchVendorPaymentsWithSource(context.Background())
 	if err != nil {
@@ -61,16 +61,9 @@ func TestFetchVendorPaymentsWithSource(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("len(rows) = %d, want 2", len(rows))
 	}
-	if fetch.SourceRecordID != 77 || fetch.Endpoint != "vendor_payments_2025_27_xlsx" || fetch.System != SystemName {
+	if fetch.Endpoint != "vendor_payments_2025_27_xlsx" || fetch.System != SystemName {
 		t.Fatalf("fetch = %+v", fetch)
 	}
-}
-
-type fiscalSourceIDSink struct{ id int64 }
-
-func (s *fiscalSourceIDSink) Record(ctx context.Context, f *httpx.RawFetch) error {
-	f.SourceRecordID = s.id
-	return nil
 }
 
 func tinyVendorPaymentsXLSX(t *testing.T) []byte {

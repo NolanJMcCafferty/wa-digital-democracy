@@ -4,9 +4,9 @@ import "testing"
 
 func TestJunkOrganizationName(t *testing.T) {
 	cases := []struct {
-		name             string
-		raw, normalized  string
-		junk             bool
+		name            string
+		raw, normalized string
+		junk            bool
 	}{
 		{"empty raw", "", "anything", true},
 		{"empty normalized", "Foo", "", true},

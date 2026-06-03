@@ -9,9 +9,9 @@ import (
 // the wiki cares about (per spec 03 line 95–101): the internal video modal
 // ID and the TVW/Invintus event ID.
 type ScheduleRow struct {
-	AgendaID    string // arg of showAgendaDetailModal(<id>)
-	VideoID     string // arg #1 of showVideoModal(<videoID>, <eventID>)
-	TVWEventID  string // arg #2 of showVideoModal
+	AgendaID   string // arg of showAgendaDetailModal(<id>)
+	VideoID    string // arg #1 of showVideoModal(<videoID>, <eventID>)
+	TVWEventID string // arg #2 of showVideoModal
 }
 
 // VideoModalRef is a single (committee_schedule_video_id, tvw_event_id) pair

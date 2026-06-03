@@ -13,7 +13,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/irsbmf"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func init() {
@@ -27,7 +26,6 @@ func runIngestIRSBMFWA(args []string) int {
 	fs := flag.NewFlagSet("ingest-irs-bmf-wa", flag.ContinueOnError)
 	var (
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		url       = fs.String("url", irsbmf.DefaultStateURL, "IRS BMF state-extract CSV URL")
 		rateLimit = fs.Float64("rate", 4.0, "max requests/sec for irs.gov")
 	)
@@ -43,15 +41,8 @@ func runIngestIRSBMFWA(args []string) int {
 		return 1
 	}
 	defer store.Close()
-
-	objs, err := objectstore.NewConfigured(ctx, *rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: objectstore: %v\n", err)
-		return 1
-	}
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      120 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -62,13 +53,9 @@ func runIngestIRSBMFWA(args []string) int {
 	client := irsbmf.New(httpClient)
 	client.BaseURL = *url
 
-	body, fetch, err := client.Fetch(ctx)
+	body, _, err := client.Fetch(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: fetch: %v\n", err)
-		return 1
-	}
-	if fetch.SourceRecordID == 0 {
-		fmt.Fprintln(os.Stderr, "ingest-irs-bmf-wa: source record was not captured")
 		return 1
 	}
 	fmt.Fprintf(os.Stderr, "==> fetched %d bytes from %s\n", len(body), *url)
@@ -105,7 +92,6 @@ func runIngestIRSBMFWA(args []string) int {
 			RevenueAmount:     row.RevenueAmount,
 			AssetAmount:       row.AssetAmount,
 			Raw:               row.Raw,
-			SourceRecordID:    fetch.SourceRecordID,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: upsert %s: %v\n", row.EIN, err)

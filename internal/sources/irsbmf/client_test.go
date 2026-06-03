@@ -17,7 +17,7 @@ const sampleCSV = `EIN,NAME,ICO,STREET,CITY,STATE,ZIP,GROUP,SUBSECTION,AFFILIATI
 `
 
 func TestNewDefaults(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	if c.BaseURL != DefaultStateURL {
 		t.Fatalf("BaseURL = %q", c.BaseURL)
 	}
@@ -36,7 +36,7 @@ func TestFetchDownloadsCSVWithSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: &sourceIDSink{id: 123}, HTTP: srv.Client()}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client()}))
 	c.BaseURL = srv.URL + "/eo_wa.csv"
 	body, fetch, err := c.Fetch(context.Background())
 	if err != nil {
@@ -45,7 +45,7 @@ func TestFetchDownloadsCSVWithSource(t *testing.T) {
 	if string(body) != sampleCSV {
 		t.Fatalf("body mismatch")
 	}
-	if fetch.SourceRecordID != 123 || fetch.System != SystemName || fetch.Endpoint != "eo_wa.csv" {
+	if fetch.System != SystemName || fetch.Endpoint != "eo_wa.csv" {
 		t.Fatalf("fetch = %+v", fetch)
 	}
 }
@@ -56,7 +56,7 @@ func TestFetchReturnsHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}, HTTP: srv.Client(), RetryOn: []int{500}}))
+	c := New(httpx.New(httpx.Config{HTTP: srv.Client(), RetryOn: []int{500}}))
 	c.BaseURL = srv.URL
 	_, fetch, err := c.Fetch(context.Background())
 	if err == nil {
@@ -129,11 +129,4 @@ func TestDecodeMissingColumnsAndAtoi64(t *testing.T) {
 			t.Fatalf("atoi64(%q) = %d, want %d", in, got, want)
 		}
 	}
-}
-
-type sourceIDSink struct{ id int64 }
-
-func (s *sourceIDSink) Record(ctx context.Context, f *httpx.RawFetch) error {
-	f.SourceRecordID = s.id
-	return nil
 }

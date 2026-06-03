@@ -29,7 +29,6 @@ func runIngestSession(args []string) int {
 	var (
 		biennium  = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _session.json is written")
 		rateLimit = fs.Float64("rate", 25.0, "max requests/sec for the LWS host")
 		workers   = fs.Int("workers", 4, "number of concurrent bill workers. HTTP calls still respect --rate per LWS host.")
@@ -52,7 +51,7 @@ func runIngestSession(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	deps, cleanup, err := newMetadataDeps(ctx, *dsn, *rawDir, *rateLimit)
+	deps, cleanup, err := newMetadataDeps(ctx, *dsn, *rateLimit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-session: %v\n", err)
 		return 1

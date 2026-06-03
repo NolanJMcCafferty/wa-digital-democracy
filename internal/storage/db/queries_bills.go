@@ -10,24 +10,23 @@ import (
 )
 
 type UpsertBillParams struct {
-	Biennium       string
-	Prefix         string
-	Number         int
-	Title          string
-	Description    string
-	ChamberOrigin  string
-	CurrentStatus  string
-	StatusDate     time.Time
-	OfficialURL    string
-	SourceRecordID int64
+	Biennium      string
+	Prefix        string
+	Number        int
+	Title         string
+	Description   string
+	ChamberOrigin string
+	CurrentStatus string
+	StatusDate    time.Time
+	OfficialURL   string
 }
 
 // UpsertBill inserts/updates a bill keyed on (biennium, prefix, number).
 func (s *Store) UpsertBill(ctx context.Context, p UpsertBillParams) (int64, error) {
 	const q = `
 INSERT INTO bill (biennium, prefix, number, title, description, chamber_origin,
-                  current_status, status_date, official_url, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                  current_status, status_date, official_url)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT (biennium, prefix, number) DO UPDATE SET
   title          = EXCLUDED.title,
   description    = EXCLUDED.description,
@@ -35,7 +34,6 @@ ON CONFLICT (biennium, prefix, number) DO UPDATE SET
   current_status = EXCLUDED.current_status,
   status_date    = EXCLUDED.status_date,
   official_url   = EXCLUDED.official_url,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at     = NOW()
 RETURNING id;`
 	var id int64
@@ -43,7 +41,6 @@ RETURNING id;`
 		p.Biennium, p.Prefix, p.Number,
 		strOrNull(p.Title), strOrNull(p.Description), strOrNull(p.ChamberOrigin),
 		strOrNull(p.CurrentStatus), dateOrNull(p.StatusDate), strOrNull(p.OfficialURL),
-		p.SourceRecordID,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("upsert bill: %w", err)
@@ -78,11 +75,10 @@ ON CONFLICT DO NOTHING;`
 // ---------------------------------------------------------------------------
 
 type InsertStatusChangeParams struct {
-	BillID         int64
-	ActionDate     time.Time
-	HistoryLine    string
-	Actor          string
-	SourceRecordID int64
+	BillID      int64
+	ActionDate  time.Time
+	HistoryLine string
+	Actor       string
 }
 
 // ReplaceStatusChangesForBill clears and reloads the status timeline. LWS
@@ -98,12 +94,12 @@ func (s *Store) ReplaceStatusChangesForBill(ctx context.Context, billID int64, r
 		return fmt.Errorf("delete status: %w", err)
 	}
 	const insQ = `
-INSERT INTO bill_status_change (bill_id, action_date, history_line, actor, source_record_id)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO bill_status_change (bill_id, action_date, history_line, actor)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT DO NOTHING;`
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, insQ,
-			r.BillID, dateOrNull(r.ActionDate), r.HistoryLine, strOrNull(r.Actor), r.SourceRecordID,
+			r.BillID, dateOrNull(r.ActionDate), r.HistoryLine, strOrNull(r.Actor),
 		); err != nil {
 			return fmt.Errorf("insert status: %w", err)
 		}

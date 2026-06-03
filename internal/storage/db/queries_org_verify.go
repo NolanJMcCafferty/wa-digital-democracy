@@ -33,7 +33,6 @@ type UpsertIRSBMFParams struct {
 	RevenueAmount     int64
 	AssetAmount       int64
 	Raw               map[string]string
-	SourceRecordID    int64
 }
 
 func (s *Store) UpsertIRSBMFOrganization(ctx context.Context, p UpsertIRSBMFParams) error {
@@ -45,8 +44,8 @@ func (s *Store) UpsertIRSBMFOrganization(ctx context.Context, p UpsertIRSBMFPara
 INSERT INTO irs_bmf_organization (ein, name, normalized_name, sort_name,
     street, city, state, zip, subsection_code, classification, deductibility_code,
     activity_codes, foundation_code, organization_code, status_code, ruling_date,
-    ntee_code, income_amount, revenue_amount, asset_amount, raw, source_record_id)
-VALUES ($1,$2,COALESCE(wa_dd_normalize_entity_name($2),''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,NULLIF($21,0))
+    ntee_code, income_amount, revenue_amount, asset_amount, raw)
+VALUES ($1,$2,COALESCE(wa_dd_normalize_entity_name($2),''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb)
 ON CONFLICT (ein) DO UPDATE SET
   name              = EXCLUDED.name,
   normalized_name   = EXCLUDED.normalized_name,
@@ -68,7 +67,6 @@ ON CONFLICT (ein) DO UPDATE SET
   revenue_amount    = EXCLUDED.revenue_amount,
   asset_amount      = EXCLUDED.asset_amount,
   raw               = EXCLUDED.raw,
-  source_record_id  = COALESCE(EXCLUDED.source_record_id, irs_bmf_organization.source_record_id),
   fetched_at        = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.EIN, p.Name, strOrNull(p.SortName),
@@ -77,7 +75,7 @@ ON CONFLICT (ein) DO UPDATE SET
 		strOrNull(p.ActivityCodes), strOrNull(p.FoundationCode), strOrNull(p.OrganizationCode),
 		strOrNull(p.StatusCode), strOrNull(p.RulingDate), strOrNull(p.NTEECode),
 		p.IncomeAmount, p.RevenueAmount, p.AssetAmount,
-		string(rawJSON), p.SourceRecordID,
+		string(rawJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert irs_bmf_organization: %w", err)
@@ -93,7 +91,6 @@ type UpsertPDCEmployerParams struct {
 	LastReportNumber   string
 	LastEmploymentURL  string
 	Raw                map[string]any
-	SourceRecordID     int64
 }
 
 type UpsertPDCLobbyistAffiliationParams struct {
@@ -106,7 +103,6 @@ type UpsertPDCLobbyistAffiliationParams struct {
 	EmploymentURL    string
 	EmploymentPeriod string
 	Raw              map[string]any
-	SourceRecordID   int64
 }
 
 func (s *Store) UpsertPDCEmployer(ctx context.Context, p UpsertPDCEmployerParams) error {
@@ -117,8 +113,8 @@ func (s *Store) UpsertPDCEmployer(ctx context.Context, p UpsertPDCEmployerParams
 	const q = `
 INSERT INTO pdc_employer (employer_id, name, normalized_name,
     last_employment_year, last_report_number, last_employment_url,
-    raw, source_record_id, last_seen_at)
-VALUES ($1,$2,COALESCE(wa_dd_normalize_entity_name($2),''),$3,$4,$5,$6::jsonb,NULLIF($7,0),NOW())
+    raw, last_seen_at)
+VALUES ($1,$2,COALESCE(wa_dd_normalize_entity_name($2),''),$3,$4,$5,$6::jsonb,NOW())
 ON CONFLICT (employer_id) DO UPDATE SET
   name                = EXCLUDED.name,
   normalized_name     = EXCLUDED.normalized_name,
@@ -126,12 +122,11 @@ ON CONFLICT (employer_id) DO UPDATE SET
   last_report_number   = COALESCE(EXCLUDED.last_report_number, pdc_employer.last_report_number),
   last_employment_url  = COALESCE(EXCLUDED.last_employment_url, pdc_employer.last_employment_url),
   raw                  = EXCLUDED.raw,
-  source_record_id     = COALESCE(EXCLUDED.source_record_id, pdc_employer.source_record_id),
   last_seen_at         = NOW();`
 	_, err = s.Pool.Exec(ctx, q,
 		p.EmployerID, p.Name,
 		strOrNull(p.LastEmploymentYear), strOrNull(p.LastReportNumber), strOrNull(p.LastEmploymentURL),
-		string(rawJSON), p.SourceRecordID,
+		string(rawJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("upsert pdc_employer: %w", err)
@@ -211,21 +206,20 @@ SELECT id
 INSERT INTO person_organization_affiliation (
   person_id, organization_id, raw_person_name, raw_organization_name,
   relationship_type, role_title, record_year, source_kind, source_table,
-  source_row_id, source_record_id, context, confidence, review_status, evidence
+  source_row_id, context, confidence, review_status, evidence
 )
 VALUES ($1, $2, $3, $4,
         'lobbyist_for', 'lobbyist', NULLIF($5,0), 'pdc_lobbyist_employment', 'data.wa.gov:xhn7-64im',
-        $6, NULLIF($7,0), $8, 'probable', 'auto', $9)
+        $6, $7, 'probable', 'auto', $9)
 ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
   organization_id = COALESCE(EXCLUDED.organization_id, person_organization_affiliation.organization_id),
   record_year = COALESCE(EXCLUDED.record_year, person_organization_affiliation.record_year),
-  source_record_id = COALESCE(EXCLUDED.source_record_id, person_organization_affiliation.source_record_id),
   context = EXCLUDED.context,
   evidence = EXCLUDED.evidence,
   updated_at = NOW();`
 	if _, err := s.Pool.Exec(ctx, affQ,
 		personID, orgID, lobbyistName, p.EmployerName,
-		recordYear, sourceRowID, p.SourceRecordID, contextJSON, evidenceJSON,
+		recordYear, sourceRowID, contextJSON, evidenceJSON,
 	); err != nil {
 		return fmt.Errorf("upsert PDC lobbyist affiliation: %w", err)
 	}

@@ -81,7 +81,7 @@ func TestGovTypesAuditTypesEntitiesAndSearch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+	c := New(httpx.New(httpx.Config{}))
 	c.BaseURL = srv.URL
 	govs, err := c.GovTypes(context.Background())
 	if err != nil || len(govs) != 1 || govs[0].Code != "C" || govs[0].Name != "City/Town" {
@@ -110,7 +110,7 @@ func TestParseErrors(t *testing.T) {
 		func(c *Client) error { _, err := c.SearchReports(context.Background(), SearchParams{}); return err },
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`not-json`)) }))
-		c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}))
+		c := New(httpx.New(httpx.Config{}))
 		c.BaseURL = srv.URL
 		if err := fn(c); err == nil {
 			t.Fatal("expected error")

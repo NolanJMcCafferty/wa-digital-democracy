@@ -289,7 +289,7 @@ SELECT COALESCE(p.id, 0) AS person_id,
          ''
        ) AS record_years,
        COUNT(*)::int AS source_count,
-       MAX(COALESCE(poa.source_record_id, 0)) AS source_record_id,
+       0 AS source_record_id,
        CASE
          WHEN bool_or(poa.confidence = 'confirmed') THEN 'confirmed'
          WHEN bool_or(poa.confidence = 'probable') THEN 'probable'
@@ -338,7 +338,7 @@ WITH ctx AS (
          CASE WHEN pe.last_employment_year ~ '^[0-9]+$' THEN pe.last_employment_year::int ELSE 0 END AS record_year,
          ''::text AS record_date,
          COALESCE(pe.last_employment_url, '') AS url,
-         COALESCE(pe.source_record_id,0) AS source_record_id,
+         0 AS source_record_id,
          m.match_confidence::text AS match_confidence,
          m.evidence AS evidence
     FROM (
@@ -352,7 +352,7 @@ WITH ctx AS (
       SELECT *
         FROM pdc_employer pe2
        WHERE pe2.employer_id = m.source_row_id
-       ORDER BY pe2.last_employment_year DESC NULLS LAST, pe2.source_record_id DESC
+       ORDER BY pe2.last_employment_year DESC NULLS LAST, pe2.id DESC
        LIMIT 1
     ) pe ON TRUE
   UNION ALL
@@ -365,7 +365,7 @@ WITH ctx AS (
          COALESCE(c.fiscal_year, 0),
          '',
          '',
-         COALESCE(c.source_record_id,0),
+         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -382,7 +382,7 @@ WITH ctx AS (
          COALESCE(s.report_year, 0),
          '',
          '',
-         COALESCE(s.source_record_id,0),
+         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -399,7 +399,7 @@ WITH ctx AS (
          COALESCE(c.report_fiscal_year, 0),
          '',
          '',
-         COALESCE(c.source_record_id,0),
+         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -416,7 +416,7 @@ WITH ctx AS (
          0,
          '',
          COALESCE(v.web_address, ''),
-         COALESCE(v.source_record_id,0),
+         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -433,7 +433,7 @@ WITH ctx AS (
          COALESCE(p.fiscal_year, 0),
          '',
          '',
-         COALESCE(p.source_record_id,0),
+         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -450,7 +450,7 @@ WITH ctx AS (
          COALESCE(EXTRACT(YEAR FROM a.start_date)::int, 0),
          COALESCE(a.start_date::text, ''),
          '',
-         COALESCE(a.source_record_id,0),
+         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -458,12 +458,12 @@ WITH ctx AS (
    WHERE m.organization_id = $1
      AND m.source_kind = 'federal_award_recipient'
 )
-SELECT DISTINCT ON (source_kind, source_record_id, source_name, detail)
+SELECT DISTINCT ON (source_kind, source_name, detail)
        context_type, source_kind, source_label, COALESCE(source_name, ''),
        COALESCE(detail, ''), amount, COALESCE(record_year, 0), record_date,
-       url, source_record_id, match_confidence, evidence
+       url, match_confidence, evidence
   FROM ctx
- ORDER BY source_kind, source_record_id, source_name, detail,
+ ORDER BY source_kind, source_name, detail,
           context_type, record_year DESC NULLS LAST
  LIMIT 100;`
 	rows, err := s.Pool.Query(ctx, q, organizationID)

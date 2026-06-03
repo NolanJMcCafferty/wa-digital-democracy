@@ -22,7 +22,7 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 	chamber := p.BillAgendaTarget.Committee.Chamber
 	billAgendaTarget := p.BillAgendaTarget
 
-	// 1. Fetch the testifier list (and capture the source_record id).
+	// 1. Fetch the testifier list.
 	q := url.Values{}
 	q.Set("agendaItemId", billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	q.Set("agendaItemDescription", billAgendaTarget.AgendaItem.Label)
@@ -65,7 +65,6 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 			CommitteeAcronym: billAgendaTarget.Committee.Acronym,
 			Chamber:          chamber,
 			MeetingDateTime:  startTime,
-			SourceRecordID:   mFetch.SourceRecordID,
 		})
 		if err != nil {
 			return err
@@ -81,7 +80,6 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 		CSIMeetingFamilyID:    billAgendaTarget.AgendaItem.CSIMeetingFamilyID,
 		CSIAgendaItemFamilyID: billAgendaTarget.AgendaItem.CSIAgendaItemFamilyID,
 		CSIAgendaItemID:       billAgendaTarget.AgendaItem.CSIAgendaItemID,
-		SourceRecordID:        tFetch.SourceRecordID,
 	})
 	if err != nil {
 		return err
@@ -98,7 +96,6 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 			Position:        csi.CanonicalPosition(t.Position),
 			Testified:       t.Testified,
 			TimeSignedIn:    t.TimeSignedIn,
-			SourceRecordID:  tFetch.SourceRecordID,
 		})
 	}
 	if err := p.Store.ReplaceTestifiersForAgenda(ctx, aiID, params); err != nil {

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/lws"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/tvw"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 // TestLiveIngestionPipelineSingleBillHearingAndDiarization is intentionally
@@ -39,7 +37,7 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 
 	ctx := context.Background()
 	store := openLiveIngestionTestStore(t, dsn)
-	httpClient := liveRawSinkHTTPClient(t, store)
+	httpClient := liveHTTPClient(t, store)
 	lwsClient := lws.New(httpClient)
 	csiClient := csi.New(httpClient)
 	tvwClient := tvw.New(httpClient, embedderKey)
@@ -357,7 +355,7 @@ func hearingsForBill(ctx context.Context, store *db.Store, bill common.BillKey) 
 	const q = `
 SELECT h.id, b.id, b.prefix, b.number,
        h.committee_name, COALESCE(h.committee_acronym, ''), h.chamber,
-       h.meeting_datetime, h.source_record_id
+       h.meeting_datetime
   FROM hearing h
   JOIN bill b ON b.id = h.bill_id
  WHERE b.biennium = $1 AND b.prefix = $2 AND b.number = $3
@@ -373,7 +371,7 @@ SELECT h.id, b.id, b.prefix, b.number,
 		if err := rows.Scan(
 			&h.HearingID, &h.BillID, &h.BillPrefix, &h.BillNumber,
 			&h.CommitteeName, &h.CommitteeAcronym, &h.Chamber,
-			&h.MeetingDateTime, &h.SourceRecordID,
+			&h.MeetingDateTime,
 		); err != nil {
 			return nil, fmt.Errorf("scan hearing for %s: %w", bill.ID(), err)
 		}
@@ -447,15 +445,10 @@ func cleanupLiveBillRows(t *testing.T, store *db.Store, bill common.BillKey) {
 	}
 }
 
-func liveRawSinkHTTPClient(t *testing.T, store *db.Store) *httpx.Client {
+func liveHTTPClient(t *testing.T, store *db.Store) *httpx.Client {
 	t.Helper()
-	objs, err := objectstore.NewFS(filepath.Join(t.TempDir(), "raw"))
-	if err != nil {
-		t.Fatalf("objectstore: %v", err)
-	}
 	return httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,

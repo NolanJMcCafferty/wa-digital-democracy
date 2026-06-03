@@ -12,7 +12,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/usaspending"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func init() {
@@ -29,7 +28,6 @@ func runIngestUSASpendingWAAwards(args []string) int {
 		endDate   = fs.String("end-date", "2026-09-30", "award action date range end, YYYY-MM-DD")
 		limit     = fs.Int("limit", 100, "maximum awards to request from USAspending")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for api.usaspending.gov")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -48,14 +46,8 @@ func runIngestUSASpendingWAAwards(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewConfigured(ctx, *rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: objectstore: %v\n", err)
-		return 1
-	}
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -66,13 +58,9 @@ func runIngestUSASpendingWAAwards(args []string) int {
 	client := usaspending.New(httpClient)
 	req := usaspending.WashingtonAwardSearchRequest(*startDate, *endDate)
 	req.Limit = *limit
-	resp, fetch, err := client.SearchAwardsWithSource(ctx, req)
+	resp, _, err := client.SearchAwardsWithSource(ctx, req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: fetch: %v\n", err)
-		return 1
-	}
-	if fetch.SourceRecordID == 0 {
-		fmt.Fprintln(os.Stderr, "ingest-usaspending-wa-awards: source record was not captured")
 		return 1
 	}
 
@@ -96,7 +84,6 @@ func runIngestUSASpendingWAAwards(args []string) int {
 			PlaceStateCode: award.PlaceStateCode,
 			PlaceCounty:    award.PlaceCounty,
 			RawFields:      award.Raw,
-			SourceRecordID: fetch.SourceRecordID,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-usaspending-wa-awards: upsert award %s: %v\n", award.AwardID, err)
 			return 1

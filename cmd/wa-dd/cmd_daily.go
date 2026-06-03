@@ -22,7 +22,6 @@ func runDaily(args []string) int {
 	var (
 		biennium       = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
 		dsn            = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir         = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses when OBJECT_STORE=local")
 		outDir         = fs.String("out-dir", "data/processed", "where run summary JSON files are written")
 		rateLimit      = fs.Float64("rate", 10.0, "max requests/sec per legislative host for discovery/hearing steps")
 		sessionRate    = fs.Float64("session-rate", 25.0, "max requests/sec for LWS session metadata")
@@ -48,8 +47,8 @@ func runDaily(args []string) int {
 	}
 	defer release()
 
-	base := []string{"--biennium", *biennium, "--dsn", *dsn, "--raw-dir", *rawDir, "--out-dir", *outDir}
-	pdcBase := []string{"--dsn", *dsn, "--raw-dir", *rawDir}
+	base := []string{"--biennium", *biennium, "--dsn", *dsn, "--out-dir", *outDir}
+	pdcBase := []string{"--dsn", *dsn}
 	steps := []struct {
 		name string
 		code func([]string) int

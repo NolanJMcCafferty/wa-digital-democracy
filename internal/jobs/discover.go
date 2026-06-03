@@ -127,9 +127,7 @@ func (d *Discoverer) DiscoverOne(ctx context.Context, h db.HearingForDiscovery) 
 }
 
 // Commit persists a DiscoveryResult by updating the existing hearing
-// row (filling in CSI/TVW IDs) and inserting/upserting the agenda_item
-// row. Reuses the bill's source_record_id for provenance — these IDs
-// are enrichment of an existing claim, not a new factual claim.
+// row (filling in CSI/TVW IDs) and inserting/upserting the agenda_item row.
 func (d *Discoverer) Commit(ctx context.Context, h db.HearingForDiscovery, r *DiscoveryResult) error {
 	if _, err := d.deps.Store.UpsertHearing(ctx, db.UpsertHearingParams{
 		BillID:                    pInt64(h.BillID),
@@ -139,7 +137,6 @@ func (d *Discoverer) Commit(ctx context.Context, h db.HearingForDiscovery, r *Di
 		MeetingDateTime:           h.MeetingDateTime,
 		CommitteeScheduleAgendaID: r.CSIMeetingFamilyID,
 		TVWEventID:                r.TVWEventID,
-		SourceRecordID:            h.SourceRecordID,
 	}); err != nil {
 		return fmt.Errorf("upsert hearing: %w", err)
 	}
@@ -150,7 +147,6 @@ func (d *Discoverer) Commit(ctx context.Context, h db.HearingForDiscovery, r *Di
 		CSIMeetingFamilyID:    r.CSIMeetingFamilyID,
 		CSIAgendaItemFamilyID: r.CSIAgendaItemFamilyID,
 		CSIAgendaItemID:       r.CSIAgendaItemID,
-		SourceRecordID:        h.SourceRecordID,
 	}); err != nil {
 		return fmt.Errorf("upsert agenda item: %w", err)
 	}

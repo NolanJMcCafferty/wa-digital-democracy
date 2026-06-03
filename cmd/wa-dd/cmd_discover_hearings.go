@@ -26,7 +26,6 @@ func runDiscoverHearings(args []string) int {
 	var (
 		biennium  = fs.String("biennium", "2025-26", "Biennium to scan, e.g. 2025-26")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		outDir    = fs.String("out-dir", "data/processed", "where _discovery.json is written")
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per CSI/TVW host")
 		limit     = fs.Int("limit", 0, "stop after N hearings (0 = no limit). For smoke tests.")
@@ -38,7 +37,7 @@ func runDiscoverHearings(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	deps, cleanup, err := newDiscoveryDeps(ctx, *dsn, *rawDir, *rateLimit)
+	deps, cleanup, err := newDiscoveryDeps(ctx, *dsn, *rateLimit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "discover-hearings: %v\n", err)
 		return 1

@@ -12,7 +12,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/fiscalwa"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func init() {
@@ -27,7 +26,6 @@ func runIngestFiscalVendorPayments(args []string) int {
 	var (
 		limit     = fs.Int("limit", 1000, "maximum rows to upsert after parsing (0 = all rows)")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		rateLimit = fs.Float64("rate", 10.0, "max requests/sec for fiscal.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -42,14 +40,8 @@ func runIngestFiscalVendorPayments(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewConfigured(ctx, *rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: objectstore: %v\n", err)
-		return 1
-	}
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      2 * time.Minute,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -58,13 +50,9 @@ func runIngestFiscalVendorPayments(args []string) int {
 		},
 	})
 	client := fiscalwa.New(httpClient)
-	rows, fetch, err := client.FetchVendorPaymentsWithSource(ctx)
+	rows, _, err := client.FetchVendorPaymentsWithSource(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: fetch/parse: %v\n", err)
-		return 1
-	}
-	if fetch.SourceRecordID == 0 {
-		fmt.Fprintln(os.Stderr, "ingest-fiscal-vendor-payments: source record was not captured")
 		return 1
 	}
 
@@ -94,7 +82,6 @@ func runIngestFiscalVendorPayments(args []string) int {
 				"subobject_code": row.SubobjectCode, "subobject_name": row.SubobjectName,
 				"vendor_name": row.VendorName, "amount": row.Amount,
 			},
-			SourceRecordID: fetch.SourceRecordID,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-fiscal-vendor-payments: upsert row %s: %v\n", row.SourceRowID, err)
 			return 1

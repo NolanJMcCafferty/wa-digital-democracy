@@ -32,7 +32,6 @@ type UpsertTVWEventParams struct {
 	RawKeywords         []string
 	RawWPTags           []int
 	RawWPCategories     []int
-	SourceRecordID      int64
 }
 
 func (s *Store) UpsertTVWEvent(ctx context.Context, p UpsertTVWEventParams) (int64, error) {
@@ -55,8 +54,8 @@ INSERT INTO tvw_event (tvw_event_id, wp_post_id, wp_slug, wp_link, title,
                        total_runtime_seconds, published_audio_url,
                        audio_download_url, video_download_url, streaming_uris,
                        raw_categories, raw_keywords, raw_wp_tags,
-                       raw_wp_categories, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,0),$14,$15,$16,$17::jsonb,$18,$19,$20::jsonb,$21::jsonb,$22)
+                       raw_wp_categories)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,0),$14,$15,$16,$17::jsonb,$18,$19,$20::jsonb,$21::jsonb)
 ON CONFLICT (tvw_event_id) DO UPDATE SET
   wp_post_id     = COALESCE(EXCLUDED.wp_post_id, tvw_event.wp_post_id),
   wp_slug        = COALESCE(EXCLUDED.wp_slug, tvw_event.wp_slug),
@@ -78,7 +77,6 @@ ON CONFLICT (tvw_event_id) DO UPDATE SET
   raw_keywords = EXCLUDED.raw_keywords,
   raw_wp_tags = EXCLUDED.raw_wp_tags,
   raw_wp_categories = EXCLUDED.raw_wp_categories,
-  source_record_id = EXCLUDED.source_record_id,
   updated_at     = NOW()
 RETURNING id;`
 	var id int64
@@ -87,7 +85,7 @@ RETURNING id;`
 		strOrNull(p.Description), timeOrNull(p.StartDateTime), strOrNull(p.CaptionURL), strOrNull(p.ThumbnailURL),
 		strOrNull(p.CustomID), strOrNull(p.LocationName), strOrNull(p.TotalRuntime), p.TotalRuntimeSeconds,
 		strOrNull(p.PublishedAudioURL), strOrNull(p.AudioDownloadURL), strOrNull(p.VideoDownloadURL), string(streaming),
-		nonNilStrings(p.RawCategories), nonNilStrings(p.RawKeywords), string(wpTags), string(wpCategories), p.SourceRecordID,
+		nonNilStrings(p.RawCategories), nonNilStrings(p.RawKeywords), string(wpTags), string(wpCategories),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("upsert tvw_event: %w", err)
@@ -110,7 +108,6 @@ type UpsertTVWMediaAssetParams struct {
 	CurrentStatus       string
 	DateCreated         time.Time
 	AdvancedDetails     any
-	SourceRecordID      int64
 }
 
 func (s *Store) ReplaceTVWMediaAssets(ctx context.Context, tvwEventID string, rows []UpsertTVWMediaAssetParams) error {
@@ -127,8 +124,8 @@ INSERT INTO tvw_media_asset (tvw_event_id, asset_id, asset_type, name, file_url,
                              thumbnail_url, sprite_url, preview_url,
                              file_size_bytes, total_runtime,
                              total_runtime_seconds, current_status,
-                             date_created, advanced_details, source_record_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9::bigint,0),$10,NULLIF($11,0),$12,$13,$14::jsonb,$15);`
+                             date_created, advanced_details)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9::bigint,0),$10,NULLIF($11,0),$12,$13,$14::jsonb);`
 	for _, r := range rows {
 		advanced, err := marshalJSONDefault(r.AdvancedDetails, map[string]any{})
 		if err != nil {
@@ -138,7 +135,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9::bigint,0),$10,NULLIF($11,0),$12,$13,$
 			r.TVWEventID, r.AssetID, r.AssetType, strOrNull(r.Name), strOrNull(r.FileURL),
 			strOrNull(r.ThumbnailURL), strOrNull(r.SpriteURL), strOrNull(r.PreviewURL),
 			fileSizeOrNull(r.FileSizeBytes), strOrNull(r.TotalRuntime), r.TotalRuntimeSeconds,
-			strOrNull(r.CurrentStatus), timeOrNull(r.DateCreated), string(advanced), r.SourceRecordID,
+			strOrNull(r.CurrentStatus), timeOrNull(r.DateCreated), string(advanced),
 		); err != nil {
 			return fmt.Errorf("insert tvw media asset %s: %w", r.AssetID, err)
 		}

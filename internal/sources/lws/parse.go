@@ -62,31 +62,31 @@ func cleanFault(s string) string {
 // ---------------------------------------------------------------------------
 
 type Legislation struct {
-	Biennium          string  `xml:"Biennium"`
-	BillID            string  `xml:"BillId"`
-	BillNumber        string  `xml:"BillNumber"`
-	OriginalAgency    string  `xml:"OriginalAgency"`
-	Active            bool    `xml:"Active"`
-	ShortDescription  string  `xml:"ShortDescription"`
-	LongDescription   string  `xml:"LongDescription"`
-	LegalTitle        string  `xml:"LegalTitle"`
-	IntroducedDate    string  `xml:"IntroducedDate"`
-	Sponsor           string  `xml:"Sponsor"`        // free-text "(Simmons)" — distinct from GetSponsors
-	PrimeSponsorID    string  `xml:"PrimeSponsorID"`
-	SubstituteVersion string  `xml:"SubstituteVersion"`
-	EngrossedVersion  string  `xml:"EngrossedVersion"`
+	Biennium          string         `xml:"Biennium"`
+	BillID            string         `xml:"BillId"`
+	BillNumber        string         `xml:"BillNumber"`
+	OriginalAgency    string         `xml:"OriginalAgency"`
+	Active            bool           `xml:"Active"`
+	ShortDescription  string         `xml:"ShortDescription"`
+	LongDescription   string         `xml:"LongDescription"`
+	LegalTitle        string         `xml:"LegalTitle"`
+	IntroducedDate    string         `xml:"IntroducedDate"`
+	Sponsor           string         `xml:"Sponsor"` // free-text "(Simmons)" — distinct from GetSponsors
+	PrimeSponsorID    string         `xml:"PrimeSponsorID"`
+	SubstituteVersion string         `xml:"SubstituteVersion"`
+	EngrossedVersion  string         `xml:"EngrossedVersion"`
 	CurrentStatus     *CurrentStatus `xml:"CurrentStatus"`
 }
 
 type CurrentStatus struct {
-	BillID                 string `xml:"BillId"`
-	HistoryLine            string `xml:"HistoryLine"`
-	ActionDate             string `xml:"ActionDate"`
-	AmendedByOppositeBody  bool   `xml:"AmendedByOppositeBody"`
-	PartialVeto            bool   `xml:"PartialVeto"`
-	Veto                   bool   `xml:"Veto"`
-	AmendmentsExist        bool   `xml:"AmendmentsExist"`
-	Status                 string `xml:"Status"`
+	BillID                string `xml:"BillId"`
+	HistoryLine           string `xml:"HistoryLine"`
+	ActionDate            string `xml:"ActionDate"`
+	AmendedByOppositeBody bool   `xml:"AmendedByOppositeBody"`
+	PartialVeto           bool   `xml:"PartialVeto"`
+	Veto                  bool   `xml:"Veto"`
+	AmendmentsExist       bool   `xml:"AmendmentsExist"`
+	Status                string `xml:"Status"`
 }
 
 type Sponsor struct {
@@ -113,27 +113,27 @@ type Committee struct {
 }
 
 type CommitteeMeeting struct {
-	AgendaID            string      `xml:"AgendaId"`
-	Agency              string      `xml:"Agency"`
-	Committees          []Committee `xml:"Committees>Committee"`
-	Room                string      `xml:"Room"`
-	Building            string      `xml:"Building"`
-	Address             string      `xml:"Address"`
-	City                string      `xml:"City"`
-	State               string      `xml:"State"`
-	Date                string      `xml:"Date"`
-	Cancelled           bool        `xml:"Cancelled"`
-	RevisedDate         string      `xml:"RevisedDate"`
-	CommitteeType       string      `xml:"CommitteeType"`
-	Notes               string      `xml:"Notes"`
+	AgendaID      string      `xml:"AgendaId"`
+	Agency        string      `xml:"Agency"`
+	Committees    []Committee `xml:"Committees>Committee"`
+	Room          string      `xml:"Room"`
+	Building      string      `xml:"Building"`
+	Address       string      `xml:"Address"`
+	City          string      `xml:"City"`
+	State         string      `xml:"State"`
+	Date          string      `xml:"Date"`
+	Cancelled     bool        `xml:"Cancelled"`
+	RevisedDate   string      `xml:"RevisedDate"`
+	CommitteeType string      `xml:"CommitteeType"`
+	Notes         string      `xml:"Notes"`
 }
 
 type Hearing struct {
-	BillID                  string           `xml:"BillId"`
-	Biennium                string           `xml:"Biennium"`
-	HearingType             string           `xml:"HearingType"`             // "Public" | "Executive"
-	HearingTypeDescription  string           `xml:"HearingTypeDescription"`
-	CommitteeMeeting        CommitteeMeeting `xml:"CommitteeMeeting"`
+	BillID                 string           `xml:"BillId"`
+	Biennium               string           `xml:"Biennium"`
+	HearingType            string           `xml:"HearingType"` // "Public" | "Executive"
+	HearingTypeDescription string           `xml:"HearingTypeDescription"`
+	CommitteeMeeting       CommitteeMeeting `xml:"CommitteeMeeting"`
 }
 
 type RollCall struct {
@@ -156,11 +156,11 @@ type StatusChange struct {
 }
 
 type LegislationInfo struct {
-	Biennium       string `xml:"Biennium"`
-	BillID         string `xml:"BillId"`
-	BillNumber     string `xml:"BillNumber"`
-	OriginalAgency string `xml:"OriginalAgency"`
-	Active         bool   `xml:"Active"`
+	Biennium             string `xml:"Biennium"`
+	BillID               string `xml:"BillId"`
+	BillNumber           string `xml:"BillNumber"`
+	OriginalAgency       string `xml:"OriginalAgency"`
+	Active               bool   `xml:"Active"`
 	ShortLegislationType struct {
 		ShortType string `xml:"ShortLegislationType"`
 		LongType  string `xml:"LongLegislationType"`
@@ -267,14 +267,14 @@ func ParseLegislationByYear(body []byte) ([]LegislationInfo, error) {
 // our /legislators index.
 type Member struct {
 	ID        string `xml:"Id"`
-	Name      string `xml:"Name"`      // "Emily Alvarado"
-	LongName  string `xml:"LongName"`  // "Senator Alvarado"
-	Agency    string `xml:"Agency"`    // "House" | "Senate"
-	Acronym   string `xml:"Acronym"`   // "ALVA"
-	Party     string `xml:"Party"`     // "D" | "R"
-	District  string `xml:"District"`  // "34"
-	Phone     string `xml:"Phone"`     // "(360) 786-7667"
-	Email     string `xml:"Email"`     // "Emily.Alvarado@leg.wa.gov"
+	Name      string `xml:"Name"`     // "Emily Alvarado"
+	LongName  string `xml:"LongName"` // "Senator Alvarado"
+	Agency    string `xml:"Agency"`   // "House" | "Senate"
+	Acronym   string `xml:"Acronym"`  // "ALVA"
+	Party     string `xml:"Party"`    // "D" | "R"
+	District  string `xml:"District"` // "34"
+	Phone     string `xml:"Phone"`    // "(360) 786-7667"
+	Email     string `xml:"Email"`    // "Emily.Alvarado@leg.wa.gov"
 	FirstName string `xml:"FirstName"`
 	LastName  string `xml:"LastName"`
 }

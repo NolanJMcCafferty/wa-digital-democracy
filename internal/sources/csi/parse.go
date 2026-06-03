@@ -25,23 +25,23 @@ type Meeting struct {
 
 // AgendaItem is one button.agendaItem from /Home/GetAgendaItems.
 type AgendaItem struct {
-	Chamber              string
-	MeetingFamilyID      string
-	AgendaItemFamilyID   string
-	AgendaItemID         string
-	Label                string // e.g. "HB 2747 Budget sustainability"
+	Chamber            string
+	MeetingFamilyID    string
+	AgendaItemFamilyID string
+	AgendaItemID       string
+	Label              string // e.g. "HB 2747 Budget sustainability"
 }
 
 // Testifier is one row from the data-json arrays on the two tables.
 type Testifier struct {
-	Name           string    `json:"Name"`
-	Organization   string    `json:"Organization"`
-	Position       string    `json:"Position"` // "Pro" | "Con" | "Other"
-	Count          int       `json:"Count"`
-	CssClass       string    `json:"CssClass"`
-	TimeSignedIn   time.Time `json:"-"`
-	TimeSignedInRaw string   `json:"TimeSignedIn"`
-	Testified      bool      // true if from #testifyingDataTable, false if #notTestifyingDataTable
+	Name            string    `json:"Name"`
+	Organization    string    `json:"Organization"`
+	Position        string    `json:"Position"` // "Pro" | "Con" | "Other"
+	Count           int       `json:"Count"`
+	CssClass        string    `json:"CssClass"`
+	TimeSignedIn    time.Time `json:"-"`
+	TimeSignedInRaw string    `json:"TimeSignedIn"`
+	Testified       bool      // true if from #testifyingDataTable, false if #notTestifyingDataTable
 }
 
 // ParseChamberCommittees pulls <option> values from the SelectedCommitteeId
@@ -89,7 +89,7 @@ func ParseMeetings(body []byte) ([]Meeting, error) {
 // agendaItemId, label) tuple from each agendaItem button's onclick and inner
 // text. The onclick template is:
 //
-//   WSLApp.Testimony.getTestimonyTypes($(this), '<chamber>', <mfId>, <aifId>, <aiId>)
+//	WSLApp.Testimony.getTestimonyTypes($(this), '<chamber>', <mfId>, <aifId>, <aiId>)
 func ParseAgendaItems(body []byte) ([]AgendaItem, error) {
 	html := string(body)
 	matches := agendaItemRe.FindAllStringSubmatch(html, -1)

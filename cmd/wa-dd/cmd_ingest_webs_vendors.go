@@ -13,7 +13,6 @@ import (
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/httpx"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/socrata"
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/db"
-	"github.com/nolan-mccafferty/wa-digital-democracy/internal/storage/objectstore"
 )
 
 func init() {
@@ -28,7 +27,6 @@ func runIngestWEBSVendors(args []string) int {
 	var (
 		limit     = fs.Int("limit", 1000, "maximum rows to fetch (0 = Socrata page default)")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		rawDir    = fs.String("raw-dir", "data/raw", "filesystem root for raw API responses")
 		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -43,14 +41,8 @@ func runIngestWEBSVendors(args []string) int {
 		return 1
 	}
 	defer store.Close()
-	objs, err := objectstore.NewConfigured(ctx, *rawDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ingest-webs-vendors: objectstore: %v\n", err)
-		return 1
-	}
 	httpClient := httpx.New(httpx.Config{
 		UserAgent:    userAgent,
-		Sink:         db.RawSink{Store: store, Objects: objs, TransformVersion: "v0"},
 		Timeout:      45 * time.Second,
 		MaxRetries:   2,
 		RetryBackoff: 750 * time.Millisecond,
@@ -63,13 +55,9 @@ func runIngestWEBSVendors(args []string) int {
 	if *limit > 0 {
 		query.Limit = *limit
 	}
-	rows, fetch, err := client.FetchWEBSVendorsWithSource(ctx, query)
+	rows, _, err := client.FetchWEBSVendorsWithSource(ctx, query)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ingest-webs-vendors: fetch: %v\n", err)
-		return 1
-	}
-	if fetch.SourceRecordID == 0 {
-		fmt.Fprintln(os.Stderr, "ingest-webs-vendors: source record was not captured")
 		return 1
 	}
 
@@ -98,7 +86,6 @@ func runIngestWEBSVendors(args []string) int {
 			OtherCert2:            vendor.OtherCert2,
 			Warnings:              vendor.NormalizationWarning,
 			RawFields:             row,
-			SourceRecordID:        fetch.SourceRecordID,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-webs-vendors: upsert row %s: %v\n", vendor.SourceRowID, err)
 			return 1

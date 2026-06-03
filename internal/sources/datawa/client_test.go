@@ -26,7 +26,7 @@ func TestFetchAgencyContractsUsesFiscalYearDataset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, err := c.FetchAgencyContracts(context.Background(), 2025, socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || rows[0][":id"] != "row1" {
@@ -43,7 +43,7 @@ func TestFetchWEBSVendorsWithSourceReturnsProvenance(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, fetch, err := c.FetchWEBSVendorsWithSource(context.Background(), socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.3kwi-7zsj" {
@@ -60,7 +60,7 @@ func TestFetchITContractsWithSourceReturnsProvenance(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, fetch, err := c.FetchITContractsWithSource(context.Background(), 2025, socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.3txe-z9i9" {
@@ -69,7 +69,7 @@ func TestFetchITContractsWithSourceReturnsProvenance(t *testing.T) {
 }
 
 func TestFetchITContractsRejectsUnknownYear(t *testing.T) {
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	_, _, err := c.FetchITContractsWithSource(context.Background(), 1900, socrata.Query{})
 	if err == nil {
 		t.Fatal("expected error")
@@ -85,7 +85,7 @@ func TestFetchMasterContractSalesWithSourceReturnsProvenance(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, fetch, err := c.FetchMasterContractSalesWithSource(context.Background(), socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.n8q6-4twj" {
@@ -99,7 +99,7 @@ func TestFetchAgencyContractsWithSourceReturnsProvenance(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(httpx.New(httpx.Config{Sink: httpx.NopSink{}}), "")
+	c := New(httpx.New(httpx.Config{}), "")
 	c.BaseURL = srv.URL
 	rows, fetch, err := c.FetchAgencyContractsWithSource(context.Background(), 2025, socrata.Query{Limit: 1})
 	if err != nil || len(rows) != 1 || fetch.System != SystemName || fetch.Endpoint != "resource.6fx9-ncas" {
