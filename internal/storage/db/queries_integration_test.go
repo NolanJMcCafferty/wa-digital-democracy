@@ -146,6 +146,19 @@ func TestAttachPDCEmployerAffiliationsToOrganization_BackfillsPreloadedPDC(t *te
 	}); err != nil {
 		t.Fatalf("upsert PDC lobbyist affiliation: %v", err)
 	}
+	if err := store.UpsertPDCLobbyistAffiliation(ctx, db.UpsertPDCLobbyistAffiliationParams{
+		ReportNumber:     "R-PDC-PRELOADED-1",
+		LobbyistID:       "L-PDC-PRELOADED-1",
+		LobbyistName:     "Preloaded, Pat",
+		EmployerID:       "EMP-PDC-PRELOADED-1",
+		EmployerName:     "Preloaded PDC Employer Association",
+		EmploymentYear:   "2026",
+		EmploymentURL:    "https://web.pdc.wa.gov/example/preloaded",
+		EmploymentPeriod: "Annual",
+		Raw:              map[string]any{"source": "pdc-repeat"},
+	}); err != nil {
+		t.Fatalf("repeat PDC lobbyist affiliation: %v", err)
+	}
 
 	var nullOrgRows int
 	if err := store.Pool.QueryRow(ctx, `

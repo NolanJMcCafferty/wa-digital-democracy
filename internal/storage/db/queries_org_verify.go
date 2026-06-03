@@ -384,6 +384,34 @@ DELETE FROM person_organization_affiliation poa
 		return fmt.Errorf("delete duplicate PDC employer affiliations: %w", err)
 	}
 
+	const deleteCandidateDuplicates = `
+WITH candidates AS (
+    SELECT id, relationship_type, source_kind, source_table, source_pk, source_row_id,
+           person_id, raw_person_name, raw_organization_name,
+           ROW_NUMBER() OVER (
+               PARTITION BY relationship_type, source_kind, source_table, source_pk,
+                            source_row_id, person_id, raw_person_name,
+                            raw_organization_name
+               ORDER BY id
+           ) AS rn
+      FROM person_organization_affiliation
+     WHERE source_kind = 'pdc_lobbyist_employment'
+       AND relationship_type = 'lobbyist_for'
+       AND organization_id IS NULL
+       AND (
+             ($1 <> '' AND context->>'employer_id' = $1)
+          OR ($2 <> '' AND lower(trim(raw_organization_name)) = lower(trim($2)))
+          OR ($2 <> '' AND lower(trim(context->>'employer_name')) = lower(trim($2)))
+       )
+)
+DELETE FROM person_organization_affiliation poa
+ USING candidates
+ WHERE poa.id = candidates.id
+   AND candidates.rn > 1;`
+	if _, err := s.Pool.Exec(ctx, deleteCandidateDuplicates, employerID, employerName); err != nil {
+		return fmt.Errorf("delete duplicate unattached PDC employer affiliations: %w", err)
+	}
+
 	const attach = `
 UPDATE person_organization_affiliation
    SET organization_id = $1,

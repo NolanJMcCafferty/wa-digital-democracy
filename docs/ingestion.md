@@ -253,7 +253,9 @@ Bill metadata is not refreshed here. `ingest-session` owns `bill`,
 diarization dominates fresh hearings. `ingest-hearings` defaults to pyannoteAI
 `precision-2` with bundled transcription. Use `--provider deepgram` for
 Deepgram, `--workers` for hearing-level parallelism, and
-`--diarization-concurrency` to cap provider jobs; the default cap is 5.
+`--diarization-concurrency` to cap provider jobs; the default cap is 5. Use
+`--limit=1` for a single-hearing smoke test, or `make ingest-hearings LIMIT=1`
+through the Make wrapper.
 PDC/IRS source-context runs are part of daily before hearing ingest. DataWA,
 FiscalWA, and Federal source-context commands remain separate bounded backfills
 with their own costs.

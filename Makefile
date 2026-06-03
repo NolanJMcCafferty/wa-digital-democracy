@@ -174,7 +174,7 @@ ingest-hearings: ## Run the full hearing pipeline for discovered hearings
 	@if [ -z "$$PYANNOTEAI_API_KEY" ]; then \
 		echo "PYANNOTEAI_API_KEY is required (export it or put it in your env)"; exit 1; \
 	fi
-	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26}
+	$(GO) run ./cmd/wa-dd ingest-hearings --biennium $${BIENNIUM:-2025-26} --limit $(or $(HEARING_LIMIT),$(LIMIT),0)
 
 ingest-pdc-employers: ## Pull PDC lobbyist-employer registrations into person/org context
 	$(GO) run ./cmd/wa-dd ingest-pdc-employers
@@ -194,4 +194,5 @@ diarize-pending: ## Diarize every TVW event without a successful diarization_job
 	fi
 	$(GO) run ./cmd/wa-dd diarize-pending
 
+daily: export HEARING_LIMIT ?= 1
 daily: ingest-legislators ingest-session ingest-irs-bmf-wa ingest-pdc-employers ingest-hearings verify-organizations generate-vendor-entity-matches ## One-call nightly: roster + metadata + source context + hearing/entity pipeline

@@ -83,7 +83,8 @@ The daily chain is idempotent and safe to re-run:
    segmentation per agenda item, and organization seeding. Because IRS/PDC
    context is already loaded, source-backed CSI organizations can be confirmed
    as they are created. This is what produces the rich bill-hearing pages.
-   Summary: `data/processed/_ingest.json`.
+   Summary: `data/processed/_ingest.json`. For a one-hearing smoke test, run
+   `make ingest-hearings LIMIT=1`.
 
 5. **`make verify-organizations`** — re-checks any existing unconfirmed
    organizations against the fresh IRS/PDC reference tables so older rows do
