@@ -197,14 +197,14 @@ full biennium run after the first batch warms the caches.
 TVW event ID and is still selected by the retry query, runs the full 6-step
 pipeline.
 
-**Retry-selection caveat:** the current selection query in
-`Store.ListDiscoveredAgendaItems` still looks for the legacy terminal
-`ingestion_run.job = 'pdc-context'` success marker. The current 6-step pipeline
-no longer writes that step (it ends at `populate-organizations`), so this is a
-known code/doc mismatch to keep in mind when interpreting re-runs. Operationally,
-`ingest-hearings` is intended to retry agenda items that have not completed the
-full pipeline, including items that failed after partially inserting testifiers
-or transcript rows; it is not merely a “no testifier rows yet” filter.
+**Retry selection:** `Store.ListDiscoveredAgendaItems` selects discovered
+agenda items whose full pipeline has not completed. The current terminal marker
+is a succeeded `ingestion_run.job = 'populate-organizations'` row tagged with the
+agenda item's CSI ID. Legacy succeeded `pdc-context` rows are also honored so
+older completed ingests do not get reprocessed. Operationally,
+`ingest-hearings` retries agenda items that have not completed the full pipeline,
+including items that failed after partially inserting testifiers or transcript
+rows; it is not merely a “no testifier rows yet” filter.
 
 **Why:** discovery populated the join keys; this pass uses them to
 fetch the actual testimony, video captions, and downstream derivatives.
@@ -367,10 +367,10 @@ All daily stages are safe to re-run. What changes:
   re-running just refreshes timestamps and any changed fields.
 - `testifier`, `transcript_segment` — these are insert-only with no
   dedupe. Re-running creates duplicates today. The intended routine path is
-  to avoid re-running completed agenda items and retry incomplete ones, but
-  the current work-list query still uses the legacy `pdc-context` terminal
-  marker; until that is corrected, verify the candidate list before broad
-  re-runs on a database that already has completed hearing ingests.
+  to avoid re-running completed agenda items and retry incomplete ones; the
+  work-list query treats succeeded `populate-organizations` rows as the
+  current terminal marker and still honors legacy succeeded `pdc-context`
+  rows.
 - `source_record` — UPSERT on `(system, endpoint, url, content_hash,
   transform_version)`. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new

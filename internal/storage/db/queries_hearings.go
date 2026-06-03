@@ -773,11 +773,13 @@ type DiscoveredAgendaItemRow struct {
 // ListDiscoveredAgendaItems returns agenda_item rows where (a) the
 // hearing has a tvw_event_id (so transcript ingest can run) and (b) the
 // full ingest pipeline has not yet succeeded end-to-end for that agenda
-// item. The terminal step is `pdc-context`: a `succeeded` ingestion_run
-// row tagged with this agenda's csi_agenda_item_id proves all 6 steps
-// ran. Items that died mid-pipeline (e.g. testifiers ingested but
-// transcript segmentation failed) come back into the work list for a
-// retry. Used by `wa-dd ingest-hearings` to feed buildOne.
+// item. The terminal step is `populate-organizations`: a `succeeded`
+// ingestion_run row tagged with this agenda's csi_agenda_item_id proves
+// all current pipeline steps ran. Legacy `pdc-context` successes are also
+// honored so old completed ingests do not get reprocessed. Items that died
+// mid-pipeline (e.g. testifiers ingested but transcript segmentation
+// failed) come back into the work list for a retry. Used by `wa-dd
+// ingest-hearings` to feed buildOne.
 func (s *Store) ListDiscoveredAgendaItems(ctx context.Context, biennium string) ([]DiscoveredAgendaItemRow, error) {
 	const q = `
 SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
@@ -788,7 +790,7 @@ SELECT a.csi_agenda_item_id, b.biennium, b.prefix, b.number
    AND h.tvw_event_id IS NOT NULL
    AND NOT EXISTS (
      SELECT 1 FROM ingestion_run r
-      WHERE r.job = 'pdc-context'
+      WHERE r.job IN ('populate-organizations', 'pdc-context')
         AND r.status = 'succeeded'
         AND r.args ->> 'agenda_item_id' = a.csi_agenda_item_id
    )

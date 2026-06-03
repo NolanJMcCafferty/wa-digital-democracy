@@ -167,6 +167,68 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	}
 }
 
+func TestListDiscoveredAgendaItems_UsesCurrentAndLegacyCompletionMarkers(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	cleanup := newDBCleanup(t, store)
+	srID := insertProvenance(t, store, cleanup, "lws", "discovered-agenda-items-test-1")
+
+	billID, err := store.UpsertBill(ctx, db.UpsertBillParams{
+		Biennium: "9999-99", Prefix: "HB", Number: 9992,
+		Title: "Retry Marker Test", ChamberOrigin: "House",
+		SourceRecordID: srID,
+	})
+	if err != nil {
+		t.Fatalf("bill: %v", err)
+	}
+	makeAgenda := func(tvwEventID, csiAgendaID string) {
+		t.Helper()
+		hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
+			BillID: pInt64Test(billID), CommitteeName: "Retry Marker Committee", Chamber: "House",
+			MeetingDateTime: time.Now().UTC().Add(time.Duration(len(csiAgendaID)) * time.Minute),
+			TVWEventID:      tvwEventID,
+			SourceRecordID:  srID,
+		})
+		if err != nil {
+			t.Fatalf("hearing %s: %v", csiAgendaID, err)
+		}
+		if _, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
+			HearingID: hearingID, BillID: pInt64Test(billID), Label: "HB 9992 Retry Marker",
+			CSIAgendaItemID: csiAgendaID, SourceRecordID: srID,
+		}); err != nil {
+			t.Fatalf("agenda %s: %v", csiAgendaID, err)
+		}
+	}
+	makeAgenda("tvw-current", "csi-current-complete")
+	makeAgenda("tvw-legacy", "csi-legacy-complete")
+	makeAgenda("tvw-pending", "csi-pending")
+
+	currentRun, err := store.StartIngestionRun(ctx, "populate-organizations", map[string]any{"agenda_item_id": "csi-current-complete"})
+	if err != nil {
+		t.Fatalf("start current run: %v", err)
+	}
+	if err := store.FinishIngestionRun(ctx, currentRun, "succeeded", 0, 0, nil); err != nil {
+		t.Fatalf("finish current run: %v", err)
+	}
+	legacyRun, err := store.StartIngestionRun(ctx, "pdc-context", map[string]any{"agenda_item_id": "csi-legacy-complete"})
+	if err != nil {
+		t.Fatalf("start legacy run: %v", err)
+	}
+	if err := store.FinishIngestionRun(ctx, legacyRun, "succeeded", 0, 0, nil); err != nil {
+		t.Fatalf("finish legacy run: %v", err)
+	}
+
+	rows, err := store.ListDiscoveredAgendaItems(ctx, "9999-99")
+	if err != nil {
+		t.Fatalf("list discovered agenda items: %v", err)
+	}
+	if len(rows) != 1 || rows[0].CSIAgendaItemID != "csi-pending" {
+		t.Fatalf("rows = %#v, want only csi-pending", rows)
+	}
+}
+
+func pInt64Test(v int64) *int64 { return &v }
+
 func TestUpsertTVWEventAndMediaAssets_Idempotent(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
