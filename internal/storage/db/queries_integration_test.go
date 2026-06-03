@@ -32,6 +32,250 @@ func TestUpsertBill_Idempotent(t *testing.T) {
 	}
 }
 
+func TestUpsertOrganization_MergesAliases(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "Alias Merge Test Organization",
+		Aliases:         []string{"AMTO", "Alias Merge Test Org"},
+		MatchConfidence: "possible",
+		MatchNotes:      "first",
+	})
+	if err != nil {
+		t.Fatalf("upsert org 1: %v", err)
+	}
+	if _, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "Alias Merge Test Organization",
+		Aliases:         []string{"amto", "Alias Merge Coalition"},
+		MatchConfidence: "possible",
+		MatchNotes:      "second",
+	}); err != nil {
+		t.Fatalf("upsert org 2: %v", err)
+	}
+	if _, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "Alias Merge Test Organization",
+		Aliases:         []string{},
+		MatchConfidence: "possible",
+		MatchNotes:      "third",
+	}); err != nil {
+		t.Fatalf("upsert org 3: %v", err)
+	}
+
+	var aliases []string
+	if err := store.Pool.QueryRow(ctx, `SELECT aliases FROM organization WHERE id = $1`, orgID).Scan(&aliases); err != nil {
+		t.Fatalf("read aliases: %v", err)
+	}
+	for _, want := range []string{"AMTO", "Alias Merge Test Org", "Alias Merge Coalition"} {
+		if !hasString(aliases, want) {
+			t.Fatalf("aliases = %#v, want %q", aliases, want)
+		}
+	}
+	if hasString(aliases, "amto") {
+		t.Fatalf("aliases = %#v, duplicate case-variant alias was not deduped", aliases)
+	}
+}
+
+func TestUpsertPDCLobbyistAffiliation_MarksSourceBackedLobbyistConfirmed(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:         "Confirmed PDC Employer Association",
+		PDCLobbyistEmployerID: "EMP-PDC-CONFIRMED-1",
+		MatchConfidence:       "confirmed",
+		MatchNotes:            "fixture",
+	})
+	if err != nil {
+		t.Fatalf("upsert organization: %v", err)
+	}
+
+	if err := store.UpsertPDCLobbyistAffiliation(ctx, db.UpsertPDCLobbyistAffiliationParams{
+		ReportNumber:     "R-PDC-CONFIRMED-1",
+		LobbyistID:       "L-PDC-CONFIRMED-1",
+		LobbyistName:     "Source, Pat",
+		EmployerID:       "EMP-PDC-CONFIRMED-1",
+		EmployerName:     "Confirmed PDC Employer Association",
+		EmploymentYear:   "2026",
+		EmploymentURL:    "https://web.pdc.wa.gov/example/confirmed",
+		EmploymentPeriod: "Annual",
+		Raw:              map[string]any{"source": "pdc"},
+	}); err != nil {
+		t.Fatalf("upsert PDC lobbyist affiliation: %v", err)
+	}
+
+	var personConfidence string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT match_confidence::text
+  FROM person
+ WHERE pdc_lobbyist_id = 'L-PDC-CONFIRMED-1';`).Scan(&personConfidence); err != nil {
+		t.Fatalf("read person confidence: %v", err)
+	}
+	if personConfidence != "confirmed" {
+		t.Fatalf("person confidence = %q, want confirmed", personConfidence)
+	}
+
+	var affiliationConfidence string
+	if err := store.Pool.QueryRow(ctx, `
+SELECT confidence::text
+  FROM person_organization_affiliation
+ WHERE organization_id = $1
+   AND source_kind = 'pdc_lobbyist_employment'
+   AND relationship_type = 'lobbyist_for';`, orgID).Scan(&affiliationConfidence); err != nil {
+		t.Fatalf("read affiliation confidence: %v", err)
+	}
+	if affiliationConfidence != "confirmed" {
+		t.Fatalf("affiliation confidence = %q, want confirmed", affiliationConfidence)
+	}
+}
+
+func TestAttachPDCEmployerAffiliationsToOrganization_BackfillsPreloadedPDC(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.UpsertPDCLobbyistAffiliation(ctx, db.UpsertPDCLobbyistAffiliationParams{
+		ReportNumber:     "R-PDC-PRELOADED-1",
+		LobbyistID:       "L-PDC-PRELOADED-1",
+		LobbyistName:     "Preloaded, Pat",
+		EmployerID:       "EMP-PDC-PRELOADED-1",
+		EmployerName:     "Preloaded PDC Employer Association",
+		EmploymentYear:   "2026",
+		EmploymentURL:    "https://web.pdc.wa.gov/example/preloaded",
+		EmploymentPeriod: "Annual",
+		Raw:              map[string]any{"source": "pdc"},
+	}); err != nil {
+		t.Fatalf("upsert PDC lobbyist affiliation: %v", err)
+	}
+
+	var nullOrgRows int
+	if err := store.Pool.QueryRow(ctx, `
+SELECT COUNT(*)
+  FROM person_organization_affiliation
+ WHERE source_kind = 'pdc_lobbyist_employment'
+   AND source_row_id = 'R-PDC-PRELOADED-1|L-PDC-PRELOADED-1|EMP-PDC-PRELOADED-1|2026'
+   AND organization_id IS NULL;`).Scan(&nullOrgRows); err != nil {
+		t.Fatalf("count null organization affiliations: %v", err)
+	}
+	if nullOrgRows != 1 {
+		t.Fatalf("null organization affiliations = %d, want 1", nullOrgRows)
+	}
+
+	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "Preloaded PDC Employer Association",
+		MatchConfidence: "possible",
+		MatchNotes:      "fixture",
+	})
+	if err != nil {
+		t.Fatalf("upsert organization: %v", err)
+	}
+	if err := store.AttachPDCEmployerAffiliationsToOrganization(ctx, orgID, "EMP-PDC-PRELOADED-1", "Preloaded PDC Employer Association"); err != nil {
+		t.Fatalf("attach PDC employer affiliations: %v", err)
+	}
+
+	var attachedRows int
+	if err := store.Pool.QueryRow(ctx, `
+SELECT COUNT(*)
+  FROM person_organization_affiliation
+ WHERE source_kind = 'pdc_lobbyist_employment'
+   AND source_row_id = 'R-PDC-PRELOADED-1|L-PDC-PRELOADED-1|EMP-PDC-PRELOADED-1|2026'
+   AND organization_id = $1;`, orgID).Scan(&attachedRows); err != nil {
+		t.Fatalf("count attached affiliations: %v", err)
+	}
+	if attachedRows != 1 {
+		t.Fatalf("attached affiliations = %d, want 1", attachedRows)
+	}
+}
+
+func TestReplaceTestifiersForAgenda_ReusesCSIPersonByNormalizedName(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "CSI Person Dedupe Organization",
+		MatchConfidence: "possible",
+		MatchNotes:      "fixture",
+	})
+	if err != nil {
+		t.Fatalf("upsert organization: %v", err)
+	}
+
+	hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
+		CommitteeName: "Test Committee", Chamber: "House",
+		MeetingDateTime: time.Date(2026, 3, 1, 13, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("hearing: %v", err)
+	}
+	firstAgendaID, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
+		HearingID: hearingID, Label: "HB 9995 Test", CSIAgendaItemID: "csi-test-9995-a",
+	})
+	if err != nil {
+		t.Fatalf("first agenda: %v", err)
+	}
+	secondAgendaID, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
+		HearingID: hearingID, Label: "HB 9996 Test", CSIAgendaItemID: "csi-test-9995-b",
+	})
+	if err != nil {
+		t.Fatalf("second agenda: %v", err)
+	}
+
+	testifier := func(agendaID int64, testified bool) []db.InsertTestifierParams {
+		return []db.InsertTestifierParams{{
+			AgendaItemID:    agendaID,
+			RawName:         "McAleenan, Mellani",
+			RawOrganization: "CSI Person Dedupe Organization",
+			Position:        "Pro",
+			Testified:       testified,
+		}}
+	}
+	if err := store.ReplaceTestifiersForAgenda(ctx, firstAgendaID, testifier(firstAgendaID, false)); err != nil {
+		t.Fatalf("replace first agenda: %v", err)
+	}
+	if err := store.ReplaceTestifiersForAgenda(ctx, secondAgendaID, testifier(secondAgendaID, true)); err != nil {
+		t.Fatalf("replace second agenda: %v", err)
+	}
+
+	var personCount int
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*)
+  FROM person
+ WHERE normalized_name = 'MCALEENAN, MELLANI';`).Scan(&personCount); err != nil {
+		t.Fatalf("count CSI people: %v", err)
+	}
+	if personCount != 1 {
+		t.Fatalf("person count = %d, want 1", personCount)
+	}
+
+	affiliations, err := store.GetOrganizationPersonAffiliations(ctx, orgID)
+	if err != nil {
+		t.Fatalf("GetOrganizationPersonAffiliations: %v", err)
+	}
+	if len(affiliations) != 2 {
+		t.Fatalf("affiliation groups = %d, want 2: %#v", len(affiliations), affiliations)
+	}
+	for _, a := range affiliations {
+		if a.PersonName != "McAleenan, Mellani" {
+			t.Fatalf("person name = %q, want McAleenan, Mellani", a.PersonName)
+		}
+		if a.SourceCount != 1 {
+			t.Fatalf("%s source count = %d, want 1", a.RelationshipType, a.SourceCount)
+		}
+	}
+
+	if err := store.BackfillCSITestifierPersonAffiliationsForRawOrganizations(ctx, []string{"CSI Person Dedupe Organization"}); err != nil {
+		t.Fatalf("backfill affiliations: %v", err)
+	}
+	affiliations, err = store.GetOrganizationPersonAffiliations(ctx, orgID)
+	if err != nil {
+		t.Fatalf("GetOrganizationPersonAffiliations after backfill: %v", err)
+	}
+	for _, a := range affiliations {
+		if a.SourceCount != 1 {
+			t.Fatalf("%s source count after backfill = %d, want 1", a.RelationshipType, a.SourceCount)
+		}
+	}
+}
+
 func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -378,8 +622,11 @@ func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 	if found == nil {
 		t.Fatalf("expected candidate for ACME contract; got %#v", candidates)
 	}
-	if found.CandidateConfidence != "probable" {
-		t.Fatalf("confidence = %q, want probable", found.CandidateConfidence)
+	// "Acme Tech" alias normalizes to "ACME TECHNOLOGIES" (TECH → TECHNOLOGIES,
+	// per migration 0031), matching the source's normalized form, which
+	// triggers the alias-confirmed path in entitymatch.ConfidenceFor.
+	if found.CandidateConfidence != "confirmed" {
+		t.Fatalf("confidence = %q, want confirmed", found.CandidateConfidence)
 	}
 
 	if _, err := store.UpsertVendorEntityMatchDecision(ctx, db.InsertVendorEntityMatchDecisionParams{
@@ -399,6 +646,131 @@ func TestGenerateVendorEntityMatchCandidates(t *testing.T) {
 	if reviewed != 1 {
 		t.Fatalf("reviewed count = %d, want 1", reviewed)
 	}
+	var aliases []string
+	if err := store.Pool.QueryRow(ctx, `SELECT aliases FROM organization WHERE id = $1`, orgID).Scan(&aliases); err != nil {
+		t.Fatalf("read aliases: %v", err)
+	}
+	if !hasString(aliases, "ACME TECHNOLOGIES LLC") {
+		t.Fatalf("aliases = %#v, want confirmed source name alias", aliases)
+	}
+}
+
+// TestGenerateVendorEntityMatchCandidates_CSITestimonyOrganization verifies
+// that distinct testifier.raw_organization strings produce csi_testimony_organization
+// match candidates and that confirming one promotes the org to 'confirmed'.
+func TestGenerateVendorEntityMatchCandidates_CSITestimonyOrganization(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	// Seed a canonical organization that matches the raw testifier string.
+	orgID, err := store.UpsertOrganization(ctx, db.UpsertOrganizationParams{
+		CanonicalName:   "Fixture Civic Coalition",
+		Aliases:         []string{},
+		MatchConfidence: "possible",
+		MatchNotes:      "csi testimony seed",
+	})
+	if err != nil {
+		t.Fatalf("upsert org: %v", err)
+	}
+	defer store.Pool.Exec(ctx, `DELETE FROM organization WHERE id = $1`, orgID)
+
+	// Seed a hearing + agenda_item + testifier carrying the matching raw_organization.
+	hearingID, err := store.UpsertHearing(ctx, db.UpsertHearingParams{
+		CommitteeName: "Test Committee", Chamber: "House",
+		MeetingDateTime: time.Date(2026, 2, 1, 13, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("hearing: %v", err)
+	}
+	defer store.Pool.Exec(ctx, `DELETE FROM hearing WHERE id = $1`, hearingID)
+	agendaID, err := store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
+		HearingID: hearingID, Label: "HB 9994 Test", CSIAgendaItemID: "csi-test-9994",
+	})
+	if err != nil {
+		t.Fatalf("agenda: %v", err)
+	}
+	rawOrg := "Fixture Civic Coalition"
+	if err := store.ReplaceTestifiersForAgenda(ctx, agendaID, []db.InsertTestifierParams{
+		{AgendaItemID: agendaID, RawName: "Test Witness", RawOrganization: rawOrg, Position: "Pro", Testified: true},
+	}); err != nil {
+		t.Fatalf("replace testifiers: %v", err)
+	}
+
+	candidates, err := store.GenerateVendorEntityMatchCandidates(ctx, 5000)
+	if err != nil {
+		t.Fatalf("GenerateVendorEntityMatchCandidates: %v", err)
+	}
+	var found *db.VendorEntityMatchCandidate
+	for i := range candidates {
+		if candidates[i].SourceKind == "csi_testimony_organization" &&
+			candidates[i].SourceName == rawOrg &&
+			candidates[i].OrganizationID == orgID {
+			found = &candidates[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected csi_testimony_organization candidate for %q linked to org %d", rawOrg, orgID)
+	}
+	if found.SourceTable != "testifier" {
+		t.Errorf("source_table = %q, want testifier", found.SourceTable)
+	}
+	if found.SourceDatasetID != "csi" {
+		t.Errorf("source_dataset_id = %q, want csi", found.SourceDatasetID)
+	}
+
+	// Testimony context should surface the agenda item.
+	tcByID, err := store.ListEntityMatchTestimonyContext(ctx, []int64{found.ID})
+	if err != nil {
+		t.Fatalf("ListEntityMatchTestimonyContext: %v", err)
+	}
+	tc, ok := tcByID[found.ID]
+	if !ok {
+		t.Fatalf("no testimony context for candidate %d", found.ID)
+	}
+	if tc.TestifierCount < 1 {
+		t.Errorf("testifier_count = %d, want >= 1", tc.TestifierCount)
+	}
+	if len(tc.Appearances) == 0 || tc.Appearances[0].HearingID != hearingID {
+		t.Errorf("appearances did not include hearing %d: %#v", hearingID, tc.Appearances)
+	}
+
+	// Confirm decision must promote organization.match_confidence to 'confirmed'.
+	if _, err := store.UpsertVendorEntityMatchDecision(ctx, db.InsertVendorEntityMatchDecisionParams{
+		CandidateID:    found.ID,
+		OrganizationID: orgID,
+		Decision:       "confirmed",
+		Confidence:     "confirmed",
+		ReviewedBy:     "integration-test",
+		ReviewNotes:    "csi-test confirm",
+	}); err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if err := store.MarkOrganizationConfirmedByReview(ctx, orgID, "csi_testimony_review", "integration-test", "csi-test confirm"); err != nil {
+		t.Fatalf("MarkOrganizationConfirmedByReview: %v", err)
+	}
+	var (
+		gotConfidence string
+		gotSource     *string
+	)
+	if err := store.Pool.QueryRow(ctx, `SELECT match_confidence::text, verification_source FROM organization WHERE id = $1`, orgID).Scan(&gotConfidence, &gotSource); err != nil {
+		t.Fatalf("read promoted org: %v", err)
+	}
+	if gotConfidence != "confirmed" {
+		t.Errorf("match_confidence = %q, want confirmed", gotConfidence)
+	}
+	if gotSource == nil || *gotSource != "csi_testimony_review" {
+		t.Errorf("verification_source = %v, want csi_testimony_review", gotSource)
+	}
+}
+
+func hasString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUpsertDataWAWEBSVendor_Idempotent(t *testing.T) {

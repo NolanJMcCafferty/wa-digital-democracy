@@ -26,7 +26,7 @@ func runIngestPDCEmployers(args []string) int {
 	var (
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		rateLimit = fs.Float64("rate", 5.0, "max requests/sec for data.wa.gov")
-		pageSize  = fs.Int("page-size", 50000, "Socrata page size")
+		pageSize  = fs.Int("page-size", 2000, "Socrata page size")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -64,6 +64,7 @@ func runIngestPDCEmployers(args []string) int {
 	q := pdc.Query{Order: ":id", Limit: *pageSize}
 	offset := 0
 	page := 0
+	start := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			break
@@ -113,12 +114,12 @@ func runIngestPDCEmployers(args []string) int {
 			seen[emRow.EmployerID] = &emp{id: emRow.EmployerID, row: emRow, raw: r}
 		}
 		page++
-		fmt.Fprintf(os.Stderr, "  page=%d fetched=%d distinct-employers=%d\n", page, len(rows), len(seen))
+		fmt.Fprintf(os.Stderr, "  page=%d fetched=%d distinct-employers=%d elapsed=%s\n", page, len(rows), len(seen), time.Since(start).Round(time.Second))
 		if len(rows) < q.Limit {
 			break
 		}
 		offset += q.Limit
 	}
-	fmt.Fprintf(os.Stderr, "==> ingest-pdc-employers: %d distinct employers ingested\n", len(seen))
+	fmt.Fprintf(os.Stderr, "==> ingest-pdc-employers: %d distinct employers ingested in %s\n", len(seen), time.Since(start).Round(time.Second))
 	return 0
 }

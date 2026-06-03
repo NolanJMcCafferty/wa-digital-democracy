@@ -66,24 +66,32 @@ The daily chain is idempotent and safe to re-run:
 
 2. **`make ingest-session`** — pulls **every bill in the biennium** from
    LWS `GetLegislationByYear` and stores metadata + sponsors + status
-   timeline + hearing references. Hearings/testimony/video are **not**
-   touched here — just the LWS-side claims about each bill. ~5,000
-   bills at the default rate/concurrency, runtime depends on upstream latency. Summary:
-   `data/processed/_session.json`.
+   timeline + hearing references, then discovers CSI agenda IDs and TVW event
+   IDs for those hearing rows. Testimony/video/media are **not** ingested here.
+   ~5,000 bills at the default rate/concurrency, runtime depends on upstream
+   latency. Summaries: `data/processed/_session.json` and
+   `data/processed/_discovery.json`.
 
-3. **`make ingest-hearings`** — first discovers CSI agenda IDs + TVW event IDs
-   for LWS-reported hearings, then runs the full pipeline for every discovered
+3. **`make ingest-irs-bmf-wa`** and **`make ingest-pdc-employers`** — refresh
+   organization verification context before hearing testimony is loaded. IRS
+   BMF gives nonprofit verification; PDC gives lobbyist-employer registrations
+   and lobbyist/person affiliations.
+
+4. **`make ingest-hearings`** — runs the full pipeline for every discovered
    hearing: CSI testifiers per agenda item, Invintus event/media metadata once
    per TVW event, diarization before transcript segmentation, bill-window
-   segmentation per agenda item, and organization seeding. This is what
-   produces the rich bill-hearing pages. Summaries:
-   `data/processed/_discovery.json` and `data/processed/_ingest.json`.
+   segmentation per agenda item, and organization seeding. Because IRS/PDC
+   context is already loaded, source-backed CSI organizations can be confirmed
+   as they are created. This is what produces the rich bill-hearing pages.
+   Summary: `data/processed/_ingest.json`.
 
-4. **`make ingest-pdc-employers`** — refreshes PDC lobbyist-employer
-   registrations and attaches public-record context to people/organizations.
+5. **`make verify-organizations`** — re-checks any existing unconfirmed
+   organizations against the fresh IRS/PDC reference tables so older rows do
+   not have to wait for a hearing re-ingest.
 
-`make discover-hearings` remains available as a lower-level debugging
-and backfill target when you only want to refresh CSI/TVW join IDs.
+6. **`make generate-vendor-entity-matches`** — generates reviewable source/org
+   match candidates after verification has established the best available
+   canonical organization state.
 
 For nightly cron, one line is enough:
 
@@ -99,7 +107,7 @@ rate.
 
 ```
 cmd/
-  wa-dd/                  # operator CLI: ingest, discover, daily, backfill jobs
+  wa-dd/                  # operator CLI: ingest, daily, backfill jobs
   wa-dd-api/              # HTTP API for the Next.js frontend
 apps/
   web/                    # Next.js frontend, admin review UI, API proxy routes
@@ -120,6 +128,7 @@ infra/
   railway/                # Railway bootstrap config and deployment docs
 scripts/
   seed-test-fixtures.sh
+  cleanup-test-fixtures.sh
 tools/
   goose/                  # project-pinned goose module
 data/

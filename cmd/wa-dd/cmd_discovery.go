@@ -2,55 +2,22 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/nolan-mccafferty/wa-digital-democracy/internal/jobs"
 )
 
-func init() {
-	register(Command{
-		Name:     "discover-hearings",
-		Synopsis: "Auto-fill CSI/TVW IDs on every LWS hearing in a biennium",
-		Run:      runDiscoverHearings,
-	})
-}
-func runDiscoverHearings(args []string) int {
-	fs := flag.NewFlagSet("discover-hearings", flag.ContinueOnError)
-	var (
-		biennium  = fs.String("biennium", "2025-26", "Biennium to scan, e.g. 2025-26")
-		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		outDir    = fs.String("out-dir", "data/processed", "where _discovery.json is written")
-		rateLimit = fs.Float64("rate", 10.0, "max requests/sec per CSI/TVW host")
-		limit     = fs.Int("limit", 0, "stop after N hearings (0 = no limit). For smoke tests.")
-	)
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
+const sessionDiscoveryRateLimit = 10.0
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	deps, cleanup, err := newDiscoveryDeps(ctx, *dsn, *rateLimit)
+func runHearingDiscovery(ctx context.Context, deps *discoveryDeps, biennium, outDir, logPrefix string) int {
+	hearings, err := deps.store.ListHearingsForDiscovery(ctx, biennium)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "discover-hearings: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", logPrefix, err)
 		return 1
-	}
-	defer cleanup()
-
-	hearings, err := deps.store.ListHearingsForDiscovery(ctx, *biennium)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "discover-hearings: %v\n", err)
-		return 1
-	}
-	if *limit > 0 && len(hearings) > *limit {
-		hearings = hearings[:*limit]
 	}
 	fmt.Fprintf(os.Stderr, "==> %d hearings to discover\n", len(hearings))
 
@@ -123,7 +90,6 @@ func runDiscoverHearings(args []string) int {
 			status = "no-tvw"
 			partial++
 		}
-		// Quiet per-hearing log; spam at the 50-row mark instead.
 		if (i+1)%50 == 0 || i+1 == len(hearings) {
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s %s (%s)\n", i+1, len(hearings), bill, status, dur.Round(time.Millisecond))
 		}
@@ -149,7 +115,7 @@ func runDiscoverHearings(args []string) int {
 	}{
 		StartedAt:          startedAt,
 		FinishedAt:         time.Now(),
-		Biennium:           *biennium,
+		Biennium:           biennium,
 		Total:              len(results),
 		Succeeded:          len(results) - failures - partial - noMeeting - noAgenda - noCommittee,
 		PartialNoTVW:       partial,
@@ -159,13 +125,13 @@ func runDiscoverHearings(args []string) int {
 		Failed:             failures,
 		Results:            results,
 	}
-	if err := writeJSON(filepath.Join(*outDir, "_discovery.json"), summary); err != nil {
-		fmt.Fprintf(os.Stderr, "discover-hearings: write _discovery.json: %v\n", err)
+	if err := writeJSON(filepath.Join(outDir, "_discovery.json"), summary); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: write _discovery.json: %v\n", logPrefix, err)
 		if failures == 0 {
 			return 1
 		}
 	}
-	fmt.Fprintf(os.Stderr, "==> done: %d ok, %d no-tvw, %d no-csi-meeting, %d no-agenda-item, %d no-committee, %d failed (%s)\n",
+	fmt.Fprintf(os.Stderr, "==> discovery done: %d ok, %d no-tvw, %d no-csi-meeting, %d no-agenda-item, %d no-committee, %d failed (%s)\n",
 		summary.Succeeded, summary.PartialNoTVW, summary.SkippedNoMeeting,
 		summary.SkippedNoAgenda, summary.SkippedNoCommittee, summary.Failed,
 		summary.FinishedAt.Sub(summary.StartedAt).Round(time.Millisecond))

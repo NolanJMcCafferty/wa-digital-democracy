@@ -109,16 +109,23 @@ Examples:
 make e2e
 ```
 
-By default this target builds the local Go API binary and Next.js app, then uses Playwright web servers to run the API on `:18080` and the Next.js production server on `:13000`. For local e2e against the deterministic fixture, run `make integration-db seed-test-fixtures` first.
+By default this target builds the local Go API binary and Next.js app, seeds `db/fixtures/minimal.sql`, runs Playwright with the API on `:18080` and the Next.js production server on `:13000`, then removes the fixture rows before exiting.
+
+`make integration` follows the same fixture boundary for backend integration
+tests: seed before `go test -tags=integration`, then clean deterministic rows on
+exit. If you run `seed-test-fixtures.sh` manually for a single test, pair it
+with `scripts/cleanup-test-fixtures.sh --dsn <postgres-url>` before returning to
+normal local development.
 
 For e2e against an existing real/staging environment, seed that environment explicitly and point Playwright at it:
 
 ```sh
 WADD_E2E_DSN='postgres://...' make seed-e2e-fixtures
 WADD_API_URL='https://your-web-or-api-env.example' pnpm --dir apps/web e2e
+scripts/cleanup-test-fixtures.sh --dsn 'postgres://...'
 ```
 
-The seed command does not create or migrate the e2e database; it only applies `db/fixtures/minimal.sql` to the DSN you provide.
+The seed and cleanup commands do not create or migrate the e2e database; they only apply `db/fixtures/minimal.sql` and `db/fixtures/cleanup_minimal.sql` to the DSN you provide.
 
 Use `make e2e-install` once to install Playwright browsers. If your local OS is newer than Playwright's downloadable browser support matrix but Chrome is installed, run with:
 

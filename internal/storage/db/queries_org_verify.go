@@ -166,10 +166,12 @@ func (s *Store) UpsertPDCLobbyistAffiliation(ctx context.Context, p UpsertPDCLob
 
 	const personQ = `
 INSERT INTO person (display_name, normalized_name, pdc_lobbyist_id, match_confidence, match_notes)
-VALUES ($1, $2, $3, 'probable', 'Auto-seeded from PDC lobbyist_id; PDC source identity is stable within PDC.')
+VALUES ($1, $2, $3, 'confirmed', 'Auto-seeded from PDC lobbyist_id; PDC source identity is authoritative for lobbyist status.')
 ON CONFLICT (pdc_lobbyist_id) WHERE pdc_lobbyist_id IS NOT NULL DO UPDATE SET
   display_name = EXCLUDED.display_name,
   normalized_name = COALESCE(person.normalized_name, EXCLUDED.normalized_name),
+  match_confidence = 'confirmed',
+  match_notes = EXCLUDED.match_notes,
   updated_at = NOW()
 RETURNING id;`
 	var personID int64
@@ -206,15 +208,16 @@ SELECT id
 INSERT INTO person_organization_affiliation (
   person_id, organization_id, raw_person_name, raw_organization_name,
   relationship_type, role_title, record_year, source_kind, source_table,
-  source_row_id, context, confidence, review_status, evidence
+  source_pk, source_row_id, context, confidence, review_status, evidence
 )
 VALUES ($1, $2, $3, $4,
         'lobbyist_for', 'lobbyist', NULLIF($5,0), 'pdc_lobbyist_employment', 'data.wa.gov:xhn7-64im',
-        $6, $7, 'probable', 'auto', $9)
+        0, $6, $7, 'confirmed', 'auto', $8)
 ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
   organization_id = COALESCE(EXCLUDED.organization_id, person_organization_affiliation.organization_id),
   record_year = COALESCE(EXCLUDED.record_year, person_organization_affiliation.record_year),
   context = EXCLUDED.context,
+  confidence = 'confirmed',
   evidence = EXCLUDED.evidence,
   updated_at = NOW();`
 	if _, err := s.Pool.Exec(ctx, affQ,
@@ -328,8 +331,104 @@ UPDATE organization
 		if _, err := s.Pool.Exec(ctx, q, m.EmployerID, orgID); err != nil {
 			return fmt.Errorf("mark org verified (pdc_employer): %w", err)
 		}
+		if err := s.AttachPDCEmployerAffiliationsToOrganization(ctx, orgID, m.EmployerID, m.Name); err != nil {
+			return fmt.Errorf("attach PDC employer affiliations: %w", err)
+		}
 	default:
 		return fmt.Errorf("unknown cross-source source: %q", m.Source)
+	}
+	return nil
+}
+
+// AttachPDCEmployerAffiliationsToOrganization links PDC lobbyist-employment
+// affiliation rows that were ingested before the canonical organization existed.
+func (s *Store) AttachPDCEmployerAffiliationsToOrganization(ctx context.Context, orgID int64, employerID, employerName string) error {
+	employerID = strings.TrimSpace(employerID)
+	employerName = strings.TrimSpace(employerName)
+	if orgID == 0 || (employerID == "" && employerName == "") {
+		return nil
+	}
+
+	const deleteDuplicates = `
+WITH candidates AS (
+    SELECT id, relationship_type, source_kind, source_table, source_pk, source_row_id,
+           person_id, raw_person_name, raw_organization_name
+      FROM person_organization_affiliation
+     WHERE source_kind = 'pdc_lobbyist_employment'
+       AND relationship_type = 'lobbyist_for'
+       AND organization_id IS NULL
+       AND (
+             ($2 <> '' AND context->>'employer_id' = $2)
+          OR ($3 <> '' AND lower(trim(raw_organization_name)) = lower(trim($3)))
+          OR ($3 <> '' AND lower(trim(context->>'employer_name')) = lower(trim($3)))
+       )
+),
+duplicates AS (
+    SELECT c.id
+      FROM candidates c
+      JOIN person_organization_affiliation existing
+        ON existing.organization_id = $1
+       AND existing.relationship_type = c.relationship_type
+       AND existing.source_kind = c.source_kind
+       AND existing.source_table = c.source_table
+       AND existing.source_pk IS NOT DISTINCT FROM c.source_pk
+       AND existing.source_row_id IS NOT DISTINCT FROM c.source_row_id
+       AND existing.person_id IS NOT DISTINCT FROM c.person_id
+       AND existing.raw_person_name IS NOT DISTINCT FROM c.raw_person_name
+       AND existing.raw_organization_name IS NOT DISTINCT FROM c.raw_organization_name
+)
+DELETE FROM person_organization_affiliation poa
+ USING duplicates
+ WHERE poa.id = duplicates.id;`
+	if _, err := s.Pool.Exec(ctx, deleteDuplicates, orgID, employerID, employerName); err != nil {
+		return fmt.Errorf("delete duplicate PDC employer affiliations: %w", err)
+	}
+
+	const attach = `
+UPDATE person_organization_affiliation
+   SET organization_id = $1,
+       updated_at = NOW()
+ WHERE source_kind = 'pdc_lobbyist_employment'
+   AND relationship_type = 'lobbyist_for'
+   AND organization_id IS NULL
+   AND (
+         ($2 <> '' AND context->>'employer_id' = $2)
+      OR ($3 <> '' AND lower(trim(raw_organization_name)) = lower(trim($3)))
+      OR ($3 <> '' AND lower(trim(context->>'employer_name')) = lower(trim($3)))
+   );`
+	if _, err := s.Pool.Exec(ctx, attach, orgID, employerID, employerName); err != nil {
+		return fmt.Errorf("attach PDC employer affiliations: %w", err)
+	}
+	return nil
+}
+
+// MarkOrganizationConfirmedByReview promotes an organization to
+// match_confidence='confirmed' as a result of a human review decision. Unlike
+// MarkOrganizationVerified, it does not require an authoritative cross-source
+// hit: the verification provenance is the reviewer themselves.
+func (s *Store) MarkOrganizationConfirmedByReview(ctx context.Context, orgID int64, source, reviewer, note string) error {
+	if source == "" {
+		source = "manual"
+	}
+	const q = `
+UPDATE organization
+   SET match_confidence    = 'confirmed',
+       verified_at         = COALESCE(verified_at, NOW()),
+       verification_source = COALESCE(verification_source, $2),
+       match_notes         = COALESCE(match_notes, '')
+                             || CASE WHEN match_notes IS NULL OR match_notes = '' THEN '' ELSE E'\n' END
+                             || $3,
+       updated_at          = NOW()
+ WHERE id = $1;`
+	noteLine := fmt.Sprintf("Confirmed via review (%s)", source)
+	if reviewer != "" {
+		noteLine += " by " + reviewer
+	}
+	if note != "" {
+		noteLine += ": " + note
+	}
+	if _, err := s.Pool.Exec(ctx, q, orgID, source, noteLine); err != nil {
+		return fmt.Errorf("mark org confirmed by review: %w", err)
 	}
 	return nil
 }

@@ -49,10 +49,10 @@ make ingest-session BIENNIUM=2025-26
 make ingest-hearings BIENNIUM=2025-26
 ```
 
-`ingest-hearings` discovers CSI agenda IDs and TVW event IDs, fetches CSI
-testifiers, fetches Invintus event details/media assets, runs diarization when
-the event has no successful diarization job yet, and then segments the
-diarized transcript into bill windows.
+`ingest-session` discovers CSI agenda IDs and TVW event IDs. `ingest-hearings`
+then fetches CSI testifiers, fetches Invintus event details/media assets, runs
+diarization when the event has no successful diarization job yet, and segments
+the diarized transcript into bill windows.
 
 Diarization requires:
 

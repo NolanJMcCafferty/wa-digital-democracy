@@ -46,6 +46,12 @@ var selfIntroPatterns = []struct {
 		kind: "person",
 		conf: 0.72,
 	},
+	{
+		name: "i_am_name",
+		re:   regexp.MustCompile(`(?i)(?:^|[.!?]\s+|,\s+)\b(?:i am|i'm|im)\s+([A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){1,3})(?:[.,;:]|\s+(?:and|with|from|for|to|of|staff)\b)`),
+		kind: "person",
+		conf: 0.78,
+	},
 }
 
 // ExtractSpeakerEvidence finds conservative self-introduction patterns in one
@@ -93,7 +99,7 @@ func ExtractSpeakerEvidence(text string) []SpeakerEvidenceCandidate {
 
 func cleanCandidateName(s string) string {
 	s = strings.TrimSpace(s)
-	stopWords := []string{" from ", " with ", " representing ", " on behalf of ", " bringing ", " and ", " but ", " if ", " because "}
+	stopWords := []string{" from ", " with ", " representing ", " on behalf of ", " bringing ", " and ", " but ", " if ", " because ", " to "}
 	low := strings.ToLower(s)
 	cut := len(s)
 	for _, stop := range stopWords {
@@ -116,6 +122,13 @@ func badCandidateLabel(s string) bool {
 		return true
 	}
 	if len(words) > 4 {
+		return true
+	}
+	badFirst := map[string]bool{
+		"not": true, "going": true, "gonna": true, "staff": true, "here": true,
+		"calling": true, "speaking": true, "sorry": true, "just": true,
+	}
+	if badFirst[strings.ToLower(words[0])] {
 		return true
 	}
 	return false

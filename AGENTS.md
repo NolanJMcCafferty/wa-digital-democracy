@@ -11,13 +11,18 @@ A source-linked public graph of Washington State legislative activity — bills,
 ```
 nightly cron: make daily
   ├─ wa-dd ingest-legislators  LWS roster → person, legislator, memberships
-  ├─ wa-dd ingest-session     LWS metadata for every bill in biennium (~70 min)
-  ├─ wa-dd discover-hearings  fills CSI agenda IDs + TVW event IDs on hearing rows
+  ├─ wa-dd ingest-session     LWS metadata for every bill in biennium +
+  │                           CSI agenda IDs + TVW event IDs on hearing rows
+  ├─ wa-dd ingest-irs-bmf-wa  IRS BMF Washington nonprofit reference data
+  ├─ wa-dd ingest-pdc-employers
+  │                           PDC lobbyist-employer registrations
   ├─ wa-dd ingest-hearings    full hearing pipeline (CSI testifiers +
   │                           Invintus event/media + diarization +
   │                           transcript segmentation + organization links)
-  └─ wa-dd ingest-pdc-employers
-                              PDC lobbyist-employer registrations
+  ├─ wa-dd verify-organizations
+  │                           confirms existing orgs against IRS/PDC refs
+  └─ wa-dd generate-vendor-entity-matches
+                              creates reviewable source/org match candidates
 
   → Postgres (single source of truth)
   → wa-dd-api on :8080 (chi router; reads only; Clerk-gated /admin routes)
@@ -32,7 +37,7 @@ The `bill` / `legislator` / `bill_sponsor` / `bill_status_change` / `hearing` / 
 ```
 cmd/
   wa-dd/        operator CLI. One file per subcommand (cmd_*.go). Covers
-                ingestion (ingest-session, discover-hearings, ingest-hearings,
+                ingestion (ingest-session, ingest-hearings,
                 ingest-legislators, ingest-contracts, ingest-pdc-*,
                 ingest-irs-bmf-wa, ingest-usaspending-wa-awards, …),
                 diarization (audio-cache, diarize-event, diarize-pending,
@@ -91,14 +96,13 @@ cd apps/web && pnpm dev     # Next.js on :3000
 # Tests + gates — see "Running tests" below for full setup per category
 go vet ./...
 go test ./...                                       # Go unit tests, no infra
-make integration                                    # Go integration tests (boots Postgres + seeds)
+make integration                                    # Go integration tests (boots Postgres, seeds/cleans fixtures)
 cd apps/web && pnpm typecheck                       # Frontend typecheck
-make e2e                                            # Playwright e2e (requires Postgres + fixtures + chromium)
+make e2e                                            # Playwright e2e (seeds/cleans fixtures; requires Postgres + chromium)
 
 # Ingestion (operator-driven; usually triggered via make daily)
 INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily  # full nightly chain
 go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
-go run ./cmd/wa-dd discover-hearings --biennium 2025-26 --limit 47
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
 ```
@@ -120,14 +124,15 @@ go vet ./...
 ### 2. Go integration tests (need Postgres)
 
 ```sh
-make integration              # boots integration DB, seeds fixtures, runs go test -tags=integration ./...
+make integration              # boots integration DB, seeds fixtures, runs go test -tags=integration ./..., cleans fixtures
 # under the hood:
 #   make integration-db       # docker compose up + migrate
-#   make seed-test-fixtures   # deterministic fixture rows
+#   scripts/seed-test-fixtures.sh
 #   WADD_TEST_DSN=… go test -tags=integration ./...
+#   scripts/cleanup-test-fixtures.sh
 ```
 
-For a single integration package: `WADD_TEST_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" go test -tags=integration ./cmd/wa-dd-api/...` (DB must already be up + seeded).
+For a single integration package: `WADD_TEST_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" go test -tags=integration ./cmd/wa-dd-api/...` (DB must already be up + seeded). If you seed fixtures manually, run `scripts/cleanup-test-fixtures.sh --dsn "$WADD_TEST_DSN"` afterward.
 
 ### 3. Frontend typecheck / lint
 
@@ -139,7 +144,7 @@ cd apps/web && pnpm lint
 
 ### 4. End-to-end (Playwright + axe a11y)
 
-E2E spins up `wa-dd-api` and `next start` against a real Postgres seeded with e2e fixtures, then drives Chromium. **First-time setup is required** or every test will fail with "browser not installed" / "module not found".
+E2E spins up `wa-dd-api` and `next start` against a real Postgres, seeds deterministic fixtures for the run, cleans them afterward, then drives Chromium. **First-time setup is required** or every test will fail with "browser not installed" / "module not found".
 
 ```sh
 # One-time setup
@@ -148,17 +153,17 @@ make migrate-up
 cd apps/web && pnpm install             # installs @playwright/test, @axe-core/playwright, etc.
 make e2e-install                        # downloads Chromium for Playwright
 
-# Before each run
-WADD_E2E_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" \
-  make seed-e2e-fixtures                # idempotent; reseeds deterministic fixtures
-
 # Run
-make e2e                                # builds wa-dd-api + Next.js, then runs full Playwright suite
+make e2e                                # seeds fixtures, builds wa-dd-api + Next.js,
+                                        # runs Playwright, then cleans fixtures
 
 # Single test (DB already seeded, binary already built)
 cd apps/web && WADD_API_BIN="$(pwd)/../../bin/wa-dd-api" \
   WADD_E2E_DSN="postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable" \
   pnpm exec playwright test -g "accessibility landmarks" --reporter=list
+
+# After manually seeded single-test runs
+scripts/cleanup-test-fixtures.sh --dsn "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"
 ```
 
 E2E tests live in `apps/web/e2e/`. Accessibility checks use `@axe-core/playwright` against WCAG 2.0/2.1 A+AA — a real violation fails the build, so fix the markup/styles rather than suppressing rules.
@@ -167,9 +172,10 @@ E2E tests live in `apps/web/e2e/`. Accessibility checks use `@axe-core/playwrigh
 
 - **Time zones.** WA legislative timestamps (LWS, TVW WP archive) are Pacific wall-clock without an explicit zone. Always parse with `time.ParseInLocation(..., "America/Los_Angeles")`. There's a fixed bug history here — see `internal/sources/lws/normalize.go:parseLWSDate` and `internal/jobs/discover.go:tvwPostsForDay`.
 - **Bill prefixes.** LWS reports `BillID` in the *current* substituted/engrossed form (`SSB 6054`, `2SHB 1859`). `internal/sources/lws/normalize.go:baseBillPrefix` strips `E`/`N`/`S` chrome down to the bare prefix (`HB`/`SB`/`HJR`/etc.) so a single bill doesn't fork into multiple rows as it moves through the legislature.
-- **`IngestBill` two-mode behavior.** When `Demo.Chamber` is set (curated path), it stores one chamber-matched hearing. When empty (`ingest-session` path), it stores every hearing LWS reports so `discover-hearings` has rows to enrich.
+- **`IngestBill` two-mode behavior.** When `Demo.Chamber` is set (curated path), it stores one chamber-matched hearing. When empty (`ingest-session` path), it stores every hearing LWS reports so the `ingest-session` discovery post-pass has rows to enrich.
 - **Rate limit default 10 req/sec** per upstream host. The User-Agent identifies the project so state-agency operators can contact us. Retries on 429/5xx with exponential backoff.
 - **Pipeline orchestration** lives in the CLI drivers. `Pipeline.RunMetadataOnly` runs only `IngestBill` for `ingest-session`; `ingest-hearings` iterates by `hearing_id`, runs CSI per agenda item, Invintus + diarization once per TVW event, transcript segmentation per agenda item, then hearing-scoped organization population.
+- **Organizations.** CSI `raw_organization` strings seed `organization` rows as `possible`; `/organizations` shows only confirmed organizations. `verify-organizations` confirms unique IRS BMF/PDC employer normalized-name matches (IRS preferred over PDC). Confirmed entity-match decisions append the reviewed source name to `organization.aliases`, and organization upserts merge aliases instead of replacing them.
 - **API response shapes.** Public API routes should return explicit response/list objects (`BillDetailResponse`, `HearingPage`, `OrganizationPage`, etc.). Keep collection fields initialized to `[]` rather than `nil` so frontend code can treat them as arrays.
 - **No generated page snapshots.** Public/frontend page data comes from route-specific API objects assembled from Postgres.
 - **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `billPageHandler` and `searchTranscriptsHandler` for examples.

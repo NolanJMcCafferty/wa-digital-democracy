@@ -25,14 +25,14 @@ func init() {
 	})
 	// Phase-3 stubs: ingest-bill / ingest-csi / match-hearing remain
 	// internal pipeline steps. The routine operator path is
-	// ingest-session -> discover-hearings -> ingest-hearings.
+	// ingest-session -> ingest-hearings.
 	for _, n := range []string{"ingest-bill", "ingest-csi", "match-hearing"} {
 		name := n
 		register(Command{
 			Name:     name,
-			Synopsis: "(internal pipeline step; use ingest-session/discover-hearings/ingest-hearings)",
+			Synopsis: "(internal pipeline step; use ingest-session/ingest-hearings)",
 			Run: func(args []string) int {
-				fmt.Fprintf(os.Stderr, "wa-dd %s: direct per-step CLI not exposed; use ingest-session/discover-hearings/ingest-hearings\n", name)
+				fmt.Fprintf(os.Stderr, "wa-dd %s: direct per-step CLI not exposed; use ingest-session/ingest-hearings\n", name)
 				return 64
 			},
 		})

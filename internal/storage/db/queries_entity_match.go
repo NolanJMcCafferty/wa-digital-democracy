@@ -143,6 +143,15 @@ RETURNING id;`
 	).Scan(&id); err != nil {
 		return 0, fmt.Errorf("upsert vendor entity match decision: %w", err)
 	}
+	if p.Decision == "confirmed" {
+		var sourceName string
+		if err := s.Pool.QueryRow(ctx, `SELECT source_name FROM vendor_entity_match_candidate WHERE id = $1`, p.CandidateID).Scan(&sourceName); err != nil {
+			return 0, fmt.Errorf("lookup confirmed entity-match source name: %w", err)
+		}
+		if err := s.AddOrganizationAlias(ctx, p.OrganizationID, sourceName); err != nil {
+			return 0, err
+		}
+	}
 	return id, nil
 }
 
@@ -231,6 +240,130 @@ SELECT c.id, c.source_kind::text, c.source_table, COALESCE(c.source_pk,0),
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+type EntityMatchTestimonyAppearance struct {
+	HearingID       int64
+	HearingTitle    string
+	CommitteeName   string
+	MeetingDateTime time.Time
+	BillID          string
+	BillPrefix      string
+	BillNumber      int
+	CSIAgendaItemID string
+	Position        string
+	TestifierName   string
+}
+
+type EntityMatchTestimonyContext struct {
+	CandidateID    int64
+	TestifierCount int
+	Appearances    []EntityMatchTestimonyAppearance
+}
+
+// ListEntityMatchTestimonyContext returns CSI testimony context for the given
+// candidate ids. Only candidates with source_kind = 'csi_testimony_organization'
+// produce a row; other source kinds are silently absent from the result map.
+//
+// For each candidate, returns up to 5 most-recent agenda_item appearances where
+// any testifier had raw_organization matching the candidate's source_name (case
+// and whitespace insensitive), plus the total count of matching testifier rows.
+func (s *Store) ListEntityMatchTestimonyContext(ctx context.Context, candidateIDs []int64) (map[int64]EntityMatchTestimonyContext, error) {
+	out := map[int64]EntityMatchTestimonyContext{}
+	if len(candidateIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+WITH cand AS (
+  SELECT id, source_name
+    FROM vendor_entity_match_candidate
+   WHERE id = ANY($1::bigint[])
+     AND source_kind = 'csi_testimony_organization'
+), matching_testifiers AS (
+  SELECT c.id AS candidate_id, t.id AS testifier_id, t.agenda_item_id,
+         t.raw_name, t.position::text AS position
+    FROM cand c
+    JOIN testifier t ON trim(t.raw_organization) = c.source_name
+), counts AS (
+  SELECT candidate_id, COUNT(*) AS testifier_count
+    FROM matching_testifiers
+   GROUP BY candidate_id
+), appearances AS (
+  SELECT mt.candidate_id,
+         h.id AS hearing_id,
+         COALESCE(h.committee_name || ' — ' || to_char(h.meeting_datetime, 'YYYY-MM-DD'), '') AS hearing_title,
+         h.committee_name,
+         h.meeting_datetime,
+         COALESCE(b.prefix || ' ' || b.number::text, '') AS bill_id,
+         COALESCE(b.prefix, '') AS bill_prefix,
+         COALESCE(b.number, 0) AS bill_number,
+         COALESCE(a.csi_agenda_item_id, '') AS csi_agenda_item_id,
+         mt.position,
+         mt.raw_name,
+         ROW_NUMBER() OVER (PARTITION BY mt.candidate_id ORDER BY h.meeting_datetime DESC, mt.testifier_id DESC) AS rn
+    FROM matching_testifiers mt
+    JOIN agenda_item a ON a.id = mt.agenda_item_id
+    JOIN hearing h ON h.id = a.hearing_id
+    LEFT JOIN bill b ON b.id = a.bill_id
+)
+SELECT counts.candidate_id, counts.testifier_count,
+       COALESCE(jsonb_agg(
+         jsonb_build_object(
+           'hearing_id', appearances.hearing_id,
+           'hearing_title', appearances.hearing_title,
+           'committee_name', appearances.committee_name,
+           'meeting_datetime', appearances.meeting_datetime,
+           'bill_id', appearances.bill_id,
+           'bill_prefix', appearances.bill_prefix,
+           'bill_number', appearances.bill_number,
+           'csi_agenda_item_id', appearances.csi_agenda_item_id,
+           'position', appearances.position,
+           'testifier_name', appearances.raw_name
+         ) ORDER BY appearances.meeting_datetime DESC
+       ) FILTER (WHERE appearances.rn IS NOT NULL AND appearances.rn <= 5), '[]'::jsonb) AS apps
+  FROM counts
+  LEFT JOIN appearances ON appearances.candidate_id = counts.candidate_id
+ GROUP BY counts.candidate_id, counts.testifier_count;`
+	rows, err := s.Pool.Query(ctx, q, candidateIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list entity match testimony context: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c EntityMatchTestimonyContext
+		var apps []byte
+		if err := rows.Scan(&c.CandidateID, &c.TestifierCount, &apps); err != nil {
+			return nil, fmt.Errorf("scan entity match testimony context: %w", err)
+		}
+		if len(apps) > 0 {
+			var raw []struct {
+				HearingID       int64     `json:"hearing_id"`
+				HearingTitle    string    `json:"hearing_title"`
+				CommitteeName   string    `json:"committee_name"`
+				MeetingDateTime time.Time `json:"meeting_datetime"`
+				BillID          string    `json:"bill_id"`
+				BillPrefix      string    `json:"bill_prefix"`
+				BillNumber      int       `json:"bill_number"`
+				CSIAgendaItemID string    `json:"csi_agenda_item_id"`
+				Position        string    `json:"position"`
+				TestifierName   string    `json:"testifier_name"`
+			}
+			if err := json.Unmarshal(apps, &raw); err != nil {
+				return nil, fmt.Errorf("unmarshal testimony appearances: %w", err)
+			}
+			c.Appearances = make([]EntityMatchTestimonyAppearance, 0, len(raw))
+			for _, r := range raw {
+				c.Appearances = append(c.Appearances, EntityMatchTestimonyAppearance{
+					HearingID: r.HearingID, HearingTitle: r.HearingTitle, CommitteeName: r.CommitteeName,
+					MeetingDateTime: r.MeetingDateTime, BillID: r.BillID, BillPrefix: r.BillPrefix,
+					BillNumber: r.BillNumber, CSIAgendaItemID: r.CSIAgendaItemID,
+					Position: r.Position, TestifierName: r.TestifierName,
+				})
+			}
+		}
+		out[c.CandidateID] = c
+	}
+	return out, rows.Err()
 }
 
 type EntityMatchTranscriptSegment struct {
@@ -406,19 +539,32 @@ func (s *Store) GenerateVendorEntityMatchCandidatesWithProgress(ctx context.Cont
 		}
 		decision := ""
 		reviewedConfidence := ""
-		if sourceMatchCount == 1 && confidence == entitymatch.ConfidenceConfirmed {
+		autoConfirm := sourceMatchCount == 1 &&
+			(confidence == entitymatch.ConfidenceConfirmed || confidence == entitymatch.ConfidenceProbable)
+		if autoConfirm {
+			notes := "Auto-confirmed unique exact organization-name match."
+			if confidence == entitymatch.ConfidenceProbable {
+				notes = "Auto-confirmed unique normalized-name match (no other org collides)."
+			}
 			if _, err := s.UpsertVendorEntityMatchDecision(ctx, InsertVendorEntityMatchDecisionParams{
 				CandidateID:    id,
 				OrganizationID: orgID,
 				Decision:       "confirmed",
-				Confidence:     confidence,
+				Confidence:     entitymatch.ConfidenceConfirmed,
 				ReviewedBy:     "system:entitymatch",
-				ReviewNotes:    "Auto-confirmed unique exact organization-name match.",
+				ReviewNotes:    notes,
 			}); err != nil {
 				return nil, err
 			}
+			verificationSource := "manual"
+			if sourceKind == "csi_testimony_organization" {
+				verificationSource = "csi_testimony_review"
+			}
+			if err := s.MarkOrganizationConfirmedByReview(ctx, orgID, verificationSource, "system:entitymatch", notes); err != nil {
+				return nil, err
+			}
 			decision = "confirmed"
-			reviewedConfidence = confidence
+			reviewedConfidence = entitymatch.ConfidenceConfirmed
 			autoConfirmed++
 		}
 		out = append(out, VendorEntityMatchCandidate{
@@ -488,6 +634,22 @@ WITH source_names AS (
          id, 'usaspending'::text, award_id, recipient_name, normalized_recipient_name
     FROM federal_award
    WHERE recipient_name IS NOT NULL AND normalized_recipient_name IS NOT NULL
+  UNION ALL
+  -- CSI testimony sign-ins: each distinct testifier.raw_organization string
+  -- becomes one candidate per matching canonical organization. We pick a
+  -- representative testifier row (MIN(id)) so admin context queries can drill
+  -- down to a real agenda_item without storing one row per testifier.
+  SELECT 'csi_testimony_organization'::text AS source_kind,
+         'testifier'::text AS source_table,
+         MIN(t.id) AS source_pk,
+         'csi'::text AS source_dataset_id,
+         wa_dd_normalize_entity_name(trim(t.raw_organization)) AS source_row_id,
+         trim(t.raw_organization) AS source_name,
+         wa_dd_normalize_entity_name(trim(t.raw_organization)) AS normalized_name
+    FROM testifier t
+   WHERE NULLIF(trim(t.raw_organization), '') IS NOT NULL
+     AND wa_dd_normalize_entity_name(trim(t.raw_organization)) IS NOT NULL
+   GROUP BY trim(t.raw_organization), wa_dd_normalize_entity_name(trim(t.raw_organization))
 ), limited_source_names AS (
 SELECT *
   FROM source_names

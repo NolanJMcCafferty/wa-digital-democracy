@@ -10,23 +10,25 @@ where things land, and how to debug a stuck or misbehaving run.
 ## TL;DR
 
 ```
-                    hosted daily: wa-dd daily
-        ┌──────────────────┬────────────────────────────────────┐
-        │                  │                                    │
-ingest-legislators     ingest-session                 discover-hearings → ingest-hearings
-   roster refresh       concurrent LWS metadata        CSI/TVW discovery + hearing ingest
-        │                  │                                    │
-   LWS metadata         CSI agenda IDs + TVW event IDs, then
-   for ~5,000 bills     CSI testifiers, Invintus media, diarization,
-   in the biennium      bill windows, organizations, source context
-        │                  │                                    │
-        └──────────────────┴───────────────┬────────────────────┘
-                                           ▼
-                              Postgres (truth)
-                                    ▼
-                       wa-dd-api at :8080  (HTTP / JSON)
-                                    ▼
-                       Next.js frontend at :3000
+hosted daily: wa-dd daily
+
+ingest-legislators
+  → ingest-session
+      LWS bill metadata + LWS hearing rows + CSI/TVW hearing discovery
+  → ingest-irs-bmf-wa
+  → ingest-pdc-employers
+      source context available before testimony organization seeding
+  → ingest-hearings
+      CSI testifiers + Invintus media + diarization + transcript windows
+      + hearing-scoped organization population
+  → verify-organizations
+      confirms existing organizations against fresh IRS/PDC refs
+  → generate-vendor-entity-matches
+      creates reviewable source/org match candidates
+
+  → Postgres (truth)
+  → wa-dd-api at :8080  (HTTP / JSON)
+  → Next.js frontend at :3000
 ```
 
 The public API returns route-specific page objects assembled from Postgres. Postgres plus `wa-dd-api` is the only page-data flow.
@@ -38,14 +40,14 @@ stable source IDs plus `ON CONFLICT DO UPDATE` / `DO NOTHING` on domain rows.
 
 ### 1. `wa-dd ingest-session --biennium 2025-26`
 
-**What it does:** pulls every bill in the biennium from LWS and stores
-metadata + sponsors + status timeline + LWS-reported hearing
-references.
+**What it does:** pulls every bill in the biennium from LWS, stores
+metadata + sponsors + status timeline + LWS-reported hearing references, then
+discovers CSI agenda IDs and TVW event IDs for the hearing rows it created.
 
 **Why:** establishes the bill universe. Most bills don't have
 hearings, but every bill should have a metadata page (sponsors, status,
-title, biennium). And `discover-hearings` needs `hearing` rows to
-enrich.
+title, biennium). The discovery post-pass needs those `hearing` rows before it
+can attach CSI/TVW join IDs.
 
 **Implementation:**
 
@@ -61,6 +63,8 @@ enrich.
   - `GetLegislativeStatusChangesByBillNumber` → `bill_status_change` rows
   - `GetHearings` → `hearing` rows (one per LWS-reported hearing)
 - Per-bill failure isolation; one bad bill doesn't poison the run.
+- After the LWS metadata pass succeeds, runs hearing discovery for every
+  undiscovered hearing in the biennium.
 
 **Why all hearings, not just one:** the original curated path had
 `IngestBill` store only the hearing matching the demo's chamber. That
@@ -79,6 +83,8 @@ path); when it's empty, it stores every hearing LWS reports
 - ~5,000 `bill_status_change` rows
 - A summary at `data/processed/_session.json` with per-bill durations
   and any failures.
+- A summary at `data/processed/_discovery.json` with per-hearing discovery
+  statuses.
 
 **Cost:** ~5,000 bills × 4 LWS calls = 20,000 calls. The default driver
 uses concurrent workers while the shared HTTP client enforces the LWS
@@ -95,13 +101,16 @@ session metadata to `--session-workers=4` and `--session-rate=25`.
 - `--limit=N` stops after N bills for smoke tests.
 
 **Code:** `cmd/wa-dd/cmd_ingest_session.go` (`runIngestSession`),
+`cmd/wa-dd/cmd_discovery.go` (`runHearingDiscovery`),
 `internal/jobs/jobs.go` (`Pipeline.RunMetadataOnly`),
-`internal/jobs/ingest_bill.go` (`IngestBill`).
+`internal/jobs/ingest_bill.go` (`IngestBill`), and
+`internal/jobs/discover.go` (`Discoverer`).
 
-### 2. `wa-dd discover-hearings --biennium 2025-26`
+### 2. Hearing discovery inside `wa-dd ingest-session`
 
-**What it does:** for every LWS hearing in the DB whose CSI/TVW IDs
-are still blank, walks four lookups to fill them in:
+After LWS metadata ingestion finishes successfully, `ingest-session` discovers
+every LWS hearing in the DB whose CSI/TVW IDs are still blank. It walks four
+lookups to fill them in:
 
 1. **CSI committee** — given LWS `(chamber, committee_name)` like
    `("Senate", "Senate Housing")`, strip the chamber prefix and match
@@ -112,8 +121,8 @@ are still blank, walks four lookups to fill them in:
    closest.
 3. **CSI agenda item** — given the meeting, list its agenda items and
    match by leading bill number in the label
-   (regex `\b(?:E?[23]?S?(?:HB|SB|HJR|SJR|HCR|SCR|HJM|SJM))\s*(\d{3,5})\b`,
-   first capture group).
+   (regex covers HB/SB/HJR/SJR/HCR/SCR/HJM/SJM with optional engrossed /
+   substitute chrome, plus SGA; first capture group is the number).
 4. **TVW event** — fetch the TVW WP archive
    (`/wp/v2/invintus_video?after=...&before=...`) for the meeting's
    day. For each post, sanity-check that the title contains the LWS
@@ -137,9 +146,8 @@ TVW WP archive per process. Scope of caching:
 | `agendaItems` | meeting_family_id | hundreds (one per unique CSI meeting) |
 | `tvwPostsByDay` | YYYY-MM-DD | ~100 days during session |
 
-The wall-clock cost is dominated by `ListAgendaItems` — one HTTP call
-per unique meeting. The `--limit 47` smoke run hit ~5–6 calls per
-hearing on average and finished in ~17 seconds.
+The wall-clock cost is dominated by `ListAgendaItems` — typically one HTTP call
+per unique meeting after the run-scoped caches warm up.
 
 **Sanity checks:**
 
@@ -154,7 +162,7 @@ hearing on average and finished in ~17 seconds.
   SGA): rejects unrelated numeric labels while still matching the
   bill-like rows LWS stores in Postgres.
 - **SGA discovery skip:** gubernatorial appointments are kept as
-  metadata rows, but `discover-hearings` does not process their hearings
+  metadata rows, but discovery does not process their hearings
   because CSI does not expose SGA appointments as testimony agenda items
   in the sign-in data this pipeline ingests.
 
@@ -188,7 +196,7 @@ list-meetings range, not loosen the time window.
 unique CSI meeting in the biennium. Empirically ~few minutes for a
 full biennium run after the first batch warms the caches.
 
-**Code:** `cmd/wa-dd/cmd_discover_hearings.go` (`runDiscoverHearings`),
+**Code:** `cmd/wa-dd/cmd_discovery.go` (`runHearingDiscovery`),
 `internal/jobs/discover.go` (`Discoverer`).
 
 ### 3. `wa-dd ingest-hearings --biennium 2025-26`
@@ -245,8 +253,10 @@ Bill metadata is not refreshed here. `ingest-session` owns `bill`,
 diarization dominates fresh hearings. `ingest-hearings` defaults to pyannoteAI
 `precision-2` with bundled transcription. Use `--provider deepgram` for
 Deepgram, `--workers` for hearing-level parallelism, and
-`--diarization-concurrency` to cap provider jobs. Separate
-PDC/DataWA/IRS/Federal source-context commands have their own costs.
+`--diarization-concurrency` to cap provider jobs; the default cap is 5.
+PDC/IRS source-context runs are part of daily before hearing ingest. DataWA,
+FiscalWA, and Federal source-context commands remain separate bounded backfills
+with their own costs.
 
 **Code:** `cmd/wa-dd/cmd_ingest_hearings.go` (`runIngestHearings`),
 `internal/jobs/ingest_csi.go`, `internal/jobs/ingest_tvw.go`,
@@ -291,7 +301,7 @@ for the whole chain; if another daily run is active, the new run exits cleanly.
 operator work through Make:
 
 ```makefile
-daily: ingest-legislators ingest-session ingest-hearings ingest-pdc-employers
+daily: ingest-legislators ingest-session ingest-irs-bmf-wa ingest-pdc-employers ingest-hearings verify-organizations generate-vendor-entity-matches
 ```
 
 The order matters when fresh:
@@ -302,19 +312,22 @@ The order matters when fresh:
    `hearing` rows for every bill in the biennium. In the hosted `daily`
    command this stage uses `--session-workers`, `--session-rate`, and
    optional `--session-limit`.
-3. `discover-hearings` enriches those `hearing` rows with CSI/TVW IDs
-   and creates `agenda_item` rows. `make ingest-hearings` runs this
-   discovery step internally; `wa-dd daily` calls it explicitly.
-4. `ingest-hearings` runs the full pipeline against discovered hearings:
+3. `ingest-session` also enriches those `hearing` rows with CSI/TVW IDs
+   and creates `agenda_item` rows.
+4. `ingest-irs-bmf-wa` and `ingest-pdc-employers` refresh source-context
+   reference tables before testimony organizations are seeded. That lets
+   hearing ingestion confirm CSI organizations during population instead of
+   leaving them as `possible` until a later verification pass.
+5. `ingest-hearings` runs the full pipeline against discovered hearings:
    CSI testifiers per agenda item, Invintus event/media metadata once per event,
    diarization once per event, and transcript segmentation per agenda item.
-   `--hearing-limit` applies to both discovery and hearing ingest in
-   `wa-dd daily` for smoke tests.
-5. `ingest-pdc-employers` refreshes PDC lobbyist-employer registrations,
-   seeds `person` rows keyed by `pdc_lobbyist_id`, and records
-   `lobbyist_for` person-organization affiliations. This runs after
-   hearing ingest so affiliations can attach to organizations created from
-   CSI testimony in the same daily run.
+   `--hearing-limit` applies to hearing ingest in `wa-dd daily` for smoke tests.
+6. `verify-organizations` re-checks existing unconfirmed organizations against
+   the fresh IRS/PDC reference tables, catching older rows that were not touched
+   by the current hearing ingest.
+7. `generate-vendor-entity-matches` generates reviewable source/org match
+   candidates from the verified organization set and the latest source-context
+   rows. Unique high-confidence matches can be auto-confirmed.
 
 For an old-school local cron, one line still works:
 
@@ -374,7 +387,8 @@ All daily stages are safe to re-run. What changes:
 ## Where to look when something breaks
 
 - **Per-step error?** `data/processed/_session.json`,
-  `_discovery.json`, `_ingest.json`. Each entry
+  `_discovery.json`, `_ingest.json`. `ingest-session` writes both the session
+  and discovery summaries; each entry
   has a `status` and `error` field per bill or hearing.
 - **Per-fetch error?** `ingestion_run` table — includes the step name,
   start/finish timestamps, and the error message. Filter by
@@ -405,12 +419,15 @@ All daily stages are safe to re-run. What changes:
   complete around legislative/testimony pages; DataWA/FiscalWA/Federal
   context commands are bounded source-context tools, not a Phase 4 roadmap.
 
-## Optional source-context: PDC and IRS organization verification
+## Source-context: PDC and IRS organization verification
 
 `wa-dd ingest-pdc-employers` ingests PDC lobbyist-employer registrations from
 DataWA/Socrata (`xhn7-64im`) into `pdc_employer`, `person`, and
-`person_organization_affiliation`. It is part of `wa-dd daily`; run the
-command directly only for ad hoc backfills or repairs.
+`person_organization_affiliation`. It runs before `ingest-hearings` in
+`wa-dd daily` so CSI organization population can verify against fresh PDC
+employer rows. PDC affiliation rows ingested before the corresponding canonical
+organization exists are attached when the organization is later seeded or
+verified.
 
 `wa-dd ingest-irs-bmf-wa` ingests the IRS Business Master File Washington
 501(c) extract into `irs_bmf_organization`:
@@ -423,6 +440,13 @@ wa-dd ingest-irs-bmf-wa
 IRS BMF and PDC employer rows. Treat these as source-backed evidence for
 review/verification, not automatic proof that two real-world entities are the
 same in every context.
+
+The command verifies existing `organization` rows; PDC/IRS ingests do not create
+canonical organizations by themselves. IRS BMF is checked first and wins when
+there is exactly one normalized-name match. PDC employers are checked only when
+IRS has no unique match. Ambiguous or missing matches leave the organization at
+its existing confidence, usually `possible`, and the public organization list
+continues to hide it until it is confirmed by verification or review.
 
 Use `wa-dd sources` to list registered source connectors and their base URLs.
 The registry includes both shipped legislative/testimony connectors and broader

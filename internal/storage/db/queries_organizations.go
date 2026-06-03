@@ -27,7 +27,15 @@ INSERT INTO organization (canonical_name, aliases, pdc_lobbyist_employer_id,
                           pdc_committee_or_filer_id, match_confidence, match_notes)
 VALUES ($1,$2,$3,$4,$5::org_match_confidence,$6)
 ON CONFLICT (canonical_name) DO UPDATE SET
-  aliases                   = EXCLUDED.aliases,
+  aliases                   = (
+    SELECT COALESCE(array_agg(alias ORDER BY first_seen), ARRAY[]::text[])
+      FROM (
+        SELECT DISTINCT ON (lower(trim(alias))) trim(alias) AS alias, ord AS first_seen
+          FROM unnest(organization.aliases || EXCLUDED.aliases) WITH ORDINALITY AS u(alias, ord)
+         WHERE NULLIF(trim(alias), '') IS NOT NULL
+         ORDER BY lower(trim(alias)), ord
+      ) merged
+  ),
   pdc_lobbyist_employer_id  = COALESCE(EXCLUDED.pdc_lobbyist_employer_id, organization.pdc_lobbyist_employer_id),
   pdc_committee_or_filer_id = COALESCE(EXCLUDED.pdc_committee_or_filer_id, organization.pdc_committee_or_filer_id),
   match_confidence          = EXCLUDED.match_confidence,
@@ -47,6 +55,31 @@ RETURNING id;`
 		return 0, fmt.Errorf("upsert organization: %w", err)
 	}
 	return id, nil
+}
+
+// AddOrganizationAlias appends aliasName to organization.aliases when it is a
+// non-empty name distinct from the canonical name and existing aliases.
+func (s *Store) AddOrganizationAlias(ctx context.Context, orgID int64, aliasName string) error {
+	const q = `
+UPDATE organization o
+   SET aliases = (
+     SELECT COALESCE(array_agg(alias ORDER BY first_seen), ARRAY[]::text[])
+       FROM (
+         SELECT DISTINCT ON (lower(trim(alias))) trim(alias) AS alias, ord AS first_seen
+           FROM unnest(o.aliases || ARRAY[$2]::text[]) WITH ORDINALITY AS u(alias, ord)
+          WHERE NULLIF(trim(alias), '') IS NOT NULL
+            AND lower(trim(alias)) <> lower(trim(o.canonical_name))
+          ORDER BY lower(trim(alias)), ord
+       ) merged
+   ),
+       updated_at = NOW()
+ WHERE o.id = $1
+   AND NULLIF(trim($2), '') IS NOT NULL
+   AND lower(trim($2)) <> lower(trim(o.canonical_name));`
+	if _, err := s.Pool.Exec(ctx, q, orgID, aliasName); err != nil {
+		return fmt.Errorf("add organization alias: %w", err)
+	}
+	return nil
 }
 
 // LinkTestifiersToOrg sets normalized_org_id on testifier rows whose
@@ -591,6 +624,9 @@ SELECT source_name, normalized_name
 				return stats, err
 			}
 			stats.Verified++
+		}
+		if err := s.AttachPDCEmployerAffiliationsToOrganization(ctx, orgID, "", sourceName); err != nil {
+			return stats, err
 		}
 		var linked int64
 		if hearingID == 0 {

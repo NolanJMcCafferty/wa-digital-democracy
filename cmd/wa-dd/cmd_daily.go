@@ -13,7 +13,7 @@ import (
 func init() {
 	register(Command{
 		Name:     "daily",
-		Synopsis: "Run the hosted nightly chain: roster, session, hearings, PDC",
+		Synopsis: "Run the hosted nightly chain: roster, session, source context, hearings, entity matches",
 		Run:      runDaily,
 	})
 }
@@ -23,11 +23,11 @@ func runDaily(args []string) int {
 		biennium       = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
 		dsn            = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		outDir         = fs.String("out-dir", "data/processed", "where run summary JSON files are written")
-		rateLimit      = fs.Float64("rate", 10.0, "max requests/sec per legislative host for discovery/hearing steps")
+		rateLimit      = fs.Float64("rate", 10.0, "max requests/sec per legislative host for hearing/source-context steps")
 		sessionRate    = fs.Float64("session-rate", 25.0, "max requests/sec for LWS session metadata")
 		sessionWorkers = fs.Int("session-workers", 4, "number of ingest-session workers")
 		sessionLimit   = fs.Int("session-limit", 0, "stop ingest-session after N bills (0 = no limit)")
-		hearingLimit   = fs.Int("hearing-limit", 0, "stop discover/ingest-hearings after N hearings (0 = no limit)")
+		hearingLimit   = fs.Int("hearing-limit", 0, "stop ingest-hearings after N hearings (0 = no limit)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -48,7 +48,7 @@ func runDaily(args []string) int {
 	defer release()
 
 	base := []string{"--biennium", *biennium, "--dsn", *dsn, "--out-dir", *outDir}
-	pdcBase := []string{"--dsn", *dsn}
+	sourceBase := []string{"--dsn", *dsn}
 	steps := []struct {
 		name string
 		code func([]string) int
@@ -69,12 +69,14 @@ func runDaily(args []string) int {
 			),
 		},
 		{
-			name: "discover-hearings",
-			code: runDiscoverHearings,
-			args: append(append([]string{}, base...),
-				"--rate", fmt.Sprintf("%g", *rateLimit),
-				"--limit", strconv.Itoa(*hearingLimit),
-			),
+			name: "ingest-irs-bmf-wa",
+			code: runIngestIRSBMFWA,
+			args: append(append([]string{}, sourceBase...), "--rate", fmt.Sprintf("%g", *rateLimit)),
+		},
+		{
+			name: "ingest-pdc-employers",
+			code: runIngestPDCEmployers,
+			args: append(append([]string{}, sourceBase...), "--rate", fmt.Sprintf("%g", *rateLimit)),
 		},
 		{
 			name: "ingest-hearings",
@@ -85,9 +87,14 @@ func runDaily(args []string) int {
 			),
 		},
 		{
-			name: "ingest-pdc-employers",
-			code: runIngestPDCEmployers,
-			args: append(append([]string{}, pdcBase...), "--rate", fmt.Sprintf("%g", *rateLimit)),
+			name: "verify-organizations",
+			code: runVerifyOrganizations,
+			args: []string{"--dsn", *dsn, "--quiet"},
+		},
+		{
+			name: "generate-vendor-entity-matches",
+			code: runGenerateVendorEntityMatches,
+			args: []string{"--dsn", *dsn},
 		},
 	}
 	for _, step := range steps {

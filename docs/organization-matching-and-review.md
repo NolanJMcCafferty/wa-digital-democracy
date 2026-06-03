@@ -1,6 +1,6 @@
 # Organization matching and entity review
 
-Last updated: 2026-05-20.
+Last updated: 2026-06-03.
 
 This document explains how WA Digital Democracy turns noisy organization strings
 from public testimony and public-record datasets into reviewed organization
@@ -9,18 +9,22 @@ links. It is the organization/entity counterpart to
 
 The short version:
 
-1. `ingest-hearings` ingests CSI testifier rows, including raw organization
+1. Daily loads IRS BMF and PDC employer reference data before hearing ingest.
+2. `ingest-hearings` ingests CSI testifier rows, including raw organization
    strings from sign-ins.
-2. `PopulateOrganizations` seeds canonical `organization` rows from those CSI
-   strings and links matching `testifier` rows back to them.
-3. Optional source-context ingests bring in PDC lobbying employers, DataWA
-   contract/vendor rows, FiscalWA vendor payments, and USAspending recipients.
-4. `generate-vendor-entity-matches` creates reviewable
-   `vendor_entity_match_candidate` rows by normalized-name matching.
-5. Humans use `/admin/review/entities` to confirm, reject, or leave candidates
+3. The hearing-scoped `PopulateOrganizations` step seeds canonical
+   `organization` rows from those CSI strings and links matching `testifier`
+   rows back to them.
+4. `verify-organizations` can promote seeded CSI organizations to `confirmed`
+   when there is a unique IRS BMF or PDC employer normalized-name match.
+5. `generate-vendor-entity-matches` runs after `verify-organizations` and
+   creates reviewable `vendor_entity_match_candidate` rows by normalized-name
+   matching against PDC, CSI testimony, and optional DataWA/FiscalWA/Federal
+   source-context rows.
+6. Humans use `/admin/review/entities` to confirm, reject, or leave candidates
    in `needs_review`.
-6. Public pages read confirmed matches through `reviewed_vendor_entity_match`;
-   unreviewed candidates are not public facts.
+7. Public pages show confirmed organizations and confirmed reviewed context;
+   unreviewed candidates and merely possible organizations are not public facts.
 
 ## Why this exists
 
@@ -54,6 +58,8 @@ Normalized-name equality is a starting point, not truth.
   - Has aliases, match confidence, match notes, and optional verification
     metadata such as `verified_at`, `verification_source`, `irs_bmf_ein`, and
     `pdc_lobbyist_employer_id`.
+  - `canonical_name` is unique. Re-running an upsert merges aliases rather than
+    replacing them, so later CSI/source passes do not wipe reviewed aliases.
 
 - `testifier.normalized_org_id`
   - Links CSI testifier rows to an `organization` when the source string has
@@ -114,6 +120,26 @@ Go-side matching also uses helpers in `internal/entitymatch` to:
 Normalization is intentionally conservative. A normalized-name match creates a
 candidate; it does not automatically mean two records are the same entity.
 
+## Aliases
+
+Aliases live on `organization.aliases` and are used anywhere the system compares
+organization names:
+
+- `populate-organizations` reuses an existing organization when the raw CSI
+  organization string exactly matches the canonical name or an alias
+  case-insensitively.
+- `verify-organizations` checks canonical name plus aliases against IRS BMF and
+  PDC employer normalized names.
+- `generate-vendor-entity-matches` joins source names against canonical names
+  and aliases by normalized name.
+- Confirming an entity-match decision appends the candidate `source_name` as an
+  alias when it differs from the canonical name and is not already present.
+
+Aliases are not inferred from acronyms automatically. For example, `WHA` does
+not become `World Health Association` unless `WHA` has been added as an alias,
+usually by confirming a reviewed source-name match or by an explicit
+organization upsert.
+
 ## Seeding organizations from CSI
 
 The normal hearing pipeline calls `PopulateOrganizations` as its final step.
@@ -150,6 +176,12 @@ remove testimony rows.
 These commands add external public-record rows that can later be linked to
 canonical organizations through reviewable candidates.
 
+In the normal daily chain, IRS BMF and PDC employers run before
+`ingest-hearings` so CSI organization seeding can verify against fresh reference
+data. The DataWA, FiscalWA, WEBS, and Federal commands are optional bounded
+backfills; run `generate-vendor-entity-matches` afterward when you want those
+rows to create review candidates.
+
 ### PDC lobbying employers
 
 ```sh
@@ -160,6 +192,9 @@ go run ./cmd/wa-dd ingest-pdc-employers
 - Writes `pdc_employer` rows with normalized names.
 - Used both for cross-source verification and for reviewed public-record
   context.
+- Also writes PDC lobbyist/person affiliation rows. If those rows are ingested
+  before the canonical organization exists, they are attached later when the
+  organization is seeded or verified.
 
 ### IRS BMF Washington nonprofits
 
@@ -222,9 +257,22 @@ This scans unverified `organization` rows and tries to match their canonical
 name/aliases against `irs_bmf_organization` and `pdc_employer` by normalized
 name.
 
-On match, it marks the organization verified with source metadata. With the
-appropriate option, it can also delete unmatched low-confidence organizations;
-use that carefully and prefer `--dry-run` first.
+Matching is intentionally conservative:
+
+- IRS BMF is checked first. If there is exactly one IRS match, the organization
+  is confirmed with `verification_source = 'irs_bmf'` and `irs_bmf_ein` set.
+- PDC employers are checked only when IRS has no unique match. If there is
+  exactly one PDC match, the organization is confirmed with
+  `verification_source = 'pdc_employer'` and `pdc_lobbyist_employer_id` set.
+- If either source has multiple normalized-name matches, that source is treated
+  as ambiguous and does not confirm the organization.
+- If neither source has a unique match, the organization remains `possible`.
+
+The PDC and IRS tables are reference tables; their ingests do not create
+canonical `organization` rows by themselves. They verify already-seeded
+organizations. With the appropriate option, `verify-organizations` can also
+delete unmatched low-confidence organizations; use that carefully and prefer
+`--dry-run` first.
 
 ## Candidate generation
 
@@ -246,6 +294,7 @@ candidates from these source kinds:
 - `datawa_webs_vendor`
 - `fiscalwa_vendor_payment`
 - `federal_award_recipient`
+- `csi_testimony_organization`
 
 For each source row, the generator:
 
@@ -254,15 +303,15 @@ For each source row, the generator:
 3. skips high-risk false positives;
 4. computes candidate confidence/evidence;
 5. upserts `vendor_entity_match_candidate`;
-6. auto-confirms only unique exact organization-name matches with confirmed
-   confidence, marking them as `reviewed_by = system:entitymatch`.
+6. auto-confirms only unique high-confidence matches (`confirmed` or
+   `probable`), marking them as `reviewed_by = system:entitymatch`.
 
 Everything else remains `needs_review` until a human decides.
 
 ## Manual human review
 
 Review is required before candidate links become public context unless the
-system auto-confirmed a unique exact match.
+system auto-confirmed a unique high-confidence match.
 
 ### Review entry point
 
@@ -275,8 +324,10 @@ Use:
 The page supports filtering by:
 
 - decision: `needs_review`, `confirmed`, `rejected`, or all;
-- source kind, including PDC, DataWA, FiscalWA, Federal award, and Deepgram
-  organization mention sources.
+- source kind, including PDC, DataWA, FiscalWA, Federal award, and CSI
+  testimony organization strings. The API/UI still knows how to display
+  Deepgram organization-mention candidate context if such rows exist, but the
+  current daily candidate generator does not create them.
 
 Each candidate card shows:
 
@@ -292,6 +343,8 @@ Each candidate card shows:
 
 - **Confirm**
   - Writes/updates `vendor_entity_match_decision` with `decision = confirmed`.
+  - Appends the candidate `source_name` to `organization.aliases` when it is a
+    distinct name, so future CSI/source rows can reuse the canonical org.
   - Candidate appears in `reviewed_vendor_entity_match`.
   - Public/API context panels may use it.
 
@@ -315,8 +368,8 @@ Each candidate card shows:
      employer records.
    - A contract/vendor/payment/award match means there is public-record context
      for a similarly named entity.
-   - A Deepgram mention means someone said something that a model detected as an
-     organization name.
+  - A Deepgram mention, when present, means someone said something that a model
+    detected as an organization name.
 
 3. **Evidence quality**
    - Exact normalized-name match is good but not always enough.
@@ -334,14 +387,16 @@ Each candidate card shows:
 
 Public organization and bill/hearing context should use reviewed links only:
 
+- public `/organizations` list → confirmed `organization` rows only;
 - confirmed decision → may appear as public-record context;
 - rejected decision → not public context;
 - needs_review / no decision → internal candidate only;
 - Deepgram entity mention → evidence only until confirmed;
 - source rows retain source URLs/records so readers can audit.
 
-The main public/API safety boundary is `reviewed_vendor_entity_match`. Raw
-`vendor_entity_match_candidate` rows are internal review artifacts.
+The main public/API safety boundaries are confirmed `organization` rows for the
+organization directory and `reviewed_vendor_entity_match` for source-context
+links. Raw `vendor_entity_match_candidate` rows are internal review artifacts.
 
 ## Quality-control checklist
 
@@ -351,9 +406,14 @@ Before relying on organization/entity context publicly:
       `populate-organizations` / pipeline `PopulateOrganizations`.
 - [ ] Junk placeholder organizations have been pruned or left unlinked.
 - [ ] Relevant source-context rows have been ingested.
-- [ ] `generate-vendor-entity-matches` has been run after source-context ingest.
+- [ ] `verify-organizations` has been run after CSI organization seeding.
+- [ ] `generate-vendor-entity-matches` has been run after source-context ingest
+      and `verify-organizations`.
 - [ ] High-confidence candidates have explicit decisions.
-- [ ] Public pages read confirmed matches through `reviewed_vendor_entity_match`.
+- [ ] Confirmed source-name variants have landed in `organization.aliases`.
+- [ ] Public organization directory reads confirmed `organization` rows, and
+      public source-context panels read confirmed matches through
+      `reviewed_vendor_entity_match`.
 - [ ] UI language describes public-record context without implying causation.
 
 ## Common failure modes
@@ -373,8 +433,9 @@ SELECT COUNT(*) FROM datawa_contract WHERE normalized_contractor_name IS NOT NUL
 SELECT COUNT(*) FROM organization WHERE wa_dd_normalize_entity_name(canonical_name) IS NOT NULL;
 ```
 
-Also check whether names differ in ways normalization cannot bridge. Add aliases
-to `organization.aliases` rather than loosening matching globally.
+Also check whether names differ in ways normalization cannot bridge. Confirm a
+review candidate or add aliases to `organization.aliases` rather than loosening
+matching globally.
 
 ### Obvious candidate stuck as needs_review
 
@@ -389,10 +450,15 @@ go run ./cmd/wa-dd decide-entity-match \
   --notes "Exact source name match."
 ```
 
+Confirming the decision also stores the candidate source name as an alias on the
+organization when it is distinct from the canonical name.
+
 ### Deepgram mention is misleading
 
 Reject the candidate. Provider entity detection is evidence only and can mistake
-phrases, agencies, or topics for organization names.
+phrases, agencies, or topics for organization names. Deepgram organization
+mention candidates are not generated by the current daily pipeline, but this
+rule still applies to legacy or manually inserted candidates.
 
 ### Public page missing expected context
 
@@ -442,7 +508,8 @@ SELECT t.raw_organization, COUNT(*) AS mention_count
  ORDER BY mention_count DESC, t.raw_organization;
 ```
 
-Deepgram organization candidates with transcript context:
+Deepgram organization candidates with transcript context, if legacy/manual
+candidates exist:
 
 ```sql
 SELECT c.id, c.source_name, c.normalized_name, o.canonical_name,
@@ -459,6 +526,7 @@ SELECT c.id, c.source_name, c.normalized_name, o.canonical_name,
 
 - Raw organization strings are not canonical identities by themselves.
 - Normalized-name matches create candidates, not facts.
+- Aliases are reviewed identity hints, not automatic acronym expansion.
 - Confirmed `reviewed_vendor_entity_match` rows are the public boundary.
 - Deepgram organization mentions are evidence only until reviewed.
 - Prefer false negatives over false positive organization claims.

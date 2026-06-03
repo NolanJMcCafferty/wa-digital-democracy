@@ -35,7 +35,7 @@ func runIngestHearings(args []string) int {
 		rateLimit              = fs.Float64("rate", 10.0, "max requests/sec per legislative host")
 		limit                  = fs.Int("limit", 0, "stop after N hearings (0 = no limit). For smoke tests.")
 		workers                = fs.Int("workers", 4, "number of hearings to ingest in parallel")
-		diarizationConcurrency = fs.Int("diarization-concurrency", 2, "max provider diarization jobs to run in parallel")
+		diarizationConcurrency = fs.Int("diarization-concurrency", 5, "max provider diarization jobs to run in parallel")
 		provider               = fs.String("provider", "pyannoteai", "diarization provider: pyannoteai or deepgram")
 		model                  = fs.String("model", "precision-2", "provider model")
 		diarizationOutDir      = fs.String("diarization-out-dir", "data/processed/diarization", "raw diarization JSON output root")

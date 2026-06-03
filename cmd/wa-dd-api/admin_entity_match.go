@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -32,6 +33,22 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 		MentionConfidence float64   `json:"mention_confidence"`
 		Surrounding       []segment `json:"surrounding"`
 	}
+	type testimonyAppearance struct {
+		HearingID       int64  `json:"hearing_id"`
+		HearingTitle    string `json:"hearing_title"`
+		CommitteeName   string `json:"committee_name"`
+		MeetingDateTime string `json:"meeting_datetime"`
+		BillID          string `json:"bill_id,omitempty"`
+		BillPrefix      string `json:"bill_prefix,omitempty"`
+		BillNumber      int    `json:"bill_number,omitempty"`
+		CSIAgendaItemID string `json:"csi_agenda_item_id,omitempty"`
+		Position        string `json:"position,omitempty"`
+		TestifierName   string `json:"testifier_name,omitempty"`
+	}
+	type testimonyContext struct {
+		TestifierCount int                   `json:"testifier_count"`
+		Appearances    []testimonyAppearance `json:"appearances"`
+	}
 	type item struct {
 		ID                  int64              `json:"id"`
 		SourceKind          string             `json:"source_kind"`
@@ -48,6 +65,7 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 		Decision            string             `json:"decision"`
 		ReviewedConfidence  string             `json:"reviewed_confidence,omitempty"`
 		Transcript          *transcriptContext `json:"transcript,omitempty"`
+		Testimony           *testimonyContext  `json:"testimony,omitempty"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
@@ -73,13 +91,22 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		ids := make([]int64, 0, len(candidates))
+		transcriptIDs := make([]int64, 0, len(candidates))
+		testimonyIDs := make([]int64, 0, len(candidates))
 		for _, c := range candidates {
-			if c.SourceKind == "deepgram_organization_mention" {
-				ids = append(ids, c.ID)
+			switch c.SourceKind {
+			case "deepgram_organization_mention":
+				transcriptIDs = append(transcriptIDs, c.ID)
+			case "csi_testimony_organization":
+				testimonyIDs = append(testimonyIDs, c.ID)
 			}
 		}
-		ctxByID, err := store.ListEntityMatchTranscriptContext(req.Context(), ids)
+		ctxByID, err := store.ListEntityMatchTranscriptContext(req.Context(), transcriptIDs)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		testimonyByID, err := store.ListEntityMatchTestimonyContext(req.Context(), testimonyIDs)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -113,6 +140,18 @@ func adminListEntityMatchCandidatesHandler(store *db.Store) http.HandlerFunc {
 					Surrounding:       segs,
 				}
 			}
+			if tt, ok := testimonyByID[c.ID]; ok {
+				apps := make([]testimonyAppearance, 0, len(tt.Appearances))
+				for _, a := range tt.Appearances {
+					apps = append(apps, testimonyAppearance{
+						HearingID: a.HearingID, HearingTitle: a.HearingTitle,
+						CommitteeName: a.CommitteeName, MeetingDateTime: a.MeetingDateTime.Format(time.RFC3339),
+						BillID: a.BillID, BillPrefix: a.BillPrefix, BillNumber: a.BillNumber,
+						CSIAgendaItemID: a.CSIAgendaItemID, Position: a.Position, TestifierName: a.TestifierName,
+					})
+				}
+				it.Testimony = &testimonyContext{TestifierCount: tt.TestifierCount, Appearances: apps}
+			}
 			out = append(out, it)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -145,7 +184,8 @@ func adminDecideEntityMatchHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 		var organizationID int64
-		if err := store.Pool.QueryRow(req.Context(), `SELECT organization_id FROM vendor_entity_match_candidate WHERE id = $1`, candidateID).Scan(&organizationID); err != nil {
+		var sourceKind string
+		if err := store.Pool.QueryRow(req.Context(), `SELECT organization_id, source_kind::text FROM vendor_entity_match_candidate WHERE id = $1`, candidateID).Scan(&organizationID, &sourceKind); err != nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "candidate not found"})
 			return
 		}
@@ -161,6 +201,16 @@ func adminDecideEntityMatchHandler(store *db.Store) http.HandlerFunc {
 		}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+		if b.Decision == "confirmed" {
+			verificationSource := "manual"
+			if sourceKind == "csi_testimony_organization" {
+				verificationSource = "csi_testimony_review"
+			}
+			if err := store.MarkOrganizationConfirmedByReview(req.Context(), organizationID, verificationSource, user.Email, b.Notes); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 		newState, _ := store.GetVendorEntityMatchCandidate(req.Context(), candidateID)
 		adminMutationAudit(store, req, "entity_match_decide", "entity_match_candidate", strconv.FormatInt(candidateID, 10), previousState, newState, b.Notes)

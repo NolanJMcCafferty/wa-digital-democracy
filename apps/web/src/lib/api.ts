@@ -1115,6 +1115,24 @@ export type EntityMatchTranscriptContext = {
   surrounding: EntityMatchTranscriptSegment[];
 };
 
+export type EntityMatchTestimonyAppearance = {
+  hearing_id: number;
+  hearing_title: string;
+  committee_name: string;
+  meeting_datetime: string;
+  bill_id?: string;
+  bill_prefix?: string;
+  bill_number?: number;
+  csi_agenda_item_id?: string;
+  position?: string;
+  testifier_name?: string;
+};
+
+export type EntityMatchTestimonyContext = {
+  testifier_count: number;
+  appearances: EntityMatchTestimonyAppearance[];
+};
+
 export type EntityMatchCandidate = {
   id: number;
   source_kind: string;
@@ -1131,6 +1149,7 @@ export type EntityMatchCandidate = {
   decision: string;
   reviewed_confidence?: string;
   transcript?: EntityMatchTranscriptContext;
+  testimony?: EntityMatchTestimonyContext;
 };
 
 export type EntityMatchDecision = "confirmed" | "rejected" | "needs_review";

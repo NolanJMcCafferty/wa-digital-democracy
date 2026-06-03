@@ -20,7 +20,7 @@ import (
 func init() {
 	register(Command{
 		Name:     "ingest-session",
-		Synopsis: "Ingest LWS metadata for every bill in a biennium (no hearings)",
+		Synopsis: "Ingest LWS metadata and discover hearing join IDs for a biennium",
 		Run:      runIngestSession,
 	})
 }
@@ -29,7 +29,7 @@ func runIngestSession(args []string) int {
 	var (
 		biennium  = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		outDir    = fs.String("out-dir", "data/processed", "where _session.json is written")
+		outDir    = fs.String("out-dir", "data/processed", "where _session.json and _discovery.json are written")
 		rateLimit = fs.Float64("rate", 25.0, "max requests/sec for the LWS host")
 		workers   = fs.Int("workers", 4, "number of concurrent bill workers. HTTP calls still respect --rate per LWS host.")
 		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
@@ -252,5 +252,13 @@ func runIngestSession(args []string) int {
 	if failures > 0 {
 		return 1
 	}
-	return 0
+
+	fmt.Fprintln(os.Stderr, "==> discovering CSI/TVW hearing IDs")
+	discoveryDeps, discoveryCleanup, err := newDiscoveryDeps(ctx, *dsn, sessionDiscoveryRateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ingest-session discovery: %v\n", err)
+		return 1
+	}
+	defer discoveryCleanup()
+	return runHearingDiscovery(ctx, discoveryDeps, *biennium, *outDir, "ingest-session discovery")
 }

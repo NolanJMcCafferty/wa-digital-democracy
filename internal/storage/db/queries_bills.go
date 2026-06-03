@@ -425,6 +425,6 @@ SELECT prefix, number
 }
 
 // ---------------------------------------------------------------------------
-// Auto-discovery queries — back the `wa-dd discover-hearings` and
-// `wa-dd ingest-hearings` commands.
+// Auto-discovery queries — back the `wa-dd ingest-session` discovery post-pass
+// and the `wa-dd ingest-hearings` command.
 // ---------------------------------------------------------------------------

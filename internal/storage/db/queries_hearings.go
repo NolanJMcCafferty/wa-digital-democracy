@@ -223,46 +223,45 @@ func upsertCSITestifierPersonAffiliation(ctx context.Context, tx pgx.Tx, in csiP
 	if err != nil {
 		return fmt.Errorf("marshal person mention context: %w", err)
 	}
+	sourceRowID := fmt.Sprintf("%d", in.TestifierID)
 
 	const personQ = `
 WITH existing AS (
-  SELECT person_id
-    FROM person_source_mention
-   WHERE source_kind = 'csi_testifier'
-     AND source_table = 'testifier'
-     AND source_pk = $3
-     AND source_name = $1
+  SELECT id
+    FROM person
+   WHERE normalized_name = $2
+   ORDER BY id
    LIMIT 1
 ), inserted AS (
   INSERT INTO person (display_name, normalized_name, match_confidence, match_notes)
-  SELECT $1, $2, 'possible', 'Auto-seeded from CSI testifier sign-in; same-name identity is not reviewed.'
-   WHERE NOT EXISTS (SELECT 1 FROM existing WHERE person_id IS NOT NULL)
+  SELECT $1, $2, 'possible', 'Auto-seeded from CSI testifier sign-in; source mentions share this normalized-name identity.'
+   WHERE NOT EXISTS (SELECT 1 FROM existing)
   RETURNING id
 )
 SELECT id FROM inserted
 UNION ALL
-SELECT person_id FROM existing WHERE person_id IS NOT NULL
+SELECT id FROM existing
 LIMIT 1;`
 	var personID int64
-	if err := tx.QueryRow(ctx, personQ, rawName, normalizedName, in.TestifierID).Scan(&personID); err != nil {
+	if err := tx.QueryRow(ctx, personQ, rawName, normalizedName).Scan(&personID); err != nil {
 		return fmt.Errorf("upsert CSI person: %w", err)
 	}
 
 	const mentionQ = `
 INSERT INTO person_source_mention (
-  person_id, source_kind, source_table, source_pk, source_name, normalized_name,
+  person_id, source_kind, source_table, source_pk, source_row_id, source_name, normalized_name,
   source_role, context, confidence, review_status
 )
-VALUES ($1, 'csi_testifier', 'testifier', $2, $3, $4,
-        'testifier', $5, 'possible', 'auto')
+VALUES ($1, 'csi_testifier', 'testifier', $2, $3, $4, $5,
+        'testifier', $6, 'possible', 'auto')
 ON CONFLICT (source_kind, source_table, source_pk, source_row_id, source_name) DO UPDATE SET
-  person_id = COALESCE(person_source_mention.person_id, EXCLUDED.person_id),
+  person_id = EXCLUDED.person_id,
   normalized_name = COALESCE(person_source_mention.normalized_name, EXCLUDED.normalized_name),
   context = EXCLUDED.context,
   last_seen_at = NOW()
 RETURNING id;`
 	var mentionID int64
-	if err := tx.QueryRow(ctx, mentionQ, personID, in.TestifierID, rawName, normalizedName, contextJSON).Scan(&mentionID); err != nil {
+	if err := tx.QueryRow(ctx, mentionQ, personID, in.TestifierID, sourceRowID, rawName, normalizedName, contextJSON).Scan(&mentionID); err != nil {
 		return fmt.Errorf("upsert CSI person mention: %w", err)
 	}
 
@@ -302,12 +301,12 @@ SELECT id
 	const affQ = `
 INSERT INTO person_organization_affiliation (
   person_id, person_mention_id, organization_id, raw_person_name, raw_organization_name,
-  relationship_type, role_title, source_kind, source_table, source_pk,
+  relationship_type, role_title, source_kind, source_table, source_pk, source_row_id,
   context, confidence, review_status, evidence
 )
 VALUES ($1, $2, $3, $4, $5,
-        $6::person_org_affiliation_type, 'testifier', 'csi_testifier', 'testifier', $7,
-        $8, 'possible', 'auto', $9)
+        $6::person_org_affiliation_type, 'testifier', 'csi_testifier', 'testifier', $7, $8,
+        $9, 'possible', 'auto', $10)
 ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
   person_mention_id = COALESCE(person_organization_affiliation.person_mention_id, EXCLUDED.person_mention_id),
   organization_id = COALESCE(person_organization_affiliation.organization_id, EXCLUDED.organization_id),
@@ -322,7 +321,7 @@ ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row
 	}
 	if _, err := tx.Exec(ctx, affQ,
 		personID, mentionID, orgID, rawName, rawOrgForAffiliation,
-		relationshipType, in.TestifierID,
+		relationshipType, in.TestifierID, sourceRowID,
 		contextJSON, evidenceJSON,
 	); err != nil {
 		return fmt.Errorf("upsert CSI person affiliation: %w", err)

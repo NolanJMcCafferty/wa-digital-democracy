@@ -6,6 +6,7 @@ import {
   slugify,
   type EntityMatchCandidate,
   type EntityMatchDecision,
+  type EntityMatchTestimonyContext,
   type EntityMatchTranscriptContext,
 } from "@/lib/api";
 
@@ -30,6 +31,7 @@ const SOURCE_KINDS = [
   "fiscalwa_vendor_payment",
   "federal_award_recipient",
   "deepgram_organization_mention",
+  "csi_testimony_organization",
 ];
 
 async function decide(formData: FormData) {
@@ -269,6 +271,52 @@ function TranscriptContext({ ctx, mentionText }: { ctx: EntityMatchTranscriptCon
   );
 }
 
+function TestimonyContext({ ctx }: { ctx: EntityMatchTestimonyContext }) {
+  return (
+    <div className="mt-4 rounded border border-sky-200 bg-sky-50 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs text-sky-900">
+        <span className="font-semibold">CSI sign-in evidence</span>
+        <span>
+          {ctx.testifier_count.toLocaleString()} testifier
+          {ctx.testifier_count === 1 ? "" : "s"} typed this organization
+        </span>
+      </div>
+      {ctx.appearances.length > 0 ? (
+        <ul className="mt-3 space-y-2 rounded bg-white p-3 ring-1 ring-sky-200">
+          {ctx.appearances.map((a, i) => (
+            <li key={`${a.hearing_id}-${i}`} className="text-sm text-stone-800">
+              <Link className="font-medium underline" href={`/hearings/${a.hearing_id}`}>
+                {a.committee_name}
+              </Link>
+              <span className="text-stone-500">
+                {" · "}
+                {a.meeting_datetime ? new Date(a.meeting_datetime).toISOString().slice(0, 10) : ""}
+              </span>
+              {a.bill_id ? (
+                <>
+                  {" · "}
+                  <span className="font-mono text-xs">{a.bill_id}</span>
+                </>
+              ) : null}
+              {a.testifier_name ? (
+                <>
+                  {" · "}
+                  {a.testifier_name}
+                </>
+              ) : null}
+              {a.position ? (
+                <span className="ml-2 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-700">{a.position}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-sky-900">No agenda items found for this raw organization string.</p>
+      )}
+    </div>
+  );
+}
+
 function CandidateCard({ candidate: c }: { candidate: EntityMatchCandidate }) {
   return (
     <div className="rounded-lg border border-stone-300 bg-white p-5">
@@ -307,6 +355,7 @@ function CandidateCard({ candidate: c }: { candidate: EntityMatchCandidate }) {
       ) : null}
 
       {c.transcript ? <TranscriptContext ctx={c.transcript} mentionText={c.source_name} /> : null}
+      {c.testimony ? <TestimonyContext ctx={c.testimony} /> : null}
 
       <form action={decide} className="mt-4 grid gap-3 border-t border-stone-200 pt-4 sm:grid-cols-2">
         <input type="hidden" name="candidateId" value={c.id} />

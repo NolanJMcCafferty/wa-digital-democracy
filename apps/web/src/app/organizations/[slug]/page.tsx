@@ -189,23 +189,12 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
             <tr key={`${person.personId ?? "raw"}-${person.relationshipType}-${person.sourceKind}-${idx}`}>
               <td className="px-4 py-3 align-top">
                 <div className="font-medium text-stone-900">{person.personName}</div>
-                {person.roleTitle ? (
-                  <div className="mt-1 text-xs text-stone-500">{person.roleTitle}</div>
-                ) : null}
               </td>
               <td className="px-4 py-3 align-top">
                 <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
-                {person.rawOrganizationName ? (
-                  <div className="mt-1 text-xs text-stone-500">
-                    As listed: {person.rawOrganizationName}
-                  </div>
-                ) : null}
               </td>
               <td className="px-4 py-3 align-top">
                 <div className="text-stone-800">{person.sourceLabel}</div>
-                <span className="mt-1 inline-flex rounded border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs text-stone-600">
-                  {confidenceLabel(person.confidence)}
-                </span>
               </td>
               <td className="px-4 py-3 align-top text-stone-700">
                 {person.recordYears || "-"}
@@ -254,19 +243,6 @@ function relationshipLabel(value: string): string {
       return "Reviewed affiliation";
     default:
       return value.replaceAll("_", " ");
-  }
-}
-
-function confidenceLabel(value: string): string {
-  switch (value) {
-    case "confirmed":
-      return "Confirmed";
-    case "probable":
-      return "Probable";
-    case "possible":
-      return "Possible";
-    default:
-      return "Unmatched";
   }
 }
 
