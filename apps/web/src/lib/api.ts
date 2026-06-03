@@ -1128,7 +1128,6 @@ export type EntityMatchCandidate = {
   canonical_name: string;
   candidate_confidence: string;
   evidence: string[];
-  source_record_id?: number;
   decision: string;
   reviewed_confidence?: string;
   transcript?: EntityMatchTranscriptContext;

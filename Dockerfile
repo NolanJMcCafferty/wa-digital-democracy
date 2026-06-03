@@ -56,7 +56,7 @@ COPY --from=go-build /out/wa-dd-api /usr/local/bin/wa-dd-api
 COPY --from=go-build /out/wa-dd /usr/local/bin/wa-dd
 COPY --from=goose-build /out/goose /usr/local/bin/goose
 COPY db/migrations /app/db/migrations
-RUN mkdir -p /app/data/raw /app/data/processed /app/data/audio \
+RUN mkdir -p /app/data/processed /app/data/audio \
   && chown -R nonroot:nonroot /app/data
 EXPOSE 8080
 USER nonroot

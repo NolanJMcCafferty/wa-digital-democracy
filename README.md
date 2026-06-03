@@ -10,8 +10,7 @@ Current stack:
 
 - **Backend / ingestion:** Go (`net/http` + `chi`, `pgx`, `goose`).
 - **Frontend:** Next.js + React + TypeScript + Tailwind + shadcn-style components.
-- **Database:** Postgres with JSONB, `pg_trgm`, source records, and project-pinned Goose migrations.
-- **Raw storage:** local filesystem under `data/raw/` for immutable source responses.
+- **Database:** Postgres with JSONB, `pg_trgm`, and project-pinned Goose migrations.
 
 ## Local dev
 
@@ -92,10 +91,9 @@ For nightly cron, one line is enough:
 30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
-Re-running is cheap in DB writes — `source_record` dedups on
-`(system, endpoint, url, content_hash, transform_version)` and just
-bumps `fetched_at` for unchanged content — but every run still re-hits
-every upstream API at the configured rate.
+Re-running is cheap in DB writes because ingestion uses stable source IDs and
+idempotent upserts, but every run still re-hits upstream APIs at the configured
+rate.
 
 ## Layout
 
@@ -112,9 +110,8 @@ internal/
   entitymatch/            # organization/entity matching logic
   jobs/                   # ingestion and enrichment pipeline steps
   sources/                # external source connectors
-  sources/httpx/          # shared HTTP retry/rate-limit/raw sink hook
-  storage/db/             # pgx store, source records, query helpers
-  storage/objectstore/    # local/S3 raw artifact storage
+  sources/httpx/          # shared HTTP retry/rate-limit client
+  storage/db/             # pgx store and query helpers
 db/
   fixtures/               # deterministic test/e2e fixture data
   migrations/             # goose-style SQL migrations

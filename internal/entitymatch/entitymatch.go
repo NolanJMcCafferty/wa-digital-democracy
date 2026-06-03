@@ -36,8 +36,7 @@ func NormalizedName(name string) string {
 }
 
 // Candidate describes a possible source-name → organization link with visible
-// confidence and evidence. SourceRecordIDs point at the raw rows that produced
-// the candidate; they are not required to be exhaustive.
+// confidence and evidence.
 type Candidate struct {
 	SourceKind     string   `json:"source_kind"`
 	SourceName     string   `json:"source_name"`

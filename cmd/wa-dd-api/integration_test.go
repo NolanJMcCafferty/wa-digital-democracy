@@ -169,72 +169,31 @@ func seedSponsorOrderingFixture(t *testing.T, store *db.Store) {
 	cleanup := func() {
 		_, _ = store.Pool.Exec(ctx, `DELETE FROM bill WHERE biennium = '2098-00' AND prefix = 'HB' AND number IN (9000, 9100)`)
 		_, _ = store.Pool.Exec(ctx, `DELETE FROM legislator WHERE lws_sponsor_id = '990002'`)
-		_, _ = store.Pool.Exec(ctx, `DELETE FROM source_record WHERE source_system = 'lws' AND source_endpoint = 'Fixture.SponsorOrdering'`)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
 
-	sourceRecordID, err := store.InsertSourceRecord(ctx, db.SourceRecordParams{
-		System:           "lws",
-		Endpoint:         "Fixture.SponsorOrdering",
-		URL:              "fixture://wa-dd/sponsor-ordering",
-		SourceID:         "wa-dd-sponsor-ordering-fixture",
-		FetchedAt:        time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash:      "fixture-sponsor-ordering-v1",
-		RawPath:          "fixtures/sponsor-ordering.json",
-		ContentType:      "application/json",
-		TransformVersion: "fixture-v1",
-	})
-	if err != nil {
-		t.Fatalf("insert source record: %v", err)
-	}
-	_, err = store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
-		LWSSponsorID: "990001",
-		Name:         "Representative Fixture Sponsor",
-		Chamber:      "House",
-		District:     "99",
-		Party:        "D",
-		FirstName:    "Fixture",
-		LastName:     "Sponsor",
-	})
-	if err != nil {
-		t.Fatalf("upsert fixture legislator: %v", err)
-	}
-	_, err = store.UpsertLegislator(ctx, db.UpsertLegislatorParams{
-		LWSSponsorID: "990002",
-		Name:         "Representative Ordering Lead",
-		Chamber:      "House",
-		District:     "99",
-		Party:        "D",
-		FirstName:    "Ordering",
-		LastName:     "Lead",
-	})
-	if err != nil {
-		t.Fatalf("upsert lead legislator: %v", err)
-	}
 	statusDate := time.Date(2098, 1, 10, 0, 0, 0, 0, time.UTC)
 	secondaryBillID, err := store.UpsertBill(ctx, db.UpsertBillParams{
-		Biennium:       "2098-00",
-		Prefix:         "HB",
-		Number:         9000,
-		Title:          "Sponsor Ordering Secondary Bill",
-		ChamberOrigin:  "House",
-		CurrentStatus:  "Public hearing scheduled",
-		StatusDate:     statusDate,
-		SourceRecordID: sourceRecordID,
+		Biennium:      "2098-00",
+		Prefix:        "HB",
+		Number:        9000,
+		Title:         "Sponsor Ordering Secondary Bill",
+		ChamberOrigin: "House",
+		CurrentStatus: "Public hearing scheduled",
+		StatusDate:    statusDate,
 	})
 	if err != nil {
 		t.Fatalf("upsert secondary bill: %v", err)
 	}
 	primaryBillID, err := store.UpsertBill(ctx, db.UpsertBillParams{
-		Biennium:       "2098-00",
-		Prefix:         "HB",
-		Number:         9100,
-		Title:          "Sponsor Ordering Primary Bill",
-		ChamberOrigin:  "House",
-		CurrentStatus:  "Public hearing scheduled",
-		StatusDate:     statusDate,
-		SourceRecordID: sourceRecordID,
+		Biennium:      "2098-00",
+		Prefix:        "HB",
+		Number:        9100,
+		Title:         "Sponsor Ordering Primary Bill",
+		ChamberOrigin: "House",
+		CurrentStatus: "Public hearing scheduled",
+		StatusDate:    statusDate,
 	})
 	if err != nil {
 		t.Fatalf("upsert primary bill: %v", err)

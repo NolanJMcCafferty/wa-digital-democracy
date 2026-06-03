@@ -33,10 +33,8 @@ The public API returns route-specific page objects assembled from Postgres. Post
 
 ## Legislative daily passes
 
-Each pass writes to Postgres directly. Each is idempotent — re-running
-just bumps `fetched_at` on `source_record` rows where bytes are
-unchanged, and does `ON CONFLICT DO UPDATE` (or `DO NOTHING`) on
-domain rows.
+Each pass writes to Postgres directly. Each is idempotent: re-running uses
+stable source IDs plus `ON CONFLICT DO UPDATE` / `DO NOTHING` on domain rows.
 
 ### 1. `wa-dd ingest-session --biennium 2025-26`
 
@@ -270,15 +268,12 @@ for reviewed organization context.
 
 ## Provenance
 
-Every public fact on the page traces to a `source_record` row, and
-every `source_record` row stores the canonical URL, fetched-at
-timestamp, content hash, and a relative path to the raw bytes on disk
-(under `data/raw/<system>/`). The "Sources & confidence" panel at the
-bottom of every bill page is built from these rows.
+Public facts keep source-specific identifiers, official URLs, raw-field JSON,
+and normalization warnings where those are useful for review. There is no global
+fetch ledger; source-specific rows are the provenance boundary.
 
-The `httpx.RawSink` (`internal/storage/db/store.go`) is wired into the
-HTTP client so every connector fetch automatically writes a
-source_record row with no per-step boilerplate.
+The shared `httpx` client handles retry/backoff and returns response metadata
+plus body bytes to source-specific parsers.
 
 ## Daily orchestration
 
@@ -370,8 +365,7 @@ All daily stages are safe to re-run. What changes:
   succeeded job and uses an event-level advisory lock to avoid duplicate
   provider submissions. The work-list query treats succeeded
   `hearing-pipeline` rows keyed by `hearing_id` as the current terminal marker.
-- `source_record` — UPSERT on `(system, endpoint, url, content_hash,
-  transform_version)`. Identical responses bump `fetched_at` on the
+- source rows — identified by stable source-specific IDs and updated through idempotent upserts. Identical responses bump `fetched_at` on the
   same row. Different responses (e.g. status timeline got a new
   entry) create a new row.
 - `ingestion_run` — append-only. Each run creates a new row per step.
@@ -385,9 +379,7 @@ All daily stages are safe to re-run. What changes:
 - **Per-fetch error?** `ingestion_run` table — includes the step name,
   start/finish timestamps, and the error message. Filter by
   `status = 'failed'`.
-- **Wrong data on a page?** `source_record` rows for that bill: 
-  `SELECT * FROM source_record WHERE source_url LIKE '%HB1501%' ORDER BY fetched_at DESC;`.
-  The raw response bytes are at `data/raw/<system>/<hash>` for inspection.
+- **Wrong data on a page?** Inspect the relevant normalized rows and their official URL/source-ID fields, then rerun the source-specific ingest command for a fresh pull.
 - **Stuck rate limit?** `_session.json`'s per-bill durations. If they
   shoot up by 10x for a stretch, an upstream is throttling.
 - **Bill page doesn't render?** Hit
@@ -402,7 +394,7 @@ All daily stages are safe to re-run. What changes:
   CSI and segmentation steps stay ordered so they can share the event-level TVW
   and diarization result.
 - Per-step selective re-fetching. Today every run re-hits every
-  upstream API. The `source_record` content_hash dedupe makes this
+  upstream API. Idempotent upserts make this
   cheap on storage, but expensive on bandwidth. Conditional GETs
   (`If-Modified-Since` / `ETag`) aren't supported by the upstreams
   we've checked.
@@ -442,7 +434,7 @@ listed in this document are the operator-supported ingestion surfaces.
 ## Optional source-context: DataWA contract and vendor ingestion
 
 `wa-dd ingest-contracts` ingests DataWA agency-contract fiscal-year datasets into
-`datawa_contract` with source provenance through `source_record`.
+`datawa_contract` with stable source dataset/row IDs.
 
 ```sh
 wa-dd ingest-contracts --fiscal-year 2025 --limit 1000
@@ -464,7 +456,7 @@ Rows are normalized into `datawa_contract` and keep:
 - dates and money fields;
 - raw fields as JSONB;
 - normalization warnings for sentinel/invalid dates;
-- `source_record_id` linking back to the fetched Socrata page.
+- stable source dataset and row IDs for matching/upserts.
 
 `wa-dd ingest-master-contract-sales` ingests DataWA statewide/master-contract
 sales into `datawa_master_contract_sale`:
@@ -479,7 +471,7 @@ The source dataset is:
 
 Rows preserve customer type/name, contract number/title, vendor name, report
 year, quarterly and total sales, OMWBE/veteran/small/diverse-business flags,
-raw fields, normalization warnings, and `source_record_id` provenance.
+raw fields and normalization warnings.
 
 `wa-dd ingest-it-contracts` ingests annual DataWA IT Contracts Report datasets
 into `datawa_it_contract`:
@@ -541,8 +533,7 @@ USAspending's `/api/v2/search/spending_by_award/` endpoint.
 
 Rows preserve award ID, recipient name/UEI, awarding and funding agencies, award
 type, amount, start/end dates, place-of-performance state/county, raw award JSON,
-and `source_record_id` provenance. The raw API response is also stored through
-the shared `source_record`/object-store path.
+and stable source row identifiers.
 
 Matching strategy: recipient names and UEIs generate reviewable candidate joins
 against organization/context records. Do not present uncertain joins as
@@ -566,7 +557,7 @@ The current bounded source is:
 - `8u2j-imqx` — City of Seattle Operating Budget (`data.seattle.gov`), public-domain licensed and attributed to the City of Seattle in Socrata metadata.
 
 Rows preserve fiscal year, service, department, program, fund, fund type,
-expense type, description, approved amount, raw fields, and `source_record_id`
+expense type, description, approved amount, and raw fields
 provenance linking back to the fetched Socrata page. This gives optional
 Seattle context work a department/program/fiscal-period budget table without
 making Seattle accountability expansion part of the current plan.
@@ -591,7 +582,7 @@ The current bounded source is:
 
 Rows preserve biennium, fiscal year/month, agency number/name, object and
 subobject budget categories, vendor name, amount, raw fields, and
-`source_record_id` provenance linking back to the fetched workbook.
+stable source row IDs derived from the fetched workbook.
 
 Scope caveat: this is a spending/checkbook slice, not the full state budget.
 It supports agency/vendor/category spending context. Proposal-level operating,
