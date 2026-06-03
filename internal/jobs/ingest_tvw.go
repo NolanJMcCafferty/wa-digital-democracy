@@ -16,20 +16,14 @@ func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
 	eventID := p.Demo.TVW.EventID
 	ids.TVWEventID = eventID
 
-	// 1. TVW WordPress metadata + rich Invintus Event/getDetailed.
-	wp, _, err := p.TVW.FetchWPVideoByEventID(ctx, eventID)
-	if err != nil {
-		return fmt.Errorf("wp video metadata: %w", err)
-	}
-	playerReferer := ""
-	if wp != nil {
-		playerReferer = wp.Link
-	}
-	ev, evFetch, err := p.TVW.FetchEventDetailWithSource(ctx, eventID, playerReferer)
+	// Discovery already resolved the TVW event ID. Fetch the authoritative
+	// Invintus event detail directly; WordPress post metadata is optional
+	// enrichment and should not block hearing ingest.
+	ev, evFetch, err := p.TVW.FetchEventDetailWithSource(ctx, eventID)
 	if err != nil {
 		return fmt.Errorf("Event/getDetailed: %w", err)
 	}
-	norm := tvw.NormalizeFromInvintusAndWP(ev, wp)
+	norm := tvw.NormalizeFromInvintus(ev, nil)
 	if _, err := p.Store.UpsertTVWEvent(ctx, db.UpsertTVWEventParams{
 		TVWEventID:          norm.TVWEventID,
 		WPPostID:            norm.WPPostID,
