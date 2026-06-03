@@ -29,12 +29,12 @@ import (
 
 // Pipeline holds the dependencies the steps need.
 type Pipeline struct {
-	Store *db.Store
-	LWS   *lws.Client
-	CSI   *csi.Client
-	TVW   *tvw.Client
-	PDC   *pdc.Client
-	Demo  *common.BillAgendaTarget
+	Store            *db.Store
+	LWS              *lws.Client
+	CSI              *csi.Client
+	TVW              *tvw.Client
+	PDC              *pdc.Client
+	BillAgendaTarget *common.BillAgendaTarget
 
 	// SourceRecordIDFor returns the source_record id for the connector's
 	// most recent fetch of a given URL. Populated during a run by reading
@@ -71,7 +71,7 @@ func (p *Pipeline) RunMetadataOnly(ctx context.Context, log func(string), ids *I
 	const step = "ingest-bill"
 	log(fmt.Sprintf("==> %s", step))
 	runID, err := p.Store.StartIngestionRun(ctx, step, map[string]any{
-		"biennium": p.Demo.Bill.Biennium, "bill": p.Demo.Bill.ID(),
+		"biennium": p.BillAgendaTarget.Bill.Biennium, "bill": p.BillAgendaTarget.Bill.ID(),
 		"mode": "metadata-only",
 	})
 	if err != nil {

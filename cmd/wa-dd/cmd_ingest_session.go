@@ -161,20 +161,20 @@ func runIngestSession(args []string) int {
 			defer wg.Done()
 			for j := range jobsCh {
 				b := j.bill
-				demo := &common.BillAgendaTarget{
+				billAgendaTarget := &common.BillAgendaTarget{
 					Bill: common.BillKey{Biennium: b.biennium, Prefix: b.prefix, Number: b.number},
 				}
-				prefix := fmt.Sprintf("[%d/%d] %s", j.index+1, len(bills), demo.Bill.ID())
+				prefix := fmt.Sprintf("[%d/%d] %s", j.index+1, len(bills), billAgendaTarget.Bill.ID())
 				t0 := time.Now()
 				pipeline := &jobs.Pipeline{
-					Store: deps.store,
-					LWS:   deps.lwsClient,
-					Demo:  demo,
+					Store:            deps.store,
+					LWS:              deps.lwsClient,
+					BillAgendaTarget: billAgendaTarget,
 				}
 				ids := jobs.NewIDs()
 				stepErr := pipeline.RunMetadataOnly(ctx, func(string) {}, ids)
 				dur := time.Since(t0)
-				res := result{Index: j.index, Bill: demo.Bill.ID(), DurationMS: dur.Milliseconds()}
+				res := result{Index: j.index, Bill: billAgendaTarget.Bill.ID(), DurationMS: dur.Milliseconds()}
 				if stepErr != nil {
 					res.Status = "failed"
 					res.Error = stepErr.Error()

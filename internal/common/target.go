@@ -45,9 +45,7 @@ type TranscriptWindow struct {
 }
 
 // BillAgendaTarget is the normalized target for ingesting or rendering one
-// bill agenda item in one hearing. It replaces the old operator-selected
-// demo config shape; callers now reconstruct it from Postgres or discovery
-// results rather than from hand-edited YAML.
+// bill agenda item in one hearing.
 type BillAgendaTarget struct {
 	Bill               BillKey
 	Committee          CommitteeRef

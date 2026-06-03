@@ -137,10 +137,10 @@ func BuildBillDetailResponse(
 	biennium, prefix string,
 	number int,
 ) (*BillDetailResponse, error) {
-	demo := &common.BillAgendaTarget{
+	billAgendaTarget := &common.BillAgendaTarget{
 		Bill: common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
 	}
-	bill, status, err := loadBill(ctx, store, demo)
+	bill, status, err := loadBill(ctx, store, billAgendaTarget)
 	if err != nil {
 		if errors.Is(err, db.ErrBillNotFound) {
 			return nil, err
@@ -148,13 +148,13 @@ func BuildBillDetailResponse(
 		return nil, fmt.Errorf("bill: %w", err)
 	}
 
-	demos, err := store.LookupBillAgendaTargetsForBill(ctx, biennium, prefix, number)
+	billAgendaTargets, err := store.LookupBillAgendaTargetsForBill(ctx, biennium, prefix, number)
 	if err != nil {
 		return nil, fmt.Errorf("hearing lookup: %w", err)
 	}
-	hearings := make([]AgendaItemSection, 0, len(demos))
-	for _, demo := range demos {
-		section, err := BuildAgendaItemSection(ctx, store, demo)
+	hearings := make([]AgendaItemSection, 0, len(billAgendaTargets))
+	for _, billAgendaTarget := range billAgendaTargets {
+		section, err := BuildAgendaItemSection(ctx, store, billAgendaTarget)
 		if err != nil {
 			return nil, err
 		}
@@ -179,20 +179,20 @@ func BuildBillDetailResponse(
 // BuildAgendaItemSection returns the page section tied to one agenda_item. The
 // hearing-detail handler reuses this for each agenda item rendered under a
 // committee hearing.
-func BuildAgendaItemSection(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (*AgendaItemSection, error) {
-	hearing, err := loadHearingAndAgenda(ctx, store, demo)
+func BuildAgendaItemSection(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) (*AgendaItemSection, error) {
+	hearing, err := loadHearingAndAgenda(ctx, store, billAgendaTarget)
 	if err != nil {
 		return nil, fmt.Errorf("hearing: %w", err)
 	}
-	testifiers, err := loadTestifiers(ctx, store, demo)
+	testifiers, err := loadTestifiers(ctx, store, billAgendaTarget)
 	if err != nil {
 		return nil, fmt.Errorf("testifiers: %w", err)
 	}
-	transcript, err := loadTranscript(ctx, store, demo)
+	transcript, err := loadTranscript(ctx, store, billAgendaTarget)
 	if err != nil {
 		return nil, fmt.Errorf("transcript: %w", err)
 	}
-	organizations, err := loadOrganizations(ctx, store, demo)
+	organizations, err := loadOrganizations(ctx, store, billAgendaTarget)
 	if err != nil {
 		return nil, fmt.Errorf("organizations: %w", err)
 	}
@@ -204,7 +204,7 @@ func BuildAgendaItemSection(ctx context.Context, store *db.Store, demo *common.B
 	}, nil
 }
 
-func loadBill(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (BillSummary, BillStatus, error) {
+func loadBill(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) (BillSummary, BillStatus, error) {
 	const q = `
 SELECT id, biennium, bill_number, title, description, chamber_origin,
        current_status, status_date, official_url
@@ -218,13 +218,13 @@ SELECT id, biennium, bill_number, title, description, chamber_origin,
 		statusDate                        *time.Time
 		officialURL                       *string
 	)
-	err := store.Pool.QueryRow(ctx, q, demo.Bill.Biennium, demo.Bill.Prefix, demo.Bill.Number).Scan(
+	err := store.Pool.QueryRow(ctx, q, billAgendaTarget.Bill.Biennium, billAgendaTarget.Bill.Prefix, billAgendaTarget.Bill.Number).Scan(
 		&billRowID, &biennium, &billNumber,
 		&title, &description, &chamberOrigin,
 		&currentStatus, &statusDate, &officialURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return BillSummary{}, BillStatus{}, fmt.Errorf("%w: %s in %s", db.ErrBillNotFound, demo.Bill.ID(), demo.Bill.Biennium)
+		return BillSummary{}, BillStatus{}, fmt.Errorf("%w: %s in %s", db.ErrBillNotFound, billAgendaTarget.Bill.ID(), billAgendaTarget.Bill.Biennium)
 	}
 	if err != nil {
 		return BillSummary{}, BillStatus{}, err
@@ -288,7 +288,7 @@ SELECT action_date, history_line FROM bill_status_change
 	return bill, status, rows2.Err()
 }
 
-func loadHearingAndAgenda(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (HearingSummary, error) {
+func loadHearingAndAgenda(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) (HearingSummary, error) {
 	const q = `
 SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetime,
        h.location, h.official_agenda_url, h.tvw_url, h.tvw_event_id,
@@ -304,14 +304,14 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 	)
 	_ = tmp
 	var meetingDT time.Time
-	err := store.Pool.QueryRow(ctx, q, demo.AgendaItem.CSIAgendaItemID).Scan(
+	err := store.Pool.QueryRow(ctx, q, billAgendaTarget.AgendaItem.CSIAgendaItemID).Scan(
 		&hearingID,
 		&commName, &commAcronym, &chamber, &meetingDT,
 		&location, &officialAgendaURL, &tvwURL, &tvwEventID,
 		&label, &csiAID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return HearingSummary{}, fmt.Errorf("no agenda_item row for csi_agenda_item_id=%s", demo.AgendaItem.CSIAgendaItemID)
+		return HearingSummary{}, fmt.Errorf("no agenda_item row for csi_agenda_item_id=%s", billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	}
 	if err != nil {
 		return HearingSummary{}, err
@@ -331,7 +331,7 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 	}, nil
 }
 
-func loadTestifiers(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) ([]TestifierSummary, error) {
+func loadTestifiers(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) ([]TestifierSummary, error) {
 	const q = `
 SELECT t.raw_name, t.raw_organization, t.position, t.testified,
        t.time_signed_in, t.normalized_org_id
@@ -342,7 +342,7 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
    CASE t.position::text WHEN 'Pro' THEN 0 WHEN 'Con' THEN 1 WHEN 'Other' THEN 2 ELSE 3 END,
    t.raw_organization NULLS LAST,
    t.raw_name;`
-	rows, err := store.Pool.Query(ctx, q, demo.AgendaItem.CSIAgendaItemID)
+	rows, err := store.Pool.Query(ctx, q, billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		return nil, err
 	}
@@ -366,14 +366,14 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 	return out, rows.Err()
 }
 
-func loadTranscript(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) (*TranscriptSection, error) {
+func loadTranscript(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) (*TranscriptSection, error) {
 	const headQ = `
 SELECT COALESCE(h.tvw_event_id, '')
   FROM agenda_item a
   JOIN hearing h ON h.id = a.hearing_id
  WHERE a.csi_agenda_item_id = $1;`
 	var tvwEventID string
-	err := store.Pool.QueryRow(ctx, headQ, demo.AgendaItem.CSIAgendaItemID).Scan(&tvwEventID)
+	err := store.Pool.QueryRow(ctx, headQ, billAgendaTarget.AgendaItem.CSIAgendaItemID).Scan(&tvwEventID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -384,7 +384,7 @@ SELECT COALESCE(h.tvw_event_id, '')
 
 	// Windows are the canonical bill-discussion ranges. Without them
 	// there is nothing to render.
-	stored, err := store.ListAgendaItemWindowsByAgendaItem(ctx, demo.AgendaItem.CSIAgendaItemID)
+	stored, err := store.ListAgendaItemWindowsByAgendaItem(ctx, billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +431,7 @@ SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label,
       WHERE d.start_ms < w.end_ms AND d.end_ms > w.start_ms
    )
  ORDER BY d.start_ms ASC;`
-	rows, err := store.Pool.Query(ctx, segQ, tvwEventID, demo.AgendaItem.CSIAgendaItemID)
+	rows, err := store.Pool.Query(ctx, segQ, tvwEventID, billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +450,7 @@ SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label,
 	return tr, rows.Err()
 }
 
-func loadOrganizations(ctx context.Context, store *db.Store, demo *common.BillAgendaTarget) ([]OrganizationSummary, error) {
+func loadOrganizations(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) ([]OrganizationSummary, error) {
 	const q = `
 SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_notes,
        MIN(t.position::text) AS pos,
@@ -460,7 +460,7 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
   JOIN agenda_item a ON a.id = t.agenda_item_id
  WHERE a.csi_agenda_item_id = $1
  GROUP BY o.id;`
-	rows, err := store.Pool.Query(ctx, q, demo.AgendaItem.CSIAgendaItemID)
+	rows, err := store.Pool.Query(ctx, q, billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		return nil, err
 	}

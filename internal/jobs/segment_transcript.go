@@ -20,9 +20,9 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	}
 
 	// Manual override wins outright (Blueprint line 596 endorses this).
-	if p.Demo.TranscriptOverride.EndMS > p.Demo.TranscriptOverride.StartMS {
-		ids.BillSegmentStart = p.Demo.TranscriptOverride.StartMS
-		ids.BillSegmentEnd = p.Demo.TranscriptOverride.EndMS
+	if p.BillAgendaTarget.TranscriptOverride.EndMS > p.BillAgendaTarget.TranscriptOverride.StartMS {
+		ids.BillSegmentStart = p.BillAgendaTarget.TranscriptOverride.StartMS
+		ids.BillSegmentEnd = p.BillAgendaTarget.TranscriptOverride.EndMS
 		fmt.Fprintf(stderrSink, "  using transcript_override [%d, %d]\n",
 			ids.BillSegmentStart, ids.BillSegmentEnd)
 		_, err := p.Store.ReplaceAgendaItemWindows(ctx, ids.AgendaItemID,
@@ -45,10 +45,10 @@ func (p *Pipeline) SegmentTranscript(ctx context.Context, ids *IDs) error {
 	for _, c := range cues {
 		jobCues = append(jobCues, segmentCue{StartMS: c.StartMS, EndMS: c.EndMS, Text: c.Text})
 	}
-	windows := DetectBillDiscussionWindows(jobCues, p.Demo.Bill.Prefix, p.Demo.Bill.Number)
+	windows := DetectBillDiscussionWindows(jobCues, p.BillAgendaTarget.Bill.Prefix, p.BillAgendaTarget.Bill.Number)
 	if len(windows) == 0 {
-		fmt.Fprintf(stderrSink, "  no diarized mentions of %s %d; bill segment unset (set TranscriptOverride on the selected demo to override)\n",
-			p.Demo.Bill.Prefix, p.Demo.Bill.Number)
+		fmt.Fprintf(stderrSink, "  no diarized mentions of %s %d; bill segment unset (set TranscriptOverride on the selected bill agenda target to override)\n",
+			p.BillAgendaTarget.Bill.Prefix, p.BillAgendaTarget.Bill.Number)
 		// Empty input still clears any stale assignments + windows
 		// from a prior run that found mentions and now doesn't.
 		_, err := p.Store.ReplaceAgendaItemWindows(ctx, ids.AgendaItemID, nil)

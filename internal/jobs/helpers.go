@@ -50,29 +50,29 @@ func parseLWSDate(s string) (time.Time, error) {
 	return time.Time{}, nil
 }
 
-// pickHearingForDemo picks the LWS hearing that most likely corresponds to
-// the demo's committee. Match priority:
+// pickHearingForBillAgendaTarget picks the LWS hearing that most likely corresponds to
+// the bill agenda target's committee. Match priority:
 //
-//  1. Exact LWS AgendaId match against demo's CSI meeting family ID.
+//  1. Exact LWS AgendaId match against bill agenda target's CSI meeting family ID.
 //     (LWS AgendaId and CSI meetingFamilyId are different namespaces, so
 //     this rarely fires — but cheap to check.)
 //  2. Same chamber AND committee acronym matches (case-insensitive).
 //  3. Same chamber AND committee LongName contains "housing".
-//  4. First hearing whose chamber matches the demo.
+//  4. First hearing whose chamber matches the bill agenda target.
 //
 // We deliberately do NOT fall back to the first arbitrary hearing — that
 // led to a real bug where a House-origin bill's first hearing in the
-// House Housing committee shadowed the demo's Senate Housing hearing.
-func pickHearingForDemo(in []lws.Hearing, demo *common.BillAgendaTarget) *lws.Hearing {
+// House Housing committee shadowed the bill agenda target's Senate Housing hearing.
+func pickHearingForBillAgendaTarget(in []lws.Hearing, billAgendaTarget *common.BillAgendaTarget) *lws.Hearing {
 	if len(in) == 0 {
 		return nil
 	}
-	chamber := strings.ToLower(strings.TrimSpace(demo.Committee.Chamber))
-	wantAcronym := strings.ToLower(strings.TrimSpace(demo.Committee.Acronym))
+	chamber := strings.ToLower(strings.TrimSpace(billAgendaTarget.Committee.Chamber))
+	wantAcronym := strings.ToLower(strings.TrimSpace(billAgendaTarget.Committee.Acronym))
 
 	// Priority 1: AgendaId match.
 	for i, h := range in {
-		if h.CommitteeMeeting.AgendaID != "" && h.CommitteeMeeting.AgendaID == demo.AgendaItem.CSIMeetingFamilyID {
+		if h.CommitteeMeeting.AgendaID != "" && h.CommitteeMeeting.AgendaID == billAgendaTarget.AgendaItem.CSIMeetingFamilyID {
 			return &in[i]
 		}
 	}

@@ -16,9 +16,9 @@ import (
 // bill_status_change. Legislator rows are owned by ingest-legislators;
 // sponsor joins resolve against that roster and skip missing members.
 func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
-	biennium := p.Demo.Bill.Biennium
-	billNumber := strconv.Itoa(p.Demo.Bill.Number)
-	billID := p.Demo.Bill.ID()
+	biennium := p.BillAgendaTarget.Bill.Biennium
+	billNumber := strconv.Itoa(p.BillAgendaTarget.Bill.Number)
+	billID := p.BillAgendaTarget.Bill.ID()
 
 	// We bypass the lws.Client wrappers and hit Do() directly so we can
 	// capture the source_record_id from the RawFetch each call returns.
@@ -136,14 +136,14 @@ func (p *Pipeline) IngestBill(ctx context.Context, ids *IDs) error {
 	if err != nil {
 		return err
 	}
-	// Hearing-row policy: when the caller is the curated path (demo
+	// Hearing-row policy: when the caller is the curated path (bill agenda target
 	// pins a chamber + committee), narrow to that one hearing so the
 	// rest of the pipeline binds correctly. When the caller is the
 	// metadata-only path (no chamber, no committee — ingest-session
 	// driver), upsert every hearing LWS reports so the auto-discovery
 	// pass downstream has rows to enrich.
-	if p.Demo.Committee.Chamber != "" {
-		matched := pickHearingForDemo(hearings, p.Demo)
+	if p.BillAgendaTarget.Committee.Chamber != "" {
+		matched := pickHearingForBillAgendaTarget(hearings, p.BillAgendaTarget)
 		if matched != nil {
 			nh := lws.NormalizeHearings([]lws.Hearing{*matched})[0]
 			hid, err := p.Store.UpsertHearing(ctx, db.UpsertHearingParams{

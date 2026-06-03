@@ -19,13 +19,13 @@ import (
 func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 	httpClient := p.CSI.HTTP
 	base := p.CSI.BaseURL
-	chamber := p.Demo.Committee.Chamber
-	demo := p.Demo
+	chamber := p.BillAgendaTarget.Committee.Chamber
+	billAgendaTarget := p.BillAgendaTarget
 
 	// 1. Fetch the testifier list (and capture the source_record id).
 	q := url.Values{}
-	q.Set("agendaItemId", demo.AgendaItem.CSIAgendaItemID)
-	q.Set("agendaItemDescription", demo.AgendaItem.Label)
+	q.Set("agendaItemId", billAgendaTarget.AgendaItem.CSIAgendaItemID)
+	q.Set("agendaItemDescription", billAgendaTarget.AgendaItem.Label)
 	tFetch, err := httpClient.Do(ctx, httpx.Request{
 		System:   csi.SystemName,
 		Endpoint: "csi.GetOtherTestifiers",
@@ -47,7 +47,7 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 			System:   csi.SystemName,
 			Endpoint: "csi.GetMeetings",
 			URL: base + "/Home/GetMeetings?" + (url.Values{
-				"chamber": []string{chamber}, "committeeId": []string{demo.Committee.CSIID},
+				"chamber": []string{chamber}, "committeeId": []string{billAgendaTarget.Committee.CSIID},
 			}).Encode(),
 			Headers: csiAjaxJSON(),
 		})
@@ -58,11 +58,11 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 		if err != nil {
 			return err
 		}
-		startTime := pickMeetingTime(meetings, demo.AgendaItem.CSIMeetingFamilyID)
+		startTime := pickMeetingTime(meetings, billAgendaTarget.AgendaItem.CSIMeetingFamilyID)
 		hid, err := p.Store.UpsertHearing(ctx, db.UpsertHearingParams{
 			BillID:           pInt64(ids.BillID),
-			CommitteeName:    chamberCommitteeName(chamber, demo.Committee.Acronym),
-			CommitteeAcronym: demo.Committee.Acronym,
+			CommitteeName:    chamberCommitteeName(chamber, billAgendaTarget.Committee.Acronym),
+			CommitteeAcronym: billAgendaTarget.Committee.Acronym,
 			Chamber:          chamber,
 			MeetingDateTime:  startTime,
 			SourceRecordID:   mFetch.SourceRecordID,
@@ -77,10 +77,10 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 	aiID, err := p.Store.UpsertAgendaItem(ctx, db.UpsertAgendaItemParams{
 		HearingID:             ids.HearingID,
 		BillID:                pInt64(ids.BillID),
-		Label:                 demo.AgendaItem.Label,
-		CSIMeetingFamilyID:    demo.AgendaItem.CSIMeetingFamilyID,
-		CSIAgendaItemFamilyID: demo.AgendaItem.CSIAgendaItemFamilyID,
-		CSIAgendaItemID:       demo.AgendaItem.CSIAgendaItemID,
+		Label:                 billAgendaTarget.AgendaItem.Label,
+		CSIMeetingFamilyID:    billAgendaTarget.AgendaItem.CSIMeetingFamilyID,
+		CSIAgendaItemFamilyID: billAgendaTarget.AgendaItem.CSIAgendaItemFamilyID,
+		CSIAgendaItemID:       billAgendaTarget.AgendaItem.CSIAgendaItemID,
 		SourceRecordID:        tFetch.SourceRecordID,
 	})
 	if err != nil {

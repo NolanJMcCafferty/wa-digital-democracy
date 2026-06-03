@@ -4,8 +4,7 @@
 // Per data-sources/05:
 //   - Endpoint pattern: GET https://data.wa.gov/resource/<dataset_id>.json
 //   - Optional X-App-Token / $$app_token query param. Leave blank until
-//     broader ingestion hits throttling; public reads work without it for the
-//     first-page MVP demo.
+//     broader ingestion hits throttling; public reads work without it
 //   - Pagination: $limit + $offset; iterate until len(page) < $limit.
 //
 // First-page MVP cares about three datasets (Blueprint lines 334–347):

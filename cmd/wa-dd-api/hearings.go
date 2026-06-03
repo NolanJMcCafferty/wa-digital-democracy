@@ -176,7 +176,7 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 		// The list endpoint deliberately omits these to keep the payload
 		// small.
 		for i := range resp.AgendaItems {
-			demo, err := store.LookupBillAgendaTargetByAgendaItem(req.Context(), resp.AgendaItems[i].CSIAgendaItemID)
+			billAgendaTarget, err := store.LookupBillAgendaTargetByAgendaItem(req.Context(), resp.AgendaItems[i].CSIAgendaItemID)
 			if err != nil {
 				if errors.Is(err, db.ErrBillNotFound) {
 					continue
@@ -184,7 +184,7 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			section, err := BuildAgendaItemSection(req.Context(), store, demo)
+			section, err := BuildAgendaItemSection(req.Context(), store, billAgendaTarget)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return

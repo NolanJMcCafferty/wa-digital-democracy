@@ -53,17 +53,17 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 		return nil, fmt.Errorf("lookup bill agenda target: %w", err)
 	}
 
-	demo := &common.BillAgendaTarget{
+	billAgendaTarget := &common.BillAgendaTarget{
 		Bill:      common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
 		Committee: common.CommitteeRef{Chamber: chamber},
 	}
-	demo.Committee.Acronym = committeeAcronym
-	demo.AgendaItem.CSIAgendaItemID = csiAgendaItemID
-	demo.AgendaItem.CSIMeetingFamilyID = csiMeetingFamilyID
-	demo.AgendaItem.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
-	demo.AgendaItem.Label = label
-	demo.TVW.EventID = tvwEventID
-	return demo, nil
+	billAgendaTarget.Committee.Acronym = committeeAcronym
+	billAgendaTarget.AgendaItem.CSIAgendaItemID = csiAgendaItemID
+	billAgendaTarget.AgendaItem.CSIMeetingFamilyID = csiMeetingFamilyID
+	billAgendaTarget.AgendaItem.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
+	billAgendaTarget.AgendaItem.Label = label
+	billAgendaTarget.TVW.EventID = tvwEventID
+	return billAgendaTarget, nil
 }
 
 // LookupBillAgendaTargetsForBill returns one BillAgendaTarget per agenda_item attached
@@ -103,17 +103,17 @@ SELECT a.csi_agenda_item_id, a.csi_meeting_family_id,
 		); err != nil {
 			return nil, fmt.Errorf("scan bill agenda target: %w", err)
 		}
-		demo := &common.BillAgendaTarget{
+		billAgendaTarget := &common.BillAgendaTarget{
 			Bill:      common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
 			Committee: common.CommitteeRef{Chamber: chamber},
 		}
-		demo.Committee.Acronym = committeeAcronym
-		demo.AgendaItem.CSIAgendaItemID = csiAgendaItemID
-		demo.AgendaItem.CSIMeetingFamilyID = csiMeetingFamilyID
-		demo.AgendaItem.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
-		demo.AgendaItem.Label = label
-		demo.TVW.EventID = tvwEventID
-		out = append(out, demo)
+		billAgendaTarget.Committee.Acronym = committeeAcronym
+		billAgendaTarget.AgendaItem.CSIAgendaItemID = csiAgendaItemID
+		billAgendaTarget.AgendaItem.CSIMeetingFamilyID = csiMeetingFamilyID
+		billAgendaTarget.AgendaItem.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
+		billAgendaTarget.AgendaItem.Label = label
+		billAgendaTarget.TVW.EventID = tvwEventID
+		out = append(out, billAgendaTarget)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -158,15 +158,15 @@ SELECT b.biennium, b.prefix, b.number,
 		return nil, fmt.Errorf("lookup bill agenda target by agenda item: %w", err)
 	}
 
-	demo := &common.BillAgendaTarget{
+	billAgendaTarget := &common.BillAgendaTarget{
 		Bill:      common.BillKey{Biennium: biennium, Prefix: prefix, Number: number},
 		Committee: common.CommitteeRef{Chamber: chamber},
 	}
-	demo.Committee.Acronym = committeeAcronym
-	demo.AgendaItem.CSIAgendaItemID = gotCSIAgendaItemID
-	demo.AgendaItem.CSIMeetingFamilyID = csiMeetingFamilyID
-	demo.AgendaItem.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
-	demo.AgendaItem.Label = label
-	demo.TVW.EventID = tvwEventID
-	return demo, nil
+	billAgendaTarget.Committee.Acronym = committeeAcronym
+	billAgendaTarget.AgendaItem.CSIAgendaItemID = gotCSIAgendaItemID
+	billAgendaTarget.AgendaItem.CSIMeetingFamilyID = csiMeetingFamilyID
+	billAgendaTarget.AgendaItem.CSIAgendaItemFamilyID = csiAgendaItemFamilyID
+	billAgendaTarget.AgendaItem.Label = label
+	billAgendaTarget.TVW.EventID = tvwEventID
+	return billAgendaTarget, nil
 }

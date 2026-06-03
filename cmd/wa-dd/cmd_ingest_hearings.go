@@ -264,9 +264,9 @@ func ingestHearingSteps(
 	if err := withEventAdvisoryLock(ctx, deps.store, hearing.TVWEventID, func() error {
 		logf("==> ingest-tvw")
 		tvwPipeline := &jobs.Pipeline{
-			Store: deps.store,
-			TVW:   deps.tvwClient,
-			Demo:  &common.BillAgendaTarget{TVW: common.TVWRef{EventID: hearing.TVWEventID}},
+			Store:            deps.store,
+			TVW:              deps.tvwClient,
+			BillAgendaTarget: &common.BillAgendaTarget{TVW: common.TVWRef{EventID: hearing.TVWEventID}},
 		}
 		tvwIDs := jobs.NewIDs()
 		tvwIDs.HearingID = hearing.HearingID
@@ -308,7 +308,7 @@ func hearingItemPipeline(deps *buildDeps, item db.HearingAgendaItemRow) *jobs.Pi
 		Store: deps.store,
 		CSI:   deps.csiClient,
 		TVW:   deps.tvwClient,
-		Demo: &common.BillAgendaTarget{
+		BillAgendaTarget: &common.BillAgendaTarget{
 			Bill: common.BillKey{Biennium: item.Biennium, Prefix: item.BillPrefix, Number: item.BillNumber},
 			Committee: common.CommitteeRef{
 				Chamber: item.Chamber,
@@ -389,6 +389,3 @@ func withEventAdvisoryLock(ctx context.Context, store *db.Store, eventID string,
 	}()
 	return fn()
 }
-
-// runIngestContracts implements `wa-dd ingest-contracts`: pulls one DataWA
-// agency-contract fiscal-year dataset into the normalized datawa_contract table.

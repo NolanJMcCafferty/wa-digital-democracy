@@ -55,15 +55,15 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 
 	mockDeepgram := &mockDeepgramClient{
 		t:       t,
-		eventID: target.Demo.TVW.EventID,
+		eventID: target.BillAgendaTarget.TVW.EventID,
 		result: &diarization.Result{
 			Provider: "deepgram",
 			Model:    "mock-nova",
-			EventID:  target.Demo.TVW.EventID,
-			Raw:      []byte(fmt.Sprintf(`{"mock":"deepgram","event_id":%q}`, target.Demo.TVW.EventID)),
+			EventID:  target.BillAgendaTarget.TVW.EventID,
+			Raw:      []byte(fmt.Sprintf(`{"mock":"deepgram","event_id":%q}`, target.BillAgendaTarget.TVW.EventID)),
 			Segments: []diarization.Segment{
 				{StartMS: 0, EndMS: 1800, SpeakerCluster: "SPEAKER_00", Confidence: float64Ptr(0.96), Text: "The committee will come to order."},
-				{StartMS: 2000, EndMS: 6200, SpeakerCluster: "SPEAKER_01", Confidence: float64Ptr(0.94), Text: fmt.Sprintf("We will now consider %s. For the record, my name is Jane Doe with Civic Housing Alliance.", target.Demo.Bill.ID())},
+				{StartMS: 2000, EndMS: 6200, SpeakerCluster: "SPEAKER_01", Confidence: float64Ptr(0.94), Text: fmt.Sprintf("We will now consider %s. For the record, my name is Jane Doe with Civic Housing Alliance.", target.BillAgendaTarget.Bill.ID())},
 				{StartMS: 6400, EndMS: 9000, SpeakerCluster: "SPEAKER_00", Confidence: float64Ptr(0.91), Text: "Thank you for your testimony."},
 			},
 			Entities: []diarization.EntityMention{
@@ -87,20 +87,20 @@ func TestLiveIngestionPipelineSingleBillHearingAndDiarization(t *testing.T) {
 	}
 	hearing := db.DiscoveredHearingRow{
 		HearingID:       target.Hearing.HearingID,
-		TVWEventID:      target.Demo.TVW.EventID,
+		TVWEventID:      target.BillAgendaTarget.TVW.EventID,
 		AgendaItemCount: 1,
 	}
 	if err := ingestHearing(ctx, deps, hearing, mockDeepgram, "deepgram", "mock-nova", t.TempDir(), true, 1, make(chan struct{}, 1), func(string) {}); err != nil {
-		t.Fatalf("ingestHearing(%d / %s): %v", target.Hearing.HearingID, target.Demo.TVW.EventID, err)
+		t.Fatalf("ingestHearing(%d / %s): %v", target.Hearing.HearingID, target.BillAgendaTarget.TVW.EventID, err)
 	}
 	assertLiveBillIngested(t, ctx, store, target.Hearing.BillID)
 	assertLiveHearingIngested(t, ctx, store, target)
-	assertLiveDiarizationIngested(t, ctx, store, target.Demo.TVW.EventID)
+	assertLiveDiarizationIngested(t, ctx, store, target.BillAgendaTarget.TVW.EventID)
 }
 
 type liveIngestionTarget struct {
-	Demo    *common.BillAgendaTarget
-	Hearing db.HearingForDiscovery
+	BillAgendaTarget *common.BillAgendaTarget
+	Hearing          db.HearingForDiscovery
 }
 
 func findLiveIngestionTarget(
@@ -143,8 +143,8 @@ func tryLiveIngestionTarget(
 	bill common.BillKey,
 ) (liveIngestionTarget, bool, string) {
 	t.Helper()
-	metadataDemo := &common.BillAgendaTarget{Bill: bill}
-	metadataPipeline := &jobs.Pipeline{Store: store, LWS: lwsClient, Demo: metadataDemo}
+	metadataTarget := &common.BillAgendaTarget{Bill: bill}
+	metadataPipeline := &jobs.Pipeline{Store: store, LWS: lwsClient, BillAgendaTarget: metadataTarget}
 	if err := metadataPipeline.RunMetadataOnly(ctx, func(string) {}, jobs.NewIDs()); err != nil {
 		return liveIngestionTarget{}, false, err.Error()
 	}
@@ -179,7 +179,7 @@ func tryLiveIngestionTarget(
 		}
 		return liveIngestionTarget{
 			Hearing: h,
-			Demo: &common.BillAgendaTarget{
+			BillAgendaTarget: &common.BillAgendaTarget{
 				Bill: bill,
 				Committee: common.CommitteeRef{
 					Chamber: h.Chamber,
@@ -298,10 +298,10 @@ func assertLiveHearingIngested(t *testing.T, ctx context.Context, store *db.Stor
 SELECT a.id, COALESCE(h.tvw_event_id, ''), COALESCE(a.label, '')
   FROM hearing h
   JOIN agenda_item a ON a.hearing_id = h.id
- WHERE a.csi_agenda_item_id = $1`, target.Demo.AgendaItem.CSIAgendaItemID).Scan(&agendaItemID, &hearingEventID, &agendaLabel); err != nil {
+ WHERE a.csi_agenda_item_id = $1`, target.BillAgendaTarget.AgendaItem.CSIAgendaItemID).Scan(&agendaItemID, &hearingEventID, &agendaLabel); err != nil {
 		t.Fatalf("select hearing/agenda: %v", err)
 	}
-	if hearingEventID != target.Demo.TVW.EventID || agendaLabel == "" {
+	if hearingEventID != target.BillAgendaTarget.TVW.EventID || agendaLabel == "" {
 		t.Fatalf("hearing agenda mismatch: event=%q label=%q", hearingEventID, agendaLabel)
 	}
 
@@ -316,12 +316,12 @@ SELECT a.id, COALESCE(h.tvw_event_id, ''), COALESCE(a.label, '')
 		t.Fatalf("hearing ingest incomplete: testifiers=%d orgLinks=%d", testifierCount, orgLinkCount)
 	}
 
-	windows, err := store.ListAgendaItemWindowsByAgendaItem(ctx, target.Demo.AgendaItem.CSIAgendaItemID)
+	windows, err := store.ListAgendaItemWindowsByAgendaItem(ctx, target.BillAgendaTarget.AgendaItem.CSIAgendaItemID)
 	if err != nil {
 		t.Fatalf("ListAgendaItemWindowsByAgendaItem: %v", err)
 	}
 	if len(windows) == 0 {
-		t.Fatalf("no transcript windows for agenda item %s", target.Demo.AgendaItem.CSIAgendaItemID)
+		t.Fatalf("no transcript windows for agenda item %s", target.BillAgendaTarget.AgendaItem.CSIAgendaItemID)
 	}
 }
 
@@ -385,9 +385,9 @@ SELECT h.id, b.id, b.prefix, b.number,
 func cleanupLiveTargetRows(t *testing.T, store *db.Store, target liveIngestionTarget) {
 	t.Helper()
 	ctx := context.Background()
-	bill := target.Demo.Bill
-	agendaID := target.Demo.AgendaItem.CSIAgendaItemID
-	eventID := target.Demo.TVW.EventID
+	bill := target.BillAgendaTarget.Bill
+	agendaID := target.BillAgendaTarget.AgendaItem.CSIAgendaItemID
+	eventID := target.BillAgendaTarget.TVW.EventID
 	stmts := []struct {
 		sql  string
 		args []any

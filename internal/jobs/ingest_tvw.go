@@ -13,7 +13,7 @@ import (
 // archival and frontend deep-linking; transcript text and speaker
 // attribution come from the diarization pipeline, not from VTT.
 func (p *Pipeline) IngestTVW(ctx context.Context, ids *IDs) error {
-	eventID := p.Demo.TVW.EventID
+	eventID := p.BillAgendaTarget.TVW.EventID
 	ids.TVWEventID = eventID
 
 	// Discovery already resolved the TVW event ID. Fetch the authoritative
