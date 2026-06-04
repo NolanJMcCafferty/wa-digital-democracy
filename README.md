@@ -4,6 +4,10 @@ A source-linked public graph of Washington State legislative activity — bills,
 hearings, testimony, video, transcripts, reviewed speakers, organizations, and
 public-record context — modeled on CalMatters Digital Democracy.
 
+## Architecture
+
+![WA Digital Democracy system architecture](architecture.png)
+
 ## Stack
 
 Current stack:
