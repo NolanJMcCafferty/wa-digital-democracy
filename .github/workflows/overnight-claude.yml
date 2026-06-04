@@ -37,10 +37,26 @@ jobs:
             --json number,title,body \
             --jq 'sort_by(.number)')
 
+          # An issue is "already worked" if either:
+          #   (a) a remote branch claude/*-<num> exists, OR
+          #   (b) any open PR's body references "closes #<num>" / "fixes #<num>"
+          #       / "resolves #<num>" (case-insensitive).
+          existing_branches=$(git ls-remote --heads "https://github.com/${GH_REPO}.git" "claude/*" \
+            | awk '{print $2}' | sed 's#refs/heads/##')
+
+          # Collect issue numbers referenced as closing keywords by any open PR.
+          open_pr_bodies=$(gh pr list --state open --limit 100 --json body --jq '.[].body')
+          claimed_by_pr=$(echo "$open_pr_bodies" \
+            | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' \
+            | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+
           picked=""
           while read -r row; do
             num=$(jq -r '.number' <<<"$row")
-            if git ls-remote --exit-code --heads "https://github.com/${GH_REPO}.git" "claude/issue-${num}" >/dev/null 2>&1; then
+            if echo "$existing_branches" | grep -Eq "(^|/)claude/.*-${num}$"; then
+              continue
+            fi
+            if echo "$claimed_by_pr" | grep -qx "$num"; then
               continue
             fi
             picked="$row"
@@ -77,7 +93,7 @@ jobs:
           git config user.name  "claude-bot"
           git config user.email "claude-bot@users.noreply.github.com"
 
-      - name: Create working branch
+      - name: Create temporary working branch
         run: |
           git checkout -b "claude/issue-${{ needs.pick-issue.outputs.number }}"
 
@@ -130,11 +146,64 @@ jobs:
               db/fixtures and the e2e specs in apps/web — read those before
               changing schema, seed data, or API contracts.
 
-            Step 4 — If blocked.
+            Step 4 — Write PR metadata.
+              Create a directory `.claude-meta/` at the repo root with three files:
+
+              `.claude-meta/branch` — a single line, the branch name to use.
+                Format: `claude/<kebab-case-summary>-${{ needs.pick-issue.outputs.number }}`
+                Example: `claude/add-dry-run-flag-to-ingest-hearings-87`
+                Constraints: lowercase, ASCII letters/digits/hyphens only, max 60 chars,
+                must end with `-${{ needs.pick-issue.outputs.number }}`.
+
+              `.claude-meta/pr-title` — a single line, the PR title.
+                Format: `<imperative summary> (#${{ needs.pick-issue.outputs.number }})`
+                Example: `Add --dry-run flag to ingest_hearings (#87)`
+                Constraints: no `claude:` prefix, no trailing period, ≤ 72 chars.
+
+              `.claude-meta/pr-body.md` — markdown PR description, exactly this format:
+
+              ```
+              ## Summary
+              <2-4 sentences describing what this PR changes and why, in plain language.>
+
+              Closes #${{ needs.pick-issue.outputs.number }}
+
+              ## Acceptance criteria
+              - [x] <criterion 1 from the issue, verbatim or paraphrased>
+              - [x] <criterion 2>
+              - [x] <...>
+              (One checked box per criterion you extracted in Step 1. If a criterion
+              is intentionally out of scope, list it unchecked with a one-line reason.)
+
+              ## Changes
+              - <bullet per meaningful change, grouped by area: backend / web / db / docs / tests>
+              - <reference key files with `path/to/file.go:LINE` when useful>
+
+              ## Testing
+              - <command you ran> — <result>
+              - <command> — <result>
+              (Include every check from Step 3 you actually ran. Mark CI-only checks as
+              "deferred to CI" with a note.)
+
+              ## Risk & rollout
+              - <data migration, breaking change, feature-flag, or "low risk: isolated change">
+              - <anything a reviewer should pay extra attention to>
+
+              ## Notes for reviewer
+              - <decisions you made where the issue was silent>
+              - <follow-ups you intentionally left out of scope>
+              - <"None" if nothing to flag>
+
+              ---
+              🤖 Generated autonomously by overnight-claude. Review carefully before merging.
+              ```
+
+            Step 5 — If blocked.
               - If the issue is genuinely ambiguous and you cannot make a
                 confident decision, STOP. Leave the working tree clean and write
                 BLOCKED.md at the repo root explaining what's ambiguous and what
-                input you need. Do NOT half-implement.
+                input you need. Do NOT half-implement. Do NOT create
+                `.claude-meta/` if you're blocked.
 
             Do not commit. The workflow will commit and push after you finish.
 
@@ -154,24 +223,52 @@ jobs:
             exit 0
           fi
 
-          if [ -z "$(git status --porcelain)" ]; then
+          if [ -z "$(git status --porcelain)" ] && [ ! -d .claude-meta ]; then
             gh issue comment "$ISSUE" --body "Overnight Claude run ${{ github.run_id }} produced no changes."
             echo "status=empty" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          # Read PR metadata, with safe fallbacks if Claude skipped any file.
+          DEFAULT_BRANCH="claude/issue-${ISSUE}"
+          DEFAULT_TITLE="claude: ${{ needs.pick-issue.outputs.title }} (#${ISSUE})"
+          DEFAULT_BODY=$'## Summary\nAutonomous overnight run for issue #'"$ISSUE"$'.\n\nCloses #'"$ISSUE"
+
+          BRANCH=$(head -n1 .claude-meta/branch 2>/dev/null | tr -d '[:space:]' || true)
+          TITLE=$(head -n1 .claude-meta/pr-title 2>/dev/null || true)
+          if [ -f .claude-meta/pr-body.md ]; then
+            BODY=$(cat .claude-meta/pr-body.md)
+          else
+            BODY=""
+          fi
+
+          # Validate branch: must match claude/<slug>-<issue>; else fall back.
+          if ! [[ "$BRANCH" =~ ^claude/[a-z0-9-]+-${ISSUE}$ ]] || [ ${#BRANCH} -gt 60 ]; then
+            echo "Invalid or missing branch name '$BRANCH'; using default."
+            BRANCH="$DEFAULT_BRANCH"
+          fi
+          if [ -z "$TITLE" ]; then TITLE="$DEFAULT_TITLE"; fi
+          if [ -z "$BODY" ];  then BODY="$DEFAULT_BODY";  fi
+
+          # Remove the metadata directory from the diff before committing.
+          rm -rf .claude-meta
+
+          # Rename the temporary branch to the descriptive one.
+          if [ "$BRANCH" != "claude/issue-${ISSUE}" ]; then
+            git branch -m "$BRANCH"
+          fi
+
           git add -A
-          git commit -m "claude: work on issue #${ISSUE}"
-          git push -u origin "claude/issue-${ISSUE}"
+          git commit -m "$TITLE"
+          git push -u origin "$BRANCH"
 
           gh pr create \
             --draft \
-            --title "claude: ${{ needs.pick-issue.outputs.title }} (#${ISSUE})" \
-            --body  "Autonomous overnight run for #${ISSUE}. Review carefully before merging.
+            --title "$TITLE" \
+            --body  "$BODY" \
+            --head  "$BRANCH"
 
-          Closes #${ISSUE}" \
-            --head "claude/issue-${ISSUE}"
-
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "status=pr-opened" >> "$GITHUB_OUTPUT"
 
       - name: CI fix-loop
@@ -180,9 +277,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ISSUE: ${{ needs.pick-issue.outputs.number }}
+          BRANCH: ${{ steps.finish.outputs.branch }}
         run: |
           set -euo pipefail
-          BRANCH="claude/issue-${ISSUE}"
           MAX_ATTEMPTS=3
 
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
