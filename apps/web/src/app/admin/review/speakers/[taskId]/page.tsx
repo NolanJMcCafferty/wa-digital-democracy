@@ -1,12 +1,41 @@
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { decideSpeakerReviewTask, loadSpeakerReviewTask, type SpeakerReviewSegment } from "@/lib/api";
+import { tvwDeepLink } from "@/lib/format";
 
 function fmtMS(ms: number): string {
   const total = Math.floor(ms / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function SegmentVideoLink({
+  endMS,
+  startMS,
+  tvwEventID,
+}: {
+  endMS: number;
+  startMS: number;
+  tvwEventID: string;
+}) {
+  const timestamp = `${fmtMS(startMS)}–${fmtMS(endMS)}`;
+  if (!tvwEventID) {
+    return <span>{timestamp}</span>;
+  }
+  return (
+    <a
+      href={tvwDeepLink(tvwEventID, startMS)}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-2 rounded bg-stone-100 px-2 py-0.5 font-mono tabular-nums text-stone-800 underline decoration-stone-400 underline-offset-2 hover:bg-stone-200 hover:text-stone-950"
+    >
+      <span>{timestamp}</span>
+      <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-stone-600">
+        TVW video
+      </span>
+    </a>
+  );
 }
 
 async function decide(formData: FormData) {
@@ -40,7 +69,14 @@ export default async function SpeakerReviewDetail({ params }: { params: Promise<
 
       <section className="rounded-lg border border-stone-300 bg-white p-5">
         <h2 className="text-lg font-semibold text-stone-900">Primary evidence</h2>
-        <p className="mt-2 text-sm text-stone-500">{fmtMS(task.EvidenceStartMS)}–{fmtMS(task.EvidenceEndMS)} · confidence {(task.CandidateConfidence * 100).toFixed(0)}%</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-stone-500">
+          <SegmentVideoLink
+            endMS={task.EvidenceEndMS}
+            startMS={task.EvidenceStartMS}
+            tvwEventID={task.TVWEventID}
+          />
+          <span>confidence {(task.CandidateConfidence * 100).toFixed(0)}%</span>
+        </div>
         <blockquote className="mt-3 border-l-4 border-stone-300 pl-4 text-stone-800">{task.EvidenceText}</blockquote>
       </section>
 
@@ -49,7 +85,13 @@ export default async function SpeakerReviewDetail({ params }: { params: Promise<
         <div className="mt-3 space-y-3">
           {(task.SampleSegments ?? []).map((s: SpeakerReviewSegment, i: number) => (
             <div key={`${s.StartMS}-${i}`} className="rounded border border-stone-200 p-3">
-              <div className="text-xs font-medium text-stone-500">{fmtMS(s.StartMS)}–{fmtMS(s.EndMS)}</div>
+              <div className="text-xs font-medium text-stone-500">
+                <SegmentVideoLink
+                  endMS={s.EndMS}
+                  startMS={s.StartMS}
+                  tvwEventID={task.TVWEventID}
+                />
+              </div>
               <p className="mt-1 text-sm text-stone-800">{s.Text}</p>
             </div>
           ))}

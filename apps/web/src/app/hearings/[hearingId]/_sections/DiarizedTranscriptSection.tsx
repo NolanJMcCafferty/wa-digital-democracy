@@ -71,6 +71,16 @@ export function DiarizedTranscriptSection({
                       reviewed
                     </span>
                   ) : null}
+                  {s.cluster_id ? (
+                    <a
+                      href={`/admin/review/speakers/clusters/${s.cluster_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto rounded bg-stone-100 px-2 py-0.5 text-[10px] uppercase tracking-wider text-stone-700 ring-1 ring-stone-200 hover:bg-stone-200"
+                    >
+                      Review
+                    </a>
+                  ) : null}
                 </div>
                 <p className="text-stone-800 leading-relaxed">{s.text}</p>
               </li>

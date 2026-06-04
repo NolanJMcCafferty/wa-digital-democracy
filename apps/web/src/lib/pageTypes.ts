@@ -79,6 +79,7 @@ export type TranscriptSegment = {
   start_ms: number;
   end_ms: number;
   text: string;
+  cluster_id?: number;
   cluster_label?: string;
   speaker_label?: string;
   speaker_kind?: string;

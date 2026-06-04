@@ -213,6 +213,7 @@ type DiarizedHearingSegment struct {
 	StartMS      int
 	EndMS        int
 	Text         string
+	ClusterID    int64
 	ClusterLabel string
 	SpeakerLabel string
 	SpeakerKind  string
@@ -222,7 +223,7 @@ type DiarizedHearingSegment struct {
 
 func (s *Store) ListDiarizedSegmentsByTVWEvent(ctx context.Context, tvwEventID string) ([]DiarizedHearingSegment, error) {
 	const q = `
-SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label,
+SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), COALESCE(d.speaker_cluster_id, 0), d.cluster_label,
        COALESCE(sa.speaker_label, ''), COALESCE(sa.speaker_kind::text, ''),
        COALESCE(sa.review_status::text, ''), (sa.id IS NOT NULL) AS reviewed
   FROM diarized_speech_segment d
@@ -247,7 +248,7 @@ SELECT d.start_ms, d.end_ms, COALESCE(d.text,''), d.cluster_label,
 	out := []DiarizedHearingSegment{}
 	for rows.Next() {
 		var seg DiarizedHearingSegment
-		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &seg.ClusterLabel,
+		if err := rows.Scan(&seg.StartMS, &seg.EndMS, &seg.Text, &seg.ClusterID, &seg.ClusterLabel,
 			&seg.SpeakerLabel, &seg.SpeakerKind, &seg.ReviewStatus, &seg.Reviewed); err != nil {
 			return nil, fmt.Errorf("scan diarized segment: %w", err)
 		}

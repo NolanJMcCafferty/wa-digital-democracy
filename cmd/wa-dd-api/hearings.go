@@ -55,6 +55,7 @@ type diarizedSegmentResponse struct {
 	StartMS      int    `json:"start_ms"`
 	EndMS        int    `json:"end_ms"`
 	Text         string `json:"text"`
+	ClusterID    int64  `json:"cluster_id,omitempty"`
 	ClusterLabel string `json:"cluster_label,omitempty"`
 	SpeakerLabel string `json:"speaker_label,omitempty"`
 	SpeakerKind  string `json:"speaker_kind,omitempty"`
@@ -201,7 +202,8 @@ func getHearingHandler(store *db.Store) http.HandlerFunc {
 				out := make([]diarizedSegmentResponse, 0, len(segs))
 				for _, s := range segs {
 					out = append(out, diarizedSegmentResponse{
-						StartMS: s.StartMS, EndMS: s.EndMS, Text: s.Text, ClusterLabel: s.ClusterLabel,
+						StartMS: s.StartMS, EndMS: s.EndMS, Text: s.Text,
+						ClusterID: s.ClusterID, ClusterLabel: s.ClusterLabel,
 						SpeakerLabel: s.SpeakerLabel, SpeakerKind: s.SpeakerKind,
 						ReviewStatus: s.ReviewStatus, Reviewed: s.Reviewed,
 					})

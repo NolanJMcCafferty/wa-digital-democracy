@@ -8,12 +8,41 @@ import {
   type SpeakerReviewSegment,
   type SpeakerReviewTask,
 } from "@/lib/api";
+import { tvwDeepLink } from "@/lib/format";
 
 function fmtMS(ms: number): string {
   const total = Math.floor(ms / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function SegmentVideoLink({
+  endMS,
+  startMS,
+  tvwEventID,
+}: {
+  endMS: number;
+  startMS: number;
+  tvwEventID: string;
+}) {
+  const timestamp = `${fmtMS(startMS)}–${fmtMS(endMS)}`;
+  if (!tvwEventID) {
+    return <span>{timestamp}</span>;
+  }
+  return (
+    <a
+      href={tvwDeepLink(tvwEventID, startMS)}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-2 rounded bg-stone-100 px-2 py-0.5 font-mono tabular-nums text-stone-800 underline decoration-stone-400 underline-offset-2 hover:bg-stone-200 hover:text-stone-950"
+    >
+      <span>{timestamp}</span>
+      <span className="font-sans text-[10px] font-semibold uppercase tracking-wider text-stone-600">
+        TVW video
+      </span>
+    </a>
+  );
 }
 
 async function decide(formData: FormData) {
@@ -121,7 +150,13 @@ export default async function SpeakerClusterReviewPage({ params }: { params: Pro
             <div key={e.ID} className="rounded border border-stone-200 p-3">
               <div className="text-xs font-medium text-stone-500">{e.EvidenceType} · {e.CandidateLabel} · {(e.Confidence * 100).toFixed(0)}%</div>
               <p className="mt-1 text-sm text-stone-800">{e.EvidenceText}</p>
-              <div className="mt-1 text-xs text-stone-500">{fmtMS(e.StartMS)}–{fmtMS(e.EndMS)}</div>
+              <div className="mt-1 text-xs font-medium text-stone-500">
+                <SegmentVideoLink
+                  endMS={e.EndMS}
+                  startMS={e.StartMS}
+                  tvwEventID={cluster.TVWEventID}
+                />
+              </div>
             </div>
           ))}
           {cluster.Evidence?.length === 0 ? <p className="text-sm text-stone-600">No evidence rows for this cluster.</p> : null}
@@ -133,7 +168,13 @@ export default async function SpeakerClusterReviewPage({ params }: { params: Pro
         <div className="mt-3 space-y-3">
           {(cluster.SampleSegments ?? []).map((s: SpeakerReviewSegment, i: number) => (
             <div key={`${s.StartMS}-${i}`} className="rounded border border-stone-200 p-3">
-              <div className="text-xs font-medium text-stone-500">{fmtMS(s.StartMS)}–{fmtMS(s.EndMS)}</div>
+              <div className="text-xs font-medium text-stone-500">
+                <SegmentVideoLink
+                  endMS={s.EndMS}
+                  startMS={s.StartMS}
+                  tvwEventID={cluster.TVWEventID}
+                />
+              </div>
               <p className="mt-1 text-sm text-stone-800">{s.Text}</p>
             </div>
           ))}
