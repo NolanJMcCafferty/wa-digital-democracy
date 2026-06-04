@@ -24,7 +24,7 @@ export default async function HearingsPage({
         <p className="text-stone-600">
           Search the {result.total.toLocaleString()} committee hearings
           currently tracked. Each row links to a detail page with
-          testimony, transcript excerpts, video, and source records.
+          testimony, transcript excerpts, and video links.
         </p>
       </div>
 

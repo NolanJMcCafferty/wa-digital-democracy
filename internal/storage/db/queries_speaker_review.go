@@ -222,6 +222,7 @@ SELECT start_ms, end_ms, COALESCE(text,'')
 }
 
 type SpeakerReviewEvent struct {
+	HearingID              int64
 	TVWEventID             string
 	ClusterCount           int
 	AssignedCount          int
@@ -256,7 +257,7 @@ SELECT COUNT(*)
 		return nil, 0, fmt.Errorf("count speaker review events: %w", err)
 	}
 	const q = `
-SELECT sc.tvw_event_id,
+SELECT COALESCE(h.id, 0) AS hearing_id, sc.tvw_event_id,
        COUNT(DISTINCT sc.id) AS cluster_count,
        COUNT(DISTINCT sa.speaker_cluster_id) FILTER (WHERE sa.review_status = 'accepted') AS assigned_count,
        COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'pending') AS pending_task_count,
@@ -264,6 +265,7 @@ SELECT sc.tvw_event_id,
        COALESCE(SUM(sc.total_speech_ms), 0) AS total_speech_ms
   FROM speaker_cluster sc
   JOIN diarization_job j ON j.id = sc.diarization_job_id
+  LEFT JOIN hearing h ON h.tvw_event_id = sc.tvw_event_id
   LEFT JOIN speaker_assignment sa ON sa.diarization_job_id = sc.diarization_job_id
                                   AND sa.speaker_cluster_id = sc.id
                                   AND sa.review_status = 'accepted'
@@ -275,7 +277,7 @@ SELECT sc.tvw_event_id,
       WHERE tvw_event_id = sc.tvw_event_id AND status = 'succeeded'
       ORDER BY finished_at DESC NULLS LAST, id DESC LIMIT 1
    )
- GROUP BY sc.tvw_event_id
+ GROUP BY h.id, sc.tvw_event_id
  ORDER BY pending_task_count DESC, unresolved_cluster_count DESC, total_speech_ms DESC
  LIMIT $1 OFFSET $2;`
 	rows, err := s.Pool.Query(ctx, q, limit, offset)
@@ -286,7 +288,7 @@ SELECT sc.tvw_event_id,
 	out := []SpeakerReviewEvent{}
 	for rows.Next() {
 		var ev SpeakerReviewEvent
-		if err := rows.Scan(&ev.TVWEventID, &ev.ClusterCount, &ev.AssignedCount, &ev.PendingTaskCount, &ev.UnresolvedClusterCount, &ev.TotalSpeechMS); err != nil {
+		if err := rows.Scan(&ev.HearingID, &ev.TVWEventID, &ev.ClusterCount, &ev.AssignedCount, &ev.PendingTaskCount, &ev.UnresolvedClusterCount, &ev.TotalSpeechMS); err != nil {
 			return nil, 0, fmt.Errorf("scan speaker review event: %w", err)
 		}
 		out = append(out, ev)
@@ -297,6 +299,7 @@ SELECT sc.tvw_event_id,
 type SpeakerClusterReview struct {
 	ClusterID           int64
 	DiarizationJobID    int64
+	HearingID           int64
 	TVWEventID          string
 	ClusterLabel        string
 	TotalSpeechMS       int
@@ -321,13 +324,28 @@ type SpeakerIdentityEvidence struct {
 	EndMS          int
 }
 
+func (s *Store) GetHearingTVWEventID(ctx context.Context, hearingID int64) (string, error) {
+	var tvwEventID string
+	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(tvw_event_id, '') FROM hearing WHERE id = $1`, hearingID).Scan(&tvwEventID); err != nil {
+		return "", fmt.Errorf("get hearing tvw_event_id: %w", err)
+	}
+	return tvwEventID, nil
+}
+
 func (s *Store) ListSpeakerClustersForEvent(ctx context.Context, tvwEventID string) ([]SpeakerClusterReview, error) {
 	const q = `
-SELECT sc.id, sc.diarization_job_id, sc.tvw_event_id, sc.cluster_label,
+SELECT sc.id, sc.diarization_job_id, COALESCE(h.id, 0) AS hearing_id, sc.tvw_event_id, sc.cluster_label,
        COALESCE(sc.total_speech_ms,0), COALESCE(sc.turn_count,0),
        COALESCE(sa.speaker_label,''), COALESCE(sa.speaker_kind::text,''), COALESCE(sa.review_status::text,'')
   FROM speaker_cluster sc
   JOIN diarization_job j ON j.id = sc.diarization_job_id
+  LEFT JOIN LATERAL (
+    SELECT id
+      FROM hearing
+     WHERE tvw_event_id = sc.tvw_event_id
+     ORDER BY id
+     LIMIT 1
+  ) h ON true
   LEFT JOIN speaker_assignment sa ON sa.diarization_job_id = sc.diarization_job_id
                                   AND sa.speaker_cluster_id = sc.id
                                   AND sa.review_status = 'accepted'
@@ -348,7 +366,7 @@ SELECT sc.id, sc.diarization_job_id, sc.tvw_event_id, sc.cluster_label,
 	idx := map[int64]int{}
 	for rows.Next() {
 		var c SpeakerClusterReview
-		if err := rows.Scan(&c.ClusterID, &c.DiarizationJobID, &c.TVWEventID, &c.ClusterLabel,
+		if err := rows.Scan(&c.ClusterID, &c.DiarizationJobID, &c.HearingID, &c.TVWEventID, &c.ClusterLabel,
 			&c.TotalSpeechMS, &c.TurnCount, &c.CurrentSpeakerLabel, &c.CurrentSpeakerKind, &c.CurrentReviewStatus); err != nil {
 			return nil, fmt.Errorf("scan speaker cluster review: %w", err)
 		}
@@ -426,17 +444,24 @@ SELECT t.id, t.diarization_job_id, sc.tvw_event_id, sc.id, sc.cluster_label,
 
 func (s *Store) GetSpeakerClusterReview(ctx context.Context, clusterID int64) (SpeakerClusterReview, error) {
 	const q = `
-SELECT sc.id, sc.diarization_job_id, sc.tvw_event_id, sc.cluster_label,
+SELECT sc.id, sc.diarization_job_id, COALESCE(h.id, 0) AS hearing_id, sc.tvw_event_id, sc.cluster_label,
        COALESCE(sc.total_speech_ms,0), COALESCE(sc.turn_count,0),
        COALESCE(sa.speaker_label,''), COALESCE(sa.speaker_kind::text,''), COALESCE(sa.review_status::text,'')
   FROM speaker_cluster sc
   JOIN diarization_job j ON j.id = sc.diarization_job_id
+  LEFT JOIN LATERAL (
+    SELECT id
+      FROM hearing
+     WHERE tvw_event_id = sc.tvw_event_id
+     ORDER BY id
+     LIMIT 1
+  ) h ON true
   LEFT JOIN speaker_assignment sa ON sa.diarization_job_id = sc.diarization_job_id
                                   AND sa.speaker_cluster_id = sc.id
                                   AND sa.review_status = 'accepted'
  WHERE sc.id = $1;`
 	var c SpeakerClusterReview
-	if err := s.Pool.QueryRow(ctx, q, clusterID).Scan(&c.ClusterID, &c.DiarizationJobID, &c.TVWEventID, &c.ClusterLabel,
+	if err := s.Pool.QueryRow(ctx, q, clusterID).Scan(&c.ClusterID, &c.DiarizationJobID, &c.HearingID, &c.TVWEventID, &c.ClusterLabel,
 		&c.TotalSpeechMS, &c.TurnCount, &c.CurrentSpeakerLabel, &c.CurrentSpeakerKind, &c.CurrentReviewStatus); err != nil {
 		return SpeakerClusterReview{}, fmt.Errorf("get speaker cluster review: %w", err)
 	}

@@ -41,11 +41,14 @@ export default async function SpeakerClusterReviewPage({ params }: { params: Pro
   const cluster = await loadSpeakerClusterReview(clusterId);
   if (!cluster) notFound();
   const pending = (cluster.Tasks ?? []).filter((t) => t.Status === "pending");
+  const backHref = cluster.HearingID > 0
+    ? `/admin/review/speakers/events/${cluster.HearingID}`
+    : "/admin/review/speakers";
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Link href={`/admin/review/speakers/events/${cluster.TVWEventID}`} className="text-sm text-stone-500 underline">← Back to event</Link>
+          <Link href={backHref} className="text-sm text-stone-500 underline">← Back to event</Link>
           <p className="mt-4 text-sm uppercase tracking-wider text-stone-500">Speaker cluster</p>
           <h1 className="text-3xl font-bold text-stone-900">{cluster.ClusterLabel}</h1>
           <p className="text-stone-600">Event {cluster.TVWEventID} · job {cluster.DiarizationJobID} · {(cluster.TotalSpeechMS / 60000).toFixed(1)} spoken minutes</p>

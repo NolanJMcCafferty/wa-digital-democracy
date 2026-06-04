@@ -1020,6 +1020,7 @@ export async function decideSpeakerReviewTask(taskId: string, action: "accept" |
 }
 
 export type SpeakerReviewEvent = {
+  HearingID: number;
   TVWEventID: string;
   ClusterCount: number;
   AssignedCount: number;
@@ -1050,6 +1051,7 @@ export type SpeakerIdentityEvidence = {
 export type SpeakerClusterReview = {
   ClusterID: number;
   DiarizationJobID: number;
+  HearingID: number;
   TVWEventID: string;
   ClusterLabel: string;
   TotalSpeechMS: number;
@@ -1083,13 +1085,13 @@ export async function listSpeakerReviewEvents(opts: { page?: number; limit?: num
   };
 }
 
-export async function loadSpeakerReviewEvent(tvwEventId: string): Promise<SpeakerClusterReview[]> {
-  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(tvwEventId)}`, { cache: "no-store" });
+export async function loadSpeakerReviewEvent(hearingId: string | number): Promise<{ clusters: SpeakerClusterReview[]; tvwEventId?: string }> {
+  const res = await adminApiFetch(`${API_BASE}/api/v1/admin/review/speakers/events/${encodeURIComponent(String(hearingId))}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`loadSpeakerReviewEvent returned ${res.status}`);
   }
-  const body = (await res.json()) as { clusters: SpeakerClusterReview[] };
-  return body.clusters ?? [];
+  const body = (await res.json()) as { clusters?: SpeakerClusterReview[]; tvw_event_id?: string };
+  return { clusters: body.clusters ?? [], tvwEventId: body.tvw_event_id };
 }
 
 export async function loadSpeakerClusterReview(clusterId: string): Promise<SpeakerClusterReview | null> {

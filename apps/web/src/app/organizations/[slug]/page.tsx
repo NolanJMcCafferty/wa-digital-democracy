@@ -11,18 +11,8 @@ import {
   type RawHearingSearchParams,
 } from "@/app/hearings/HearingSearchResults";
 import { filterHearings } from "@/app/hearings/filterHearings";
-import type { Position } from "@/lib/pageTypes";
 
 export const dynamic = "force-dynamic";
-
-const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
-
-const POSITION_STYLE: Record<Position, string> = {
-  Pro: "border-emerald-400 bg-emerald-50 text-emerald-950",
-  Con: "border-rose-400 bg-rose-50 text-rose-950",
-  Other: "border-stone-300 bg-stone-50 text-stone-900",
-  Unknown: "border-stone-300 bg-stone-50 text-stone-600",
-};
 
 export async function generateStaticParams() {
   if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
@@ -67,25 +57,6 @@ export default async function OrganizationPage({
         <Metric label="Hearing appearances" value={org.appearances.length.toLocaleString()} />
         <Metric label="Linked testifiers" value={org.testifierCount.toLocaleString()} />
       </section>
-
-      {positionEntries(org.positions).length > 0 ? (
-        <section aria-labelledby="positions-heading" className="space-y-4">
-          <h2 id="positions-heading" className="text-xl font-semibold text-stone-900">
-            Positions in testimony sign-ins
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {positionEntries(org.positions).map(([position, count]) => (
-              <div
-                key={position}
-                className={`rounded border p-3 ${POSITION_STYLE[position]}`}
-              >
-                <div className="text-xs uppercase tracking-wider">{position}</div>
-                <div className="mt-1 text-2xl font-semibold">{count.toLocaleString()}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       {org.personAffiliations.length > 0 ? (
         <section aria-labelledby="people-heading" className="space-y-4">
@@ -187,33 +158,54 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
           </tr>
         </thead>
         <tbody className="divide-y divide-stone-200">
-          {people.map((person, idx) => (
-            <tr key={`${person.personId ?? "raw"}-${person.relationshipType}-${person.sourceKind}-${idx}`}>
-              <td className="px-4 py-3 align-top">
-                <div className="font-medium text-stone-900">
-                  {person.pdcLobbyistId ? (
-                    <a
-                      href={`https://www.pdc.wa.gov/political-disclosure-reporting-data/browse-search-data/lobbyists/${person.pdcLobbyistId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-700 underline hover:text-blue-900"
-                    >
-                      {person.personName}
-                    </a>
-                  ) : (
-                    person.personName
-                  )}
-                </div>
-              </td>
-              <td className="px-4 py-3 align-top">
-                <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
-              </td>
-            </tr>
-          ))}
+          {people.map((person, idx) => {
+            const pdcLobbyistUrl = buildPDCLobbyistUrl(person);
+            return (
+              <tr key={`${person.personId ?? "raw"}-${person.relationshipType}-${person.sourceKind}-${idx}`}>
+                <td className="px-4 py-3 align-top">
+                  <div className="font-medium text-stone-900">
+                    {pdcLobbyistUrl ? (
+                      <a
+                        href={pdcLobbyistUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-700 underline hover:text-blue-900"
+                      >
+                        {person.personName}
+                      </a>
+                    ) : (
+                      person.personName
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-3 align-top">
+                  <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
+}
+
+function buildPDCLobbyistUrl(person: OrganizationPersonAffiliation): string | undefined {
+  if (!person.pdcLobbyistId) return undefined;
+  const latestYear = latestRecordYear(person.recordYears);
+  if (!latestYear) return undefined;
+
+  const pathID = encodeURIComponent(`${person.pdcLobbyistId}-${latestYear}`);
+  return `https://www.pdc.wa.gov/political-disclosure-reporting-data/browse-search-data/lobbyists/${pathID}`;
+}
+
+function latestRecordYear(recordYears?: string): string | undefined {
+  const years = recordYears
+    ?.match(/\b(?:19|20)\d{2}\b/g)
+    ?.map(Number)
+    .filter((year) => Number.isInteger(year));
+  if (!years || years.length === 0) return undefined;
+  return String(Math.max(...years));
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -250,12 +242,6 @@ function relationshipLabel(value: string): string {
     default:
       return value.replaceAll("_", " ");
   }
-}
-
-function positionEntries(positions: Record<Position, number>): Array<[Position, number]> {
-  return POSITION_ORDER
-    .map((position) => [position, positions[position] ?? 0] as [Position, number])
-    .filter(([, count]) => count > 0);
 }
 
 function contextLabel(contextType: string): string {

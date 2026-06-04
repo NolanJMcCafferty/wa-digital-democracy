@@ -140,6 +140,8 @@ func str(r Row, k string) string {
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	case bool:
 		return strconv.FormatBool(x)
+	case map[string]any:
+		return str(x, "url")
 	default:
 		return ""
 	}

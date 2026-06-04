@@ -20,7 +20,7 @@ const (
 func init() {
 	registerRoute(route{Method: "GET", Path: "/review/speakers", Scope: scopeAdminViewer, Store: adminListSpeakerReviewTasksHandler})
 	registerRoute(route{Method: "GET", Path: "/review/speakers/events", Scope: scopeAdminViewer, Store: adminListSpeakerReviewEventsHandler})
-	registerRoute(route{Method: "GET", Path: "/review/speakers/events/{tvwEventId}", Scope: scopeAdminViewer, Store: adminGetSpeakerReviewEventHandler})
+	registerRoute(route{Method: "GET", Path: "/review/speakers/events/{hearingId}", Scope: scopeAdminViewer, Store: adminGetSpeakerReviewEventHandler})
 	registerRoute(route{Method: "GET", Path: "/review/speakers/clusters/{clusterId}", Scope: scopeAdminViewer, Store: adminGetSpeakerClusterReviewHandler})
 	registerRoute(route{Method: "GET", Path: "/review/speakers/{taskId}", Scope: scopeAdminViewer, Store: adminGetSpeakerReviewTaskHandler})
 
@@ -88,9 +88,18 @@ func adminListSpeakerReviewEventsHandler(store *db.Store) http.HandlerFunc {
 
 func adminGetSpeakerReviewEventHandler(store *db.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		tvwEventID := strings.TrimSpace(chi.URLParam(req, "tvwEventId"))
+		hearingID, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(req, "hearingId")), 10, 64)
+		if err != nil || hearingID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad hearing id"})
+			return
+		}
+		tvwEventID, err := store.GetHearingTVWEventID(req.Context(), hearingID)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
 		if tvwEventID == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing event id"})
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "hearing has no tvw event"})
 			return
 		}
 		clusters, err := store.ListSpeakerClustersForEvent(req.Context(), tvwEventID)
@@ -98,7 +107,7 @@ func adminGetSpeakerReviewEventHandler(store *db.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"tvw_event_id": tvwEventID, "clusters": clusters})
+		writeJSON(w, http.StatusOK, map[string]any{"hearing_id": hearingID, "tvw_event_id": tvwEventID, "clusters": clusters})
 	}
 }
 

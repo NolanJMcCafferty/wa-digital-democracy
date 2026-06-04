@@ -21,9 +21,10 @@ export default async function OrganizationsPage({
     <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight text-stone-900">Organizations</h1>
-        <p className="max-w-3xl text-stone-600">
-          Verified organization/entity matches from public testimony sign-ins,
-          connected to authoritative source records where available.
+        <p className="text-stone-600">
+          Search the {organizations.length.toLocaleString()} organizations
+          currently tracked. Each row links to a detail page with hearing
+          appearances, affiliated people, and public-record context.
         </p>
       </div>
 

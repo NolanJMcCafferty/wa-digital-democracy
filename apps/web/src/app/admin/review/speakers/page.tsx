@@ -61,6 +61,7 @@ export default async function SpeakerReviewIndex({
         <table className="w-full text-left text-sm">
           <thead className="bg-stone-100 text-xs uppercase tracking-wider text-stone-600">
             <tr>
+              <th className="px-4 py-3">Hearing ID</th>
               <th className="px-4 py-3">TVW event</th>
               <th className="px-4 py-3 text-right">Clusters</th>
               <th className="px-4 py-3 text-right">Assigned</th>
@@ -73,9 +74,22 @@ export default async function SpeakerReviewIndex({
             {events.map((e) => (
               <tr key={e.TVWEventID} className="hover:bg-stone-50">
                 <td className="px-4 py-3">
-                  <Link className="font-mono font-medium underline" href={`/admin/review/speakers/events/${e.TVWEventID}`}>
-                    {e.TVWEventID}
-                  </Link>
+                  {e.HearingID > 0 ? (
+                    <Link className="font-mono font-medium underline" href={`/admin/review/speakers/events/${e.HearingID}`}>
+                      {e.HearingID}
+                    </Link>
+                  ) : (
+                    <span className="text-stone-400">-</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {e.HearingID > 0 ? (
+                    <Link className="font-mono font-medium underline" href={`/admin/review/speakers/events/${e.HearingID}`}>
+                      {e.TVWEventID}
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-stone-400">{e.TVWEventID}</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{e.ClusterCount.toLocaleString()}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{e.AssignedCount.toLocaleString()}</td>

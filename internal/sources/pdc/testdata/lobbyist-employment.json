@@ -8,7 +8,9 @@
     "employer_name": "Washington Roundtable",
     "employment_year": "2026",
     "employment_period": "2026-01-01 to 2026-12-31",
-    "employment_url": "https://web.pdc.wa.gov/example/1"
+    "employment_url": {
+      "url": "https://web.pdc.wa.gov/example/1"
+    }
   },
   {
     "id": "2",

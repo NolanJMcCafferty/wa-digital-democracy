@@ -11,15 +11,16 @@ function status(c: SpeakerClusterReview): string {
   return "unresolved";
 }
 
-export default async function SpeakerReviewEventPage({ params }: { params: Promise<{ tvwEventId: string }> }) {
-  const { tvwEventId } = await params;
-  const clusters = await loadSpeakerReviewEvent(tvwEventId);
+export default async function SpeakerReviewEventPage({ params }: { params: Promise<{ hearingId: string }> }) {
+  const { hearingId } = await params;
+  const { clusters, tvwEventId } = await loadSpeakerReviewEvent(hearingId);
   return (
     <div className="space-y-6">
       <div>
         <Link href="/admin/review/speakers" className="text-sm text-stone-500 underline">← Back to events</Link>
         <p className="mt-4 text-sm uppercase tracking-wider text-stone-500">Speaker review event</p>
-        <h1 className="text-3xl font-bold text-stone-900">TVW {tvwEventId}</h1>
+        <h1 className="text-3xl font-bold text-stone-900">Hearing {hearingId}</h1>
+        {tvwEventId ? <p className="mt-1 text-sm text-stone-500">TVW {tvwEventId}</p> : null}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-stone-300 bg-white">
