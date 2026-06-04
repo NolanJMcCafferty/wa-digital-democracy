@@ -3,6 +3,7 @@ import {
   listOrganizations,
   loadOrganizationPage,
   type HearingPage,
+  type OrganizationCompensation,
   type OrganizationPersonAffiliation,
 } from "@/lib/api";
 import {
@@ -11,6 +12,7 @@ import {
   type RawHearingSearchParams,
 } from "@/app/hearings/HearingSearchResults";
 import { filterHearings } from "@/app/hearings/filterHearings";
+import { CompensationSection } from "./CompensationSection";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +71,51 @@ export default async function OrganizationPage({
               sign-ins and public records.
             </p>
           </div>
-          <AffiliatedPeopleTable people={org.personAffiliations} />
+          <AffiliatedPeopleTable
+            people={org.personAffiliations}
+            compensation={org.compensation}
+          />
+        </section>
+      ) : null}
+
+      {org.compensation.some((c) => c.role === "filer") ? (
+        <section aria-labelledby="comp-filer-heading" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="comp-filer-heading" className="text-xl font-semibold text-stone-900">
+              Lobbying clients (paid this firm)
+            </h2>
+            <p className="text-sm text-stone-600">
+              Annual totals from PDC L-2 filings where
+              this organization is the registered lobbying firm receiving
+              payment from a client.
+            </p>
+          </div>
+          <CompensationSection
+            rows={org.compensation.filter((c) => c.role === "filer")}
+            counterpartyHeader="Client"
+            counterpartyLabel="Client"
+          />
+        </section>
+      ) : null}
+
+      {org.compensation.some((c) => c.role === "employer") ? (
+        <section aria-labelledby="comp-employer-heading" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="comp-employer-heading" className="text-xl font-semibold text-stone-900">
+              Lobbying firms paid by this organization
+            </h2>
+            <p className="text-sm text-stone-600">
+              Annual totals from PDC L-2 filings where
+              this organization is the client paying a registered lobbying
+              firm.
+            </p>
+          </div>
+          <CompensationSection
+            rows={org.compensation.filter((c) => c.role === "employer")}
+            counterpartyHeader="Lobbying firm"
+            counterpartyLabel="Lobbying firm"
+            showFilings={false}
+          />
         </section>
       ) : null}
 
@@ -143,23 +189,91 @@ export default async function OrganizationPage({
   );
 }
 
-function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliation[] }) {
+function AffiliatedPeopleTable({
+  people,
+  compensation,
+}: {
+  people: OrganizationPersonAffiliation[];
+  compensation: OrganizationCompensation[];
+}) {
+  // Index compensation by (counterparty name, year). Many "filers" in
+  // 9nnw-c693 are individual lobbyists, so the counterparty matches a
+  // person on the affiliations table; scoping by year lets us show
+  // separate totals for separate registration spans of the same person.
+  const compByCounterpartyYear = new Map<
+    string,
+    { compensation: number; expenses: number }
+  >();
+  for (const r of compensation) {
+    const year = Number(r.filingPeriod.slice(0, 4));
+    if (!Number.isFinite(year)) continue;
+    const counterparty = r.role === "filer" ? r.employerName : r.filerName;
+    const nameKey = normalizeName(counterparty);
+    if (!nameKey) continue;
+    const key = `${nameKey}|${year}`;
+    const cur = compByCounterpartyYear.get(key) ?? { compensation: 0, expenses: 0 };
+    cur.compensation += Number(r.compensation) || 0;
+    cur.expenses += Number(r.totalExpenses) || 0;
+    compByCounterpartyYear.set(key, cur);
+  }
+
+  // Merge rows that represent the same person across different registration
+  // spans. Same person + same relationship => one row, with years unioned.
+  type Merged = OrganizationPersonAffiliation & { mergedYears: number[] };
+  const mergedPeople: Merged[] = [];
+  const mergedIndex = new Map<string, Merged>();
+  for (const p of people) {
+    const idKey = p.personId ? `id:${p.personId}` : `name:${normalizeName(p.personName)}`;
+    const key = `${idKey}|${p.relationshipType}|${p.sourceKind}`;
+    const years = parseRecordYears(p.recordYears);
+    const existing = mergedIndex.get(key);
+    if (existing) {
+      const seen = new Set(existing.mergedYears);
+      for (const y of years) seen.add(y);
+      existing.mergedYears = Array.from(seen).sort((a, b) => a - b);
+      existing.sourceCount += p.sourceCount;
+    } else {
+      const merged: Merged = { ...p, mergedYears: years };
+      mergedIndex.set(key, merged);
+      mergedPeople.push(merged);
+    }
+  }
+
   return (
     <div className="overflow-x-auto rounded border border-stone-300 bg-white">
       <table className="min-w-full divide-y divide-stone-200 text-sm">
+        <colgroup>
+          <col className="w-72" />
+          <col className="w-32" />
+          <col className="w-40" />
+          <col className="w-40" />
+        </colgroup>
         <thead className="bg-stone-50 text-left text-xs uppercase tracking-wider text-stone-500">
           <tr>
-            <th scope="col" className="px-4 py-3 font-medium">
-              Person
-            </th>
-            <th scope="col" className="px-4 py-3 font-medium">
-              Relationship
-            </th>
+            <th scope="col" className="px-4 py-3 font-medium">Person</th>
+            <th scope="col" className="px-4 py-3 font-medium">Relationship</th>
+            <th scope="col" className="px-4 py-3 font-medium">Years registered</th>
+            <th scope="col" className="px-4 py-3 font-medium text-right">Total billings</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-stone-200">
-          {people.map((person, idx) => {
+          {mergedPeople.map((person, idx) => {
             const pdcLobbyistUrl = buildPDCLobbyistUrl(person);
+            const isLobbyist = person.sourceKind === "pdc_lobbyist_employment";
+            const years = isLobbyist ? person.mergedYears : [];
+            const nameKey = normalizeName(person.personName);
+            let compTotal = 0;
+            let expTotal = 0;
+            let anyYearMatched = false;
+            for (const y of years) {
+              const v = compByCounterpartyYear.get(`${nameKey}|${y}`);
+              if (v) {
+                compTotal += v.compensation;
+                expTotal += v.expenses;
+                anyYearMatched = true;
+              }
+            }
+            const showTotals = isLobbyist && anyYearMatched;
             return (
               <tr key={`${person.personId ?? "raw"}-${person.relationshipType}-${person.sourceKind}-${idx}`}>
                 <td className="px-4 py-3 align-top">
@@ -181,6 +295,16 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
                 <td className="px-4 py-3 align-top">
                   <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
                 </td>
+                <td className="px-4 py-3 align-top text-stone-700">
+                  {years.length > 0 ? formatYearRange(years) : <span className="text-stone-400">—</span>}
+                </td>
+                <td className="px-4 py-3 align-top text-right tabular-nums text-stone-900">
+                  {showTotals ? (
+                    formatAmount(String(compTotal + expTotal))
+                  ) : (
+                    <span className="text-stone-400">—</span>
+                  )}
+                </td>
               </tr>
             );
           })}
@@ -188,6 +312,33 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
       </table>
     </div>
   );
+}
+
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parseRecordYears(recordYears?: string): number[] {
+  if (!recordYears) return [];
+  const seen = new Set<number>();
+  for (const m of recordYears.matchAll(/\b(?:19|20)\d{2}\b/g)) {
+    const n = Number(m[0]);
+    if (Number.isInteger(n)) seen.add(n);
+  }
+  return Array.from(seen).sort((a, b) => a - b);
+}
+
+function formatYearRange(years: number[]): string {
+  if (years.length === 0) return "";
+  if (years.length === 1) return String(years[0]);
+  const min = years[0];
+  const max = years[years.length - 1];
+  const isContiguous = max - min + 1 === years.length;
+  if (isContiguous) return `${min}–${max}`;
+  return years.join(", ");
 }
 
 function buildPDCLobbyistUrl(person: OrganizationPersonAffiliation): string | undefined {
@@ -229,6 +380,8 @@ function relationshipLabel(value: string): string {
       return "Lobbying firm";
     case "paid_lobbying_for":
       return "Paid lobbying";
+    case "paid_by":
+      return "Paid by";
     case "employed_by":
       return "Employed by";
     case "vendor_contact_for":

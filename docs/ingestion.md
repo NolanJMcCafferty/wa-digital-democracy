@@ -303,7 +303,7 @@ for the whole chain; if another daily run is active, the new run exits cleanly.
 operator work through Make:
 
 ```makefile
-daily: ingest-legislators ingest-session ingest-irs-bmf-wa ingest-pdc-employers ingest-hearings verify-organizations generate-vendor-entity-matches
+daily: ingest-legislators ingest-session ingest-irs-bmf-wa ingest-pdc-employers ingest-pdc-lobbyist-compensation ingest-hearings verify-organizations generate-vendor-entity-matches
 ```
 
 The order matters when fresh:
@@ -320,21 +320,25 @@ The order matters when fresh:
    reference tables before testimony organizations are seeded. That lets
    hearing ingestion confirm CSI organizations during population instead of
    leaving them as `possible` until a later verification pass.
-5. `ingest-hearings` runs the full pipeline against discovered hearings:
+5. `ingest-pdc-lobbyist-compensation` ingests PDC compensation data and creates
+   lobbying firm↔client affiliation edges. It runs after `ingest-pdc-employers`
+   so that filer and employer organizations already exist.
+6. `ingest-hearings` runs the full pipeline against discovered hearings:
    CSI testifiers per agenda item, Invintus event/media metadata once per event,
-   diarization once per event, and transcript segmentation per agenda item.
+   diarization once per event, optional OpenRouter LLM speaker evidence when
+   `OPENROUTER_API_KEY` is set, and transcript segmentation per agenda item.
    `--hearing-limit` applies to hearing ingest in `wa-dd daily` for smoke tests.
-6. `verify-organizations` re-checks existing unconfirmed organizations against
+7. `verify-organizations` re-checks existing unconfirmed organizations against
    the fresh IRS/PDC reference tables, catching older rows that were not touched
    by the current hearing ingest.
-7. `generate-vendor-entity-matches` generates reviewable source/org match
+8. `generate-vendor-entity-matches` generates reviewable source/org match
    candidates from the verified organization set and the latest source-context
    rows. Unique high-confidence matches can be auto-confirmed.
 
 For an old-school local cron, one line still works:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… OPENROUTER_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 If any pass exits non-zero, cron mail / Railway logs will surface it. Each
@@ -430,6 +434,20 @@ DataWA/Socrata (`xhn7-64im`) into `pdc_employer`, `person`, and
 employer rows. PDC affiliation rows ingested before the corresponding canonical
 organization exists are attached when the organization is later seeded or
 verified.
+
+`wa-dd ingest-pdc-lobbyist-compensation` ingests PDC lobbyist compensation data from
+DataWA/Socrata (`9nnw-c693`) into `pdc_lobbyist_compensation` and creates
+`person_organization_affiliation` edges that expose firm↔client relationships.
+This dataset reveals how much lobbying firms are paid by their clients per
+filing period, bridging the gap between lobbyist employment (who works for whom)
+and lobbyist compensation (who pays whom). It runs after `ingest-pdc-employers`
+in the daily chain so that employer/filer organizations already exist before
+creating compensation-based affiliations.
+
+The compensation dataset creates "paid_by" affiliation edges linking filer
+organizations (lobbying firms) to employer organizations (clients). This enables
+queries like "which organizations pay Cascadia Public Affairs for lobbying" and
+"how much does Washington State Hospital Association spend on lobbying per quarter."
 
 `wa-dd ingest-irs-bmf-wa` ingests the IRS Business Master File Washington
 501(c) extract into `irs_bmf_organization`:

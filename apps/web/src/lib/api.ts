@@ -239,6 +239,20 @@ export type OrganizationPage = OrganizationListEntry & {
   }>;
   contexts: PublicRecordContext[];
   personAffiliations: OrganizationPersonAffiliation[];
+  compensation: OrganizationCompensation[];
+};
+
+export type OrganizationCompensation = {
+  role: "filer" | "employer";
+  filerId: string;
+  filerName: string;
+  employerId: string;
+  employerName: string;
+  filingPeriod: string;
+  compensation?: string;
+  totalExpenses?: string;
+  netTotal?: string;
+  url?: string;
 };
 
 export type OrganizationPersonAffiliation = {
@@ -842,6 +856,18 @@ type orgDetailResponse = orgListItem & {
     confidence: OrganizationSummary["match_confidence"];
     pdc_lobbyist_id?: string;
   }>;
+  compensation?: Array<{
+    role: "filer" | "employer";
+    filer_id: string;
+    filer_name: string;
+    employer_id: string;
+    employer_name: string;
+    filing_period: string;
+    compensation?: string;
+    total_expenses?: string;
+    net_total?: string;
+    url?: string;
+  }>;
 };
 
 function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
@@ -921,6 +947,18 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       sourceCount: a.source_count,
       confidence: a.confidence,
       pdcLobbyistId: a.pdc_lobbyist_id,
+    })),
+    compensation: (detail.compensation ?? []).map((c) => ({
+      role: c.role,
+      filerId: c.filer_id,
+      filerName: c.filer_name,
+      employerId: c.employer_id,
+      employerName: c.employer_name,
+      filingPeriod: c.filing_period,
+      compensation: c.compensation,
+      totalExpenses: c.total_expenses,
+      netTotal: c.net_total,
+      url: c.url,
     })),
   };
 }

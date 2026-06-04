@@ -9,6 +9,8 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "e2e": "playwright test"
   },
   "dependencies": {
@@ -28,6 +30,7 @@
     "eslint-config-next": "^16",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.3.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.8"
   }
 }

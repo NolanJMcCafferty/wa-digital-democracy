@@ -46,6 +46,26 @@ func TestNormalizeLobbyistEmployment(t *testing.T) {
 	}
 }
 
+func TestNormalizeLobbyistCompensationFromTestData(t *testing.T) {
+	rows, err := ParseRows(read(t, "lobbyist-compensation.json"))
+	if err != nil {
+		t.Fatalf("ParseRows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("len = %d", len(rows))
+	}
+	comp := NormalizeLobbyistCompensation(rows[0])
+	if comp.FilerID != "F-123" || comp.FilerName != "Cascadia Public Affairs" {
+		t.Errorf("got = %+v", comp)
+	}
+	if comp.EmployerName != "Washington State Hospital Association" || comp.Compensation != 25000.00 {
+		t.Errorf("got = %+v", comp)
+	}
+	if comp.URL != "https://web.pdc.wa.gov/compensation/1" {
+		t.Errorf("URL = %q", comp.URL)
+	}
+}
+
 func TestNormalizeLobbyistCompensationAndContribution(t *testing.T) {
 	comp := NormalizeLobbyistCompensation(Row{
 		"filer_id": "L123", "filer_name": "Doe, Jane", "funding_source_id": 456.0, "funding_source": "Roundtable",

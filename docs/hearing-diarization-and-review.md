@@ -1,6 +1,6 @@
 # Hearing diarization and speaker review
 
-Last updated: 2026-06-03.
+Last updated: 2026-06-04.
 
 This document explains the WA Digital Democracy hearing diarization flow and the
 manual human review that must happen before anonymous speaker clusters become
@@ -16,7 +16,10 @@ The short version:
 3. The provider output is normalized into anonymous speaker clusters and merged
    speech segments via `internal/diarization`'s provider-neutral types.
 4. `extract-speaker-evidence` scans the diarized text for conservative identity
-   clues, currently mostly self-introductions.
+   clues, currently mostly self-introductions. When `OPENROUTER_API_KEY` is set,
+   `extract-speaker-evidence-llm` also asks an OpenRouter-hosted LLM for
+   reviewable candidates grounded in the legislator roster and CSI testifier
+   list.
 5. Human reviewers use `/admin/review/speakers` to accept, reject, request more
    evidence, or manually assign labels.
 6. Public hearing transcripts render accepted `speaker_assignment` labels only;
@@ -103,9 +106,10 @@ The relevant tables are introduced mainly by:
 - `speaker_identity_evidence`
   - Evidence row suggesting a candidate label for a speaker cluster.
   - Evidence types include `self_introduction`, `chair_call`, `entity_mention`,
-    `csi_order`, and `manual_note`.
-  - Current automatic extraction is intentionally conservative and mostly emits
-    self-introduction evidence.
+    `csi_order`, `manual_note`, and `llm_candidate`.
+  - Automatic extraction is intentionally conservative. Regex evidence mostly
+    emits self-introductions; LLM evidence is a review cue and still requires a
+    human decision.
 
 - `speaker_review_task`
   - A proposed identity assignment that needs human action.
@@ -281,6 +285,46 @@ For each candidate, the command:
 
 Evidence extraction does **not** publish a name. It only creates tasks.
 
+### LLM evidence extractor
+
+`extract-speaker-evidence-llm` adds a second automatic evidence source for the
+long tail of identity clues that are too varied for the regex extractor:
+
+```sh
+OPENROUTER_API_KEY=... \
+  go run ./cmd/wa-dd extract-speaker-evidence-llm \
+    --event-id <tvw_event_id> \
+    --job-id <diarization_job_id>
+```
+
+It sends the configured OpenRouter model a closed context for the TVW event:
+
+- the current legislator roster, including names, aliases, chamber, district,
+  and party;
+- CSI testifiers for the hearing, including organization, position, and agenda
+  item;
+- bills heard at the event and their sponsors;
+- diarized transcript segments with segment IDs, cluster labels, timestamps,
+  and text.
+
+The request enables OpenRouter prompt caching for providers that support it. The
+command logs cache read token counts returned by the API so per-hearing cost can
+be audited. `OPENROUTER_MODEL` can override the default `openai/gpt-5.5` model.
+
+The tool output is structured as
+`candidate_kind`, `candidate_label`, `candidate_id`, `evidence_type`,
+`evidence_text_excerpt`, `confidence`, and `reasoning`. `evidence_type` is
+always `llm_candidate`. Candidates below `0.5` confidence are dropped. A
+legislator or testifier candidate must resolve to the closed list by ID or
+alias; otherwise the candidate is stored as a freeform `person` with no source
+ID.
+
+`diarize-event` runs this LLM extractor automatically after the regex extractor
+when `OPENROUTER_API_KEY` is present. If the key is missing, it logs a warning
+and skips the LLM step without failing diarization or the daily run. To disable
+the LLM step in hosted daily ingestion, omit `OPENROUTER_API_KEY` from the
+environment.
+
 ## Manual human review
 
 Review is required before names appear publicly.
@@ -389,6 +433,8 @@ Before treating a hearing as reviewed enough for public use:
 - [ ] The event has a succeeded `diarization_job`.
 - [ ] Segments are merged into readable same-speaker turns.
 - [ ] `extract-speaker-evidence` has been run for the job.
+- [ ] `extract-speaker-evidence-llm` has been run for the job when
+      `OPENROUTER_API_KEY` is available.
 - [ ] High-priority pending speaker tasks have been accepted, rejected, or
       marked needs-more-evidence.
 - [ ] Accepted labels are supported by transcript/source/video context.
@@ -420,6 +466,13 @@ Reject the task. If the text pattern itself is too permissive, adjust
 Use manual assignment if the evidence is clear. Then consider adding a new
 high-precision extractor only if it is likely to generalize without creating
 false positives.
+
+### Missing OpenRouter API key
+
+`diarize-event` and the daily hearing ingest path skip LLM speaker evidence when
+`OPENROUTER_API_KEY` is missing. This is expected for local runs that should not
+call a paid provider. Set the key to enable the step, or leave it unset to
+disable the LLM extractor.
 
 ### Wrong accepted assignment
 

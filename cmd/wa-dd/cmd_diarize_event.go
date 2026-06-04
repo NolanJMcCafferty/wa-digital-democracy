@@ -231,5 +231,6 @@ func diarizeOneEvent(ctx context.Context, store *db.Store, p diarization.Provide
 	} else {
 		fmt.Fprintf(os.Stderr, "diarize-event: speaker-evidence scanned %d segments, upserted %d evidence rows and %d review tasks\n", scanned, ev, tk)
 	}
+	runSpeakerEvidenceLLMIfConfigured(ctx, store, jobID, eventID)
 	return nil
 }

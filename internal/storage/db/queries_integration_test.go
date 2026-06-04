@@ -959,3 +959,140 @@ SELECT count(*), max(amount)::text
 		t.Fatalf("count=%d amount=%q", count, amount)
 	}
 }
+
+func TestUpsertPDCLobbyistCompensation_CreatesOrganizationsAndAffiliations(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	// Test first compensation record
+	err := store.UpsertPDCLobbyistCompensation(ctx, db.UpsertPDCLobbyistCompensationParams{
+		FilerID:         "F-123",
+		FilerName:       "Cascadia Public Affairs",
+		FundingSourceID: "456",
+		FundingSource:   "Washington State Hospital Association",
+		FilingPeriod:    "2026-Q1",
+		EmployerID:      "E-789",
+		EmployerName:    "Washington State Hospital Association",
+		Compensation:    25000.00,
+		TotalExpenses:   1500.50,
+		NetTotal:        26500.50,
+		URL:             "https://web.pdc.wa.gov/compensation/1",
+		Raw:             map[string]any{"source": "first"},
+	})
+	if err != nil {
+		t.Fatalf("upsert compensation 1: %v", err)
+	}
+
+	// Test second compensation record with same filer, different employer
+	err = store.UpsertPDCLobbyistCompensation(ctx, db.UpsertPDCLobbyistCompensationParams{
+		FilerID:         "F-123",
+		FilerName:       "Cascadia Public Affairs",
+		FundingSourceID: "321",
+		FundingSource:   "Washington Education Association",
+		FilingPeriod:    "2026-Q1",
+		EmployerID:      "E-321",
+		EmployerName:    "Washington Education Association",
+		Compensation:    15000.00,
+		TotalExpenses:   750.00,
+		NetTotal:        15750.00,
+		URL:             "https://web.pdc.wa.gov/compensation/2",
+		Raw:             map[string]any{"source": "second"},
+	})
+	if err != nil {
+		t.Fatalf("upsert compensation 2: %v", err)
+	}
+
+	// Verify compensation records were created
+	var compCount int
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM pdc_lobbyist_compensation`).Scan(&compCount); err != nil {
+		t.Fatalf("count compensation records: %v", err)
+	}
+	if compCount != 2 {
+		t.Fatalf("compensation count = %d, want 2", compCount)
+	}
+
+	// Verify both organizations were created as confirmed
+	var orgCount int
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*) 
+  FROM organization 
+ WHERE (canonical_name = 'Cascadia Public Affairs' OR canonical_name = 'Washington State Hospital Association' OR canonical_name = 'Washington Education Association')
+   AND match_confidence = 'confirmed'`).Scan(&orgCount); err != nil {
+		t.Fatalf("count organizations: %v", err)
+	}
+	if orgCount != 3 {
+		t.Fatalf("confirmed organization count = %d, want 3", orgCount)
+	}
+
+	// Verify affiliation edges were created (filer paid by employer)
+	var affCount int
+	if err := store.Pool.QueryRow(ctx, `
+SELECT count(*) 
+  FROM person_organization_affiliation 
+ WHERE source_kind = 'pdc_lobbyist_compensation' 
+   AND relationship_type = 'paid_by'
+   AND confidence = 'confirmed'`).Scan(&affCount); err != nil {
+		t.Fatalf("count affiliations: %v", err)
+	}
+	if affCount != 2 {
+		t.Fatalf("affiliation count = %d, want 2", affCount)
+	}
+
+	// Verify specific filer -> employer relationship
+	var exists bool
+	if err := store.Pool.QueryRow(ctx, `
+SELECT EXISTS(
+    SELECT 1 
+      FROM person_organization_affiliation poa
+      JOIN organization filer ON poa.organization_id = filer.id
+      JOIN organization employer ON poa.raw_organization_name = employer.canonical_name  
+     WHERE filer.canonical_name = 'Cascadia Public Affairs'
+       AND employer.canonical_name = 'Washington State Hospital Association'
+       AND poa.relationship_type = 'paid_by'
+       AND poa.source_kind = 'pdc_lobbyist_compensation'
+)`).Scan(&exists); err != nil {
+		t.Fatalf("check specific affiliation: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected affiliation between Cascadia Public Affairs and Washington State Hospital Association")
+	}
+
+	// Test idempotency - updating same record should not duplicate
+	err = store.UpsertPDCLobbyistCompensation(ctx, db.UpsertPDCLobbyistCompensationParams{
+		FilerID:         "F-123",
+		FilerName:       "Cascadia Public Affairs",
+		FundingSourceID: "456",
+		FundingSource:   "Washington State Hospital Association",
+		FilingPeriod:    "2026-Q1",
+		EmployerID:      "E-789",
+		EmployerName:    "Washington State Hospital Association",
+		Compensation:    27000.00, // Updated amount
+		TotalExpenses:   1600.00,
+		NetTotal:        28600.00,
+		URL:             "https://web.pdc.wa.gov/compensation/1",
+		Raw:             map[string]any{"source": "updated"},
+	})
+	if err != nil {
+		t.Fatalf("upsert compensation update: %v", err)
+	}
+
+	// Verify still only 2 compensation records
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM pdc_lobbyist_compensation`).Scan(&compCount); err != nil {
+		t.Fatalf("count compensation records after update: %v", err)
+	}
+	if compCount != 2 {
+		t.Fatalf("compensation count after update = %d, want 2", compCount)
+	}
+
+	// Verify updated compensation amount
+	var updatedComp float64
+	if err := store.Pool.QueryRow(ctx, `
+SELECT compensation 
+  FROM pdc_lobbyist_compensation 
+ WHERE filer_id = 'F-123' AND employer_id = 'E-789' AND filing_period = '2026-Q1'`).Scan(&updatedComp); err != nil {
+		t.Fatalf("read updated compensation: %v", err)
+	}
+	if updatedComp != 27000.00 {
+		t.Fatalf("updated compensation = %f, want 27000.00", updatedComp)
+	}
+}

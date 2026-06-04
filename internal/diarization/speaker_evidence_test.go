@@ -43,3 +43,13 @@ func TestExtractSpeakerEvidenceAvoidsGenericIAmPhrase(t *testing.T) {
 		t.Fatalf("got = %#v, want none", got)
 	}
 }
+
+func TestRegexAndLLMEvidenceTypesDoNotOverlap(t *testing.T) {
+	got := ExtractSpeakerEvidence("For the record, my name is Jane Doe with the Housing Alliance.")
+	if len(got) != 1 {
+		t.Fatalf("got = %#v, want one regex candidate", got)
+	}
+	if got[0].EvidenceType == LLMSpeakerEvidenceType {
+		t.Fatalf("regex evidence type overlaps LLM evidence type %q", LLMSpeakerEvidenceType)
+	}
+}

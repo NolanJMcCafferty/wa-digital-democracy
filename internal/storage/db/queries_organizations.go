@@ -240,6 +240,22 @@ type OrganizationPersonAffiliation struct {
 	PDCLobbyistID       string
 }
 
+// OrganizationCompensation is one row of PDC lobbyist compensation
+// (dataset 9nnw-c693) where the organization is either the filer
+// (lobbying firm being paid) or the employer (client paying).
+type OrganizationCompensation struct {
+	Role          string // "filer" if this org is the lobbying firm, "employer" if it is the client
+	FilerID       string
+	FilerName     string
+	EmployerID    string
+	EmployerName  string
+	FilingPeriod  string
+	Compensation  string
+	TotalExpenses string
+	NetTotal      string
+	URL           string
+}
+
 // GetOrganizationAppearances returns every (agenda_item, org) appearance
 // where at least one testifier from that org signed in.
 func (s *Store) GetOrganizationAppearances(ctx context.Context, organizationID int64) ([]OrganizationAppearance, error) {
@@ -355,6 +371,47 @@ SELECT COALESCE(p.id, 0) AS person_id,
 			return nil, fmt.Errorf("scan organization person affiliation: %w", err)
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// GetOrganizationCompensation returns PDC lobbyist compensation rows
+// (9nnw-c693) where this organization is either the filer (lobbying firm)
+// or the employer (paying client). Match is on
+// `organization.pdc_lobbyist_employer_id`, which is populated for orgs
+// seeded via PDC employer ingestion.
+func (s *Store) GetOrganizationCompensation(ctx context.Context, organizationID int64) ([]OrganizationCompensation, error) {
+	const q = `
+SELECT CASE WHEN c.filer_id = o.pdc_lobbyist_employer_id THEN 'filer'
+            ELSE 'employer' END AS role,
+       c.filer_id, c.filer_name,
+       c.employer_id, c.employer_name,
+       c.filing_period,
+       COALESCE(c.compensation::text, ''),
+       COALESCE(c.total_expenses::text, ''),
+       COALESCE(c.net_total::text, ''),
+       COALESCE(c.url, '')
+  FROM organization o
+  JOIN pdc_lobbyist_compensation c
+    ON c.filer_id = o.pdc_lobbyist_employer_id
+    OR c.employer_id = o.pdc_lobbyist_employer_id
+ WHERE o.id = $1
+   AND o.pdc_lobbyist_employer_id IS NOT NULL
+ ORDER BY c.filing_period DESC, c.compensation DESC NULLS LAST;`
+	rows, err := s.Pool.Query(ctx, q, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("organization compensation: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationCompensation{}
+	for rows.Next() {
+		var c OrganizationCompensation
+		if err := rows.Scan(&c.Role, &c.FilerID, &c.FilerName,
+			&c.EmployerID, &c.EmployerName, &c.FilingPeriod,
+			&c.Compensation, &c.TotalExpenses, &c.NetTotal, &c.URL); err != nil {
+			return nil, fmt.Errorf("scan organization compensation: %w", err)
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
