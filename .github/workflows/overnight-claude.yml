@@ -141,6 +141,8 @@ jobs:
               - For frontend changes under apps/web: run `pnpm install
                 --frozen-lockfile` and `pnpm -C apps/web typecheck` and
                 `pnpm -C apps/web lint` if those scripts exist.
+              - For UI/UX changes, capture screenshots of the affected screens
+                after implementation and include them in the PR description.
               - Walk through every acceptance criterion you listed in Step 1 and
                 confirm the diff satisfies it. If any criterion is not met, keep
                 working.
@@ -190,6 +192,10 @@ jobs:
               (Include every check from Step 3 you actually ran. Mark CI-only checks as
               "deferred to CI" with a note.)
 
+              ## Screenshots
+              <For UI/UX changes, include screenshots of the affected screens. For
+              non-UI changes, write "Not applicable: no UI/UX changes.">
+
               ## Risk & rollout
               - <data migration, breaking change, feature-flag, or "low risk: isolated change">
               - <anything a reviewer should pay extra attention to>
@@ -219,6 +225,7 @@ jobs:
         run: |
           set -euo pipefail
           ISSUE=${{ needs.pick-issue.outputs.number }}
+          rm -f output.txt
 
           if [ -f BLOCKED.md ]; then
             REASON=$(cat BLOCKED.md)
@@ -357,6 +364,8 @@ jobs:
           $REASON"
               exit 0
             fi
+
+            rm -f output.txt
 
             if [ -z "$(git status --porcelain)" ]; then
               gh pr comment "$BRANCH" --body "Claude could not produce a fix on attempt ${attempt}. Stopping."

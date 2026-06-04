@@ -95,5 +95,6 @@ body:
         - Do not use production credentials.
         - Do not run paid/provider-backed ingestion.
         - Do not change unrelated files.
+        - For UI/UX changes, capture screenshots of the affected screens and include them in the PR description.
     validations:
       required: true

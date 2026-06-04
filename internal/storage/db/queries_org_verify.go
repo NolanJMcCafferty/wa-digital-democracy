@@ -568,3 +568,114 @@ SELECT id, canonical_name, aliases, match_confidence::text
 	}
 	return stats, nil
 }
+
+// EnsureOrganizationFromPDCEmployer guarantees that a PDC lobbyist employer is
+// represented as a confirmed organization row. Lookup order:
+//  1. existing organization with this pdc_lobbyist_employer_id (no-op).
+//  2. existing organization whose canonical_name or alias matches the employer
+//     name (verify in place, set the FK).
+//  3. otherwise, insert a fresh confirmed organization keyed on the employer name.
+//
+// In every "found existing" case the org is upgraded to confirmed via
+// MarkOrganizationVerified, which also attaches any pre-existing
+// person_organization_affiliation rows that came from PDC ingestion.
+func (s *Store) EnsureOrganizationFromPDCEmployer(ctx context.Context, employerID, name, normalizedName string) (int64, error) {
+	employerID = strings.TrimSpace(employerID)
+	name = strings.TrimSpace(name)
+	if employerID == "" || name == "" {
+		return 0, nil
+	}
+
+	var orgID int64
+	err := s.Pool.QueryRow(ctx,
+		`SELECT id FROM organization WHERE pdc_lobbyist_employer_id = $1 LIMIT 1`,
+		employerID).Scan(&orgID)
+	switch {
+	case err == nil:
+		return orgID, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		// fall through
+	default:
+		return 0, fmt.Errorf("lookup organization by pdc employer_id: %w", err)
+	}
+
+	if id, err := s.organizationIDForAliasOrCanonical(ctx, name); err != nil {
+		return 0, err
+	} else if id != 0 {
+		if err := s.MarkOrganizationVerified(ctx, id, CrossSourceMatch{
+			Source: "pdc_employer", EmployerID: employerID, Name: name,
+		}); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+
+	id, err := s.UpsertOrganization(ctx, UpsertOrganizationParams{
+		CanonicalName:         name,
+		Aliases:               []string{},
+		PDCLobbyistEmployerID: employerID,
+		MatchConfidence:       "confirmed",
+		MatchNotes:            "Seeded from PDC lobbyist employer registration; employer_id " + employerID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if err := s.MarkOrganizationVerified(ctx, id, CrossSourceMatch{
+		Source: "pdc_employer", EmployerID: employerID, Name: name,
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// EnsureOrganizationFromIRSBMF guarantees that an IRS BMF nonprofit is
+// represented as a confirmed organization row. Lookup order mirrors
+// EnsureOrganizationFromPDCEmployer: by EIN, then by canonical/alias name,
+// then insert.
+func (s *Store) EnsureOrganizationFromIRSBMF(ctx context.Context, ein, name, normalizedName string) (int64, error) {
+	ein = strings.TrimSpace(ein)
+	name = strings.TrimSpace(name)
+	if ein == "" || name == "" {
+		return 0, nil
+	}
+
+	var orgID int64
+	err := s.Pool.QueryRow(ctx,
+		`SELECT id FROM organization WHERE irs_bmf_ein = $1 LIMIT 1`,
+		ein).Scan(&orgID)
+	switch {
+	case err == nil:
+		return orgID, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		// fall through
+	default:
+		return 0, fmt.Errorf("lookup organization by irs ein: %w", err)
+	}
+
+	if id, err := s.organizationIDForAliasOrCanonical(ctx, name); err != nil {
+		return 0, err
+	} else if id != 0 {
+		if err := s.MarkOrganizationVerified(ctx, id, CrossSourceMatch{
+			Source: "irs_bmf", EIN: ein, Name: name,
+		}); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+
+	id, err := s.UpsertOrganization(ctx, UpsertOrganizationParams{
+		CanonicalName:   name,
+		Aliases:         []string{},
+		MatchConfidence: "confirmed",
+		MatchNotes:      "Seeded from IRS BMF; EIN " + ein,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if err := s.MarkOrganizationVerified(ctx, id, CrossSourceMatch{
+		Source: "irs_bmf", EIN: ein, Name: name,
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
+}

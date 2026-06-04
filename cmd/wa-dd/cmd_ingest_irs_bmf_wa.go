@@ -97,6 +97,10 @@ func runIngestIRSBMFWA(args []string) int {
 			fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: upsert %s: %v\n", row.EIN, err)
 			return false
 		}
+		if _, err := store.EnsureOrganizationFromIRSBMF(ctx, row.EIN, row.Name, normalized); err != nil {
+			fmt.Fprintf(os.Stderr, "ingest-irs-bmf-wa: ensure org %s: %v\n", row.EIN, err)
+			return false
+		}
 		upserted++
 		if upserted%2000 == 0 {
 			fmt.Fprintf(os.Stderr, "  upserted=%d elapsed=%s\n", upserted, time.Since(start).Round(time.Second))

@@ -64,24 +64,29 @@ func runIngestPDCEmployers(args []string) int {
 	q := pdc.Query{Order: ":id", Limit: *pageSize}
 	offset := 0
 	page := 0
+	upserted := 0
+	skipped := 0
 	start := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			break
 		}
 		q.Offset = offset
+		fmt.Fprintf(os.Stderr, "  fetching page=%d offset=%d limit=%d elapsed=%s\n", page+1, offset, q.Limit, time.Since(start).Round(time.Second))
 		rows, _, err := client.FetchPageWithSource(ctx, pdc.DatasetLobbyistEmployment, q)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ingest-pdc-employers: fetch page %d: %v\n", page, err)
 			return 1
 		}
-		for _, r := range rows {
+		for i, r := range rows {
 			emRow := pdc.NormalizeLobbyistEmployment(r)
 			if emRow.EmployerID == "" || emRow.EmployerName == "" {
+				skipped++
 				continue
 			}
 			normalized := pdc.NormalizeOrgName(emRow.EmployerName)
 			if normalized == "" {
+				skipped++
 				continue
 			}
 			raw := map[string]any(r)
@@ -95,6 +100,10 @@ func runIngestPDCEmployers(args []string) int {
 				Raw:                raw,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: upsert %s: %v\n", emRow.EmployerID, err)
+				return 1
+			}
+			if _, err := store.EnsureOrganizationFromPDCEmployer(ctx, emRow.EmployerID, emRow.EmployerName, normalized); err != nil {
+				fmt.Fprintf(os.Stderr, "ingest-pdc-employers: ensure org %s: %v\n", emRow.EmployerID, err)
 				return 1
 			}
 			if err := store.UpsertPDCLobbyistAffiliation(ctx, db.UpsertPDCLobbyistAffiliationParams{
@@ -112,14 +121,21 @@ func runIngestPDCEmployers(args []string) int {
 				return 1
 			}
 			seen[emRow.EmployerID] = &emp{id: emRow.EmployerID, row: emRow, raw: r}
+			upserted++
+			if upserted%500 == 0 {
+				fmt.Fprintf(os.Stderr, "  upserted=%d skipped=%d distinct-employers=%d page=%d row=%d/%d elapsed=%s\n",
+					upserted, skipped, len(seen), page+1, i+1, len(rows), time.Since(start).Round(time.Second))
+			}
 		}
 		page++
-		fmt.Fprintf(os.Stderr, "  page=%d fetched=%d distinct-employers=%d elapsed=%s\n", page, len(rows), len(seen), time.Since(start).Round(time.Second))
+		fmt.Fprintf(os.Stderr, "  page=%d fetched=%d upserted=%d skipped=%d distinct-employers=%d elapsed=%s\n",
+			page, len(rows), upserted, skipped, len(seen), time.Since(start).Round(time.Second))
 		if len(rows) < q.Limit {
 			break
 		}
 		offset += q.Limit
 	}
-	fmt.Fprintf(os.Stderr, "==> ingest-pdc-employers: %d distinct employers ingested in %s\n", len(seen), time.Since(start).Round(time.Second))
+	fmt.Fprintf(os.Stderr, "==> ingest-pdc-employers: upserted %d rows, skipped %d rows, %d distinct employers in %s\n",
+		upserted, skipped, len(seen), time.Since(start).Round(time.Second))
 	return 0
 }
