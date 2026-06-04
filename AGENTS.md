@@ -9,7 +9,7 @@ A source-linked public graph of Washington State legislative activity — bills,
 ## Architecture in one minute
 
 ```
-nightly cron: make daily
+hosted nightly cron: wa-dd daily
   ├─ wa-dd ingest-legislators  LWS roster → person, legislator, memberships
   ├─ wa-dd ingest-session     LWS metadata for every bill in biennium +
   │                           CSI agenda IDs + TVW event IDs on hearing rows
@@ -72,8 +72,9 @@ db/queries/     EMPTY. sqlc.yaml exists but the project uses hand-written
                 directory unless explicitly migrating to sqlc.
 apps/web/       Next.js 16 + React 19 + TS + Tailwind 4. Server Components
                 fetch the Go API by absolute URL (process.env.WADD_API_URL)
-                because they don't go through next.config.ts rewrites.
-                Client components use the rewrite (/api/v1/* → :8080).
+                because they don't go through the Next route proxy.
+                Client components call the same-origin route proxy
+                (`/api/v1/*` → `src/app/api/v1/[...path]/route.ts`).
                 /admin uses Clerk in production; bypassed in non-prod via
                 NODE_ENV gate (see src/lib/adminAuth.ts and src/proxy.ts).
 data/processed/ run-summary JSONs, diarization output, and derived
@@ -88,20 +89,22 @@ docs/           ingestion.md is the canonical implementation doc.
 
 ```sh
 # Local dev environment
-make up                     # start Postgres in Docker
+make up                     # start Postgres + migrations + API + web in Docker
+make up-db                  # start Postgres only
 make migrate-up             # apply migrations via project-pinned goose
 make api                    # run wa-dd-api on :8080
 cd apps/web && pnpm dev     # Next.js on :3000
 
 # Tests + gates — see "Running tests" below for full setup per category
 go vet ./...
-go test ./...                                       # Go unit tests, no infra
+go test ./...                                       # Go tests; db package uses a PostGIS testcontainer unless WADD_SKIP_DB_TESTS=1
 make integration                                    # Go integration tests (boots Postgres, seeds/cleans fixtures)
 cd apps/web && pnpm typecheck                       # Frontend typecheck
 make e2e                                            # Playwright e2e (seeds/cleans fixtures; requires Postgres + chromium)
 
-# Ingestion (operator-driven; usually triggered via make daily)
-INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily  # full nightly chain
+# Ingestion (operator-driven; full nightly path is wa-dd daily)
+INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… go run ./cmd/wa-dd daily  # full nightly chain
+INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily                # local smoke chain; defaults HEARING_LIMIT=1
 go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
@@ -113,13 +116,17 @@ go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
 Four categories. **Always use these exact commands** — don't improvise (e.g. `pnpm exec playwright` directly will fail without env vars).
 
-### 1. Go unit tests (no infra)
+### 1. Go tests
 
 ```sh
 go test ./...
 go test ./internal/sources/lws/... -run TestParse   # single package + test
 go vet ./...
 ```
+
+`internal/storage/db` boots a PostGIS testcontainer during `go test ./...` for
+store-level tests. Set `WADD_SKIP_DB_TESTS=1` only when Docker is unavailable
+and you intentionally want to skip those DB tests.
 
 ### 2. Go integration tests (need Postgres)
 
@@ -148,7 +155,7 @@ E2E spins up `wa-dd-api` and `next start` against a real Postgres, seeds determi
 
 ```sh
 # One-time setup
-make up                                 # Postgres in Docker
+make up-db                              # Postgres only
 make migrate-up
 cd apps/web && pnpm install             # installs @playwright/test, @axe-core/playwright, etc.
 make e2e-install                        # downloads Chromium for Playwright
@@ -179,7 +186,7 @@ E2E tests live in `apps/web/e2e/`. Accessibility checks use `@axe-core/playwrigh
 - **API response shapes.** Public API routes should return explicit response/list objects (`BillDetailResponse`, `HearingPage`, `OrganizationPage`, etc.). Keep collection fields initialized to `[]` rather than `nil` so frontend code can treat them as arrays.
 - **No generated page snapshots.** Public/frontend page data comes from route-specific API objects assembled from Postgres.
 - **API handler pattern.** `func handler(store *db.Store) http.HandlerFunc` returning a closure. Use the `writeJSON` envelope and `{"error": "..."}` for errors. Soft-parse query params (bad `limit=abc` falls back to default rather than 400) — see `billPageHandler` and `searchTranscriptsHandler` for examples.
-- **Frontend fetch path.** Server Components fetch by absolute URL (`process.env.WADD_API_URL ?? "http://localhost:8080"`) because they don't traverse `next.config.ts` rewrites. Client components use the rewrite path `/api/v1/...` so requests stay same-origin.
+- **Frontend fetch path.** Server Components fetch by absolute URL (`process.env.WADD_API_URL ?? "http://localhost:8080"`) because they don't traverse the Next route proxy. Client components call same-origin `/api/v1/...`, which is handled by `apps/web/src/app/api/v1/[...path]/route.ts` and forwarded server-side with the internal bearer token.
 - **Diarization providers.** `internal/diarization` is provider-neutral. pyannoteAI (`precision-2`) is the default for hearing ingestion and can return bundled transcription; Deepgram (`nova-3`) remains available as an alternate provider. See `docs/hearing-diarization-and-review.md` for tradeoffs and run commands.
 - **Local admin auth.** `/admin` routes bypass Clerk when `NODE_ENV !== "production"` — see `apps/web/src/lib/adminAuth.ts`, `apps/web/src/proxy.ts`, and `cmd/wa-dd-api/auth.go`'s `localDevAdminBypass`. The web Dockerfile has a separate `web-dev` stage (`NODE_ENV=development`, `next dev`) used by `infra/docker-compose.yml`; the final `web` stage stays production-default for Railway.
 - **Backwards compatibility** Typically, you do not need to make changes backwards compatible. Only include backwards compatibility if the user explicitly says so.

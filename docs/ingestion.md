@@ -299,10 +299,12 @@ Railway runs that command from `infra/railway/config/daily.railway.json` and
 `scripts/bootstrap-railway.mjs`. The command acquires a Postgres advisory lock
 for the whole chain; if another daily run is active, the new run exits cleanly.
 
-`make daily` remains a local convenience target and chains the same public
-operator work through Make:
+`make daily` remains a local smoke-test convenience target and chains the same
+public operator work through Make, but it currently defaults `HEARING_LIMIT=1`
+unless you override it:
 
 ```makefile
+daily: export HEARING_LIMIT ?= 1
 daily: ingest-legislators ingest-session ingest-irs-bmf-wa ingest-pdc-employers ingest-hearings verify-organizations generate-vendor-entity-matches
 ```
 
@@ -331,10 +333,10 @@ The order matters when fresh:
    candidates from the verified organization set and the latest source-context
    rows. Unique high-confidence matches can be auto-confirmed.
 
-For an old-school local cron, one line still works:
+For an old-school full local cron, use the operator CLI directly:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… go run ./cmd/wa-dd daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 If any pass exits non-zero, cron mail / Railway logs will surface it. Each

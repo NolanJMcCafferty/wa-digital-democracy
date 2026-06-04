@@ -1,18 +1,21 @@
 # Source connectors
 
 Each subpackage implements one external data source per the four-layer split
-tracked in `~/Documents/main/wiki/politics/data-sources/0X *.md` files.
+tracked in `~/Documents/v1/wiki/politics/data-sources/0X *.md` files.
 
 | Package | Source | Current status | Notes |
 |---|---|---|---|
 | `httpx` | shared HTTP client | shipped | retry, per-host rate limit |
+| `connector` | shared source connector metadata | shipped | source registry value objects |
 | `lws` | Washington Legislative Web Services (SOAP/XML) | shipped | live-tested via `-tags=integration` |
 | `csi` | Committee Sign In | shipped | read-only; never call /Testimony/Add |
 | `committeeschedules` | Committee Schedules ASP.NET app | shipped | search-form date params ignored without CSRF (Phase 0 finding) |
 | `tvw` | TVW WordPress + Invintus REST | shipped | use `wp/v2/invintus_video` not `tvw/v1/schedule` for historical sampling |
 | `pdc` | data.wa.gov Socrata | shipped | preserves raw fields (PDC schema drifted 2024-10-30) |
+| `irsbmf` | IRS Exempt Organization Business Master File | shipped | Washington extract for nonprofit organization verification |
 | `socrata` | shared Socrata/Tyler API helper | shipped | catalog, metadata, resource query, pagination |
 | `datawa` | general data.wa.gov / DES contracts | initial real client | contract dataset constants, catalog/query via shared Socrata, contract normalization |
+| `fiscalwa` | fiscal.wa.gov Open Checkbook | initial real client | vendor-payment query and normalization |
 | `seattle` | Seattle Open Data Socrata | initial real client | priority housing/permit/budget dataset constants, query via shared Socrata, permit normalization |
 | `kingcounty` | King County Open Data Socrata | initial real client | priority parcel/election/health/safety dataset constants, query via shared Socrata, parcel normalization |
 | `sao` | WA State Auditor ReportSearch | initial real client | gov/audit types, entity lookup, report search, report PDF URLs |

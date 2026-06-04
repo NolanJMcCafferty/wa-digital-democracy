@@ -1,12 +1,12 @@
 # Testing posture
 
-The repo has three explicit test lanes. Keep new coverage in the narrowest lane that proves the behavior. This follows the standard test-pyramid tradeoff: lots of cheap, deterministic unit tests; fewer backend integration tests; and a small number of full end-to-end tests for the flows that must work as a product.
+The repo has three explicit test lanes. Keep new coverage in the narrowest lane that proves the behavior. This follows the standard test-pyramid tradeoff: lots of cheap, deterministic package tests; fewer backend integration tests; and a small number of full end-to-end tests for the flows that must work as a product.
 
 ## Test lanes
 
 | Lane | Purpose | Scope | Must not | Command | CI |
 | --- | --- | --- | --- | --- | --- |
-| Unit | File/function-level correctness | Pure functions, parsers, mappers, middleware with mocks/`httptest` | Require Postgres, external network, long sleeps, browser | `make test` | `.github/workflows/unit-tests.yml` |
+| Package tests | File/function-level correctness plus isolated store behavior | Pure functions, parsers, mappers, middleware with mocks/`httptest`; `internal/storage/db` uses a PostGIS testcontainer | External network, long sleeps, browser | `make test` | `.github/workflows/integration-tests.yml` |
 | Backend integration | Whole backend behavior with real dependencies | Go API/storage/source code against real Postgres or controlled upstreams | Start the frontend or browser | `make integration` | `.github/workflows/integration-tests.yml` |
 | End-to-end | Product behavior through real services | Browser/client → Next.js frontend → Go API → Postgres | Reach directly into implementation details when user-visible checks work | `make e2e` | `.github/workflows/e2e-tests.yml` |
 
@@ -20,9 +20,9 @@ The repo has three explicit test lanes. Keep new coverage in the narrowest lane 
 6. **Treat flakiness as a bug.** Do not paper over flakes with arbitrary sleeps. Tighten data setup, assertions, readiness checks, or test boundaries.
 7. **No secrets in tests.** Use synthetic tokens (`e2e-internal-token`), generated JWT keys, and local service containers.
 
-## 1. Unit tests
+## 1. Package tests
 
-**Purpose:** file/function-level behavior with no real network services and no real database.
+**Purpose:** file/function-level behavior with no real network services, plus isolated store behavior for `internal/storage/db`.
 
 **Naming/location:** normal Go `*_test.go` files without build tags, colocated with the package under test. Frontend unit tests should use `*.test.ts` / `*.test.tsx` when a JS test runner is added.
 
@@ -32,7 +32,13 @@ The repo has three explicit test lanes. Keep new coverage in the narrowest lane 
 make test
 ```
 
-**CI:** `.github/workflows/unit-tests.yml` runs `make test` and `make coverage`.
+`make test` runs `go test ./...`. Most packages are pure unit tests. The
+`internal/storage/db` package starts a PostGIS testcontainer, runs Goose
+migrations, snapshots the database, and restores the snapshot around store-level
+tests. Set `WADD_SKIP_DB_TESTS=1` only when Docker is unavailable and you
+intentionally want to skip those DB tests.
+
+**CI:** `.github/workflows/integration-tests.yml` runs backend tests and `make coverage`.
 
 **Good unit-test candidates:**
 
@@ -42,9 +48,10 @@ make test
 - HTTP middleware using `httptest`
 - query-parameter mapping and response-shape mapping
 
-**Unit-test rules:**
+**Package-test rules:**
 
-- No Postgres, Docker, browser, Clerk, or live WA Legislature calls.
+- No browser, Clerk, live WA Legislature calls, or external network.
+- Keep Postgres/Docker usage scoped to the `internal/storage/db` testcontainer harness unless there is a clear reason to promote the test to the integration lane.
 - Use table-driven tests for edge cases.
 - Use `t.Parallel()` only when the test has no shared global state or environment-variable mutation.
 - When testing env-var behavior, use `t.Setenv` and avoid `t.Parallel()`.
@@ -95,7 +102,9 @@ Examples:
 - `internal/storage/db/queries_integration_test.go`
 - `internal/sources/lws/integration_test.go`
 
-**Future improvement:** consider moving DB lifecycle into Go with Testcontainers for Go if local/CI drift becomes painful. Testcontainers can create and clean up containerized dependencies per test run, but the current Make/Compose + GitHub service-container approach is simpler and sufficient for now.
+The `internal/storage/db` package already uses Testcontainers for isolated
+store-level tests. Broader integration tests still use Make/Compose locally and
+GitHub service containers in CI.
 
 ## 3. End-to-end tests
 
@@ -117,15 +126,16 @@ exit. If you run `seed-test-fixtures.sh` manually for a single test, pair it
 with `scripts/cleanup-test-fixtures.sh --dsn <postgres-url>` before returning to
 normal local development.
 
-For e2e against an existing real/staging environment, seed that environment explicitly and point Playwright at it:
+For e2e against an existing real/staging database, point the normal local API
+and Next.js test servers at that DSN:
 
 ```sh
-WADD_E2E_DSN='postgres://...' make seed-e2e-fixtures
-WADD_API_URL='https://your-web-or-api-env.example' pnpm --dir apps/web e2e
-scripts/cleanup-test-fixtures.sh --dsn 'postgres://...'
+WADD_E2E_DSN='postgres://...' make e2e
 ```
 
-The seed and cleanup commands do not create or migrate the e2e database; they only apply `db/fixtures/minimal.sql` and `db/fixtures/cleanup_minimal.sql` to the DSN you provide.
+The `make e2e` target seeds and cleans the DSN you provide, but it does not
+create or migrate that database. It runs Playwright against local API/Next.js
+servers using ports `:18080` and `:13000` by default.
 
 Use `make e2e-install` once to install Playwright browsers. If your local OS is newer than Playwright's downloadable browser support matrix but Chrome is installed, run with:
 
@@ -152,14 +162,14 @@ PLAYWRIGHT_CHROMIUM_CHANNEL=chrome make e2e
 
 ## CI expectations
 
-- Unit tests should be fast and required on every PR.
+- Package tests should be fast and required on every PR.
 - Backend integration and e2e tests use GitHub Actions service containers with PostGIS/Postgres and health checks.
-- E2e runs should upload Playwright traces/reports on failure if/when artifact retention is added.
+- E2e runs upload Playwright traces/reports on failure.
 - Keep workflow databases empty by default; tests must set up their own data or tolerate empty state.
 
 ## Quick decision rule
 
-- Pure function, parser, mapper, middleware edge case using mocks/`httptest` only → **unit**.
+- Pure function, parser, mapper, middleware edge case using mocks/`httptest` only → **package test**.
 - Backend behavior needing Postgres or live upstream source → **backend integration**.
 - User-visible route/page/API proxy flow through running Next.js + running Go API → **end-to-end**.
 

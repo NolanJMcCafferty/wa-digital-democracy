@@ -11,7 +11,7 @@ Use this only when local is the source of truth for the same project data.
 - Local Postgres is running:
 
 ```sh
-make up
+make up-db
 ```
 
 - Railway CLI is installed, authenticated, and linked to the production project:

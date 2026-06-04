@@ -13,7 +13,7 @@ indexes, relationships, and ER diagrams.
 Requirements:
 
 - Docker
-- local Postgres running via `make up`
+- local Postgres running via `make up-db` or the full local stack via `make up`
 - migrations applied via `make migrate-up`
 
 The SchemaSpy container runs on the repo's Docker Compose network and connects

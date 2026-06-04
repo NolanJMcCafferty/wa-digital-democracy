@@ -19,8 +19,10 @@ Current stack:
 ## Local dev
 
 ```sh
-cp .env.example .env.local  # fill in local-only secrets; .env.local is gitignored
-make up                     # start Postgres in Docker
+cp .env.example .env.local  # host-run Make targets; fill in local-only secrets
+cp .env.example .env        # Docker Compose full stack; also gitignored
+make up                     # start Postgres + migrations + API + web in Docker
+make up-db                  # start Postgres only
 make migrate-up             # apply schema with project-pinned Goose
 make test                   # run Go tests
 make build                  # build the wa-dd CLI and wa-dd-api server
@@ -36,7 +38,8 @@ make api                    # run the HTTP API the Next.js frontend reads from (
 The frontend reads from the API, so a full local loop is:
 
 ```sh
-make up                                     # Postgres
+make up-db                                  # Postgres
+make migrate-up
 export WADD_INTERNAL_API_TOKEN=dev-change-me
 make api &                                  # Go API on :8080
 cd apps/web && WADD_INTERNAL_API_TOKEN=dev-change-me pnpm dev  # Next.js on :3000
@@ -98,11 +101,14 @@ The daily chain is idempotent and safe to re-run:
    match candidates after verification has established the best available
    canonical organization state.
 
-For nightly cron, one line is enough:
+For a full nightly cron, use the hosted operator command:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… go run ./cmd/wa-dd daily >> /tmp/wa-dd-daily.log 2>&1
 ```
+
+`make daily` is a local smoke-test convenience and currently defaults
+`HEARING_LIMIT=1` unless you override it.
 
 Re-running is cheap in DB writes because ingestion uses stable source IDs and
 idempotent upserts, but every run still re-hits upstream APIs at the configured
@@ -117,7 +123,6 @@ cmd/
 apps/
   web/                    # Next.js frontend, admin review UI, API proxy routes
 internal/
-  candidate/              # candidate hearing finder
   diarization/            # speaker diarization/evidence helpers
   common/                 # shared civic value objects
   entitymatch/            # organization/entity matching logic
