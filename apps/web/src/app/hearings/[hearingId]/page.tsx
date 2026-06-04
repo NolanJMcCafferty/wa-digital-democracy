@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadHearingPage, listHearings, type HearingAgendaItemEntry } from "@/lib/api";
+import { loadHearingPage, listHearings, slugify, type HearingAgendaItemEntry } from "@/lib/api";
 import type { Position, TestifierSummary } from "@/lib/pageTypes";
 import { formatDateTime } from "@/lib/format";
 import { DiarizedTranscriptSection } from "./_sections/DiarizedTranscriptSection";
@@ -190,6 +190,7 @@ function PositionBreakdown({ testifiers }: { testifiers: TestifierSummary[] }) {
                       <span className="block break-words text-sm font-medium leading-snug text-stone-900">
                         {t.raw_name}
                       </span>
+                      <TestifierOrganizationLink testifier={t} />
                     </span>
                   </li>
                 ))}
@@ -201,6 +202,28 @@ function PositionBreakdown({ testifiers }: { testifiers: TestifierSummary[] }) {
         );
       })}
     </div>
+  );
+}
+
+function TestifierOrganizationLink({ testifier }: { testifier: TestifierSummary }) {
+  const label = testifier.raw_organization || testifier.organization_name;
+  if (!label) return null;
+
+  if (!testifier.organization_name) {
+    return (
+      <span className="mt-0.5 block break-words text-xs leading-snug text-stone-500">
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <Link
+      href={`/organizations/${slugify(testifier.organization_name)}`}
+      className="mt-0.5 block break-words text-xs leading-snug text-blue-700 underline-offset-2 hover:text-blue-900 hover:underline"
+    >
+      {label}
+    </Link>
   );
 }
 

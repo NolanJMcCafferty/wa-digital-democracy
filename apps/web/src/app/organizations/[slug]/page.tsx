@@ -5,7 +5,6 @@ import {
   type HearingPage,
   type OrganizationPersonAffiliation,
 } from "@/lib/api";
-import type { Position } from "@/lib/pageTypes";
 import {
   HearingSearchResults,
   parseHearingFilters,
@@ -14,8 +13,6 @@ import {
 import { filterHearings } from "@/app/hearings/filterHearings";
 
 export const dynamic = "force-dynamic";
-
-const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
 
 export async function generateStaticParams() {
   if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
@@ -56,10 +53,9 @@ export default async function OrganizationPage({
         </div>
       </section>
 
-      <section className="grid grid-cols-3 gap-3 text-sm">
+      <section className="grid grid-cols-2 gap-3 text-sm">
+        <Metric label="Hearing appearances" value={org.appearances.length.toLocaleString()} />
         <Metric label="Linked testifiers" value={org.testifierCount.toLocaleString()} />
-        <Metric label="Appearances" value={org.appearances.length.toLocaleString()} />
-        <Metric label="Public records" value={org.contexts.length.toLocaleString()} />
       </section>
 
       {org.personAffiliations.length > 0 ? (
@@ -128,20 +124,6 @@ export default async function OrganizationPage({
         </section>
       ) : null}
 
-      <section aria-labelledby="positions-heading" className="space-y-4 rounded-lg border border-stone-300 bg-white p-6">
-        <h2 id="positions-heading" className="text-xl font-semibold text-stone-900">
-          Positions in testimony sign-ins
-        </h2>
-        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          {POSITION_ORDER.map((p) => (
-            <Metric key={p} label={p} value={org.positions[p].toLocaleString()} />
-          ))}
-        </div>
-        <p className="text-xs text-stone-500">
-          Counts come from Committee Sign In organization matches.
-        </p>
-      </section>
-
       <section aria-labelledby="appearances-heading" className="space-y-4">
         <h2 id="appearances-heading" className="text-xl font-semibold text-stone-900">
           Hearing appearances
@@ -173,15 +155,6 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
             <th scope="col" className="px-4 py-3 font-medium">
               Relationship
             </th>
-            <th scope="col" className="px-4 py-3 font-medium">
-              Source
-            </th>
-            <th scope="col" className="px-4 py-3 font-medium">
-              Years
-            </th>
-            <th scope="col" className="px-4 py-3 text-right font-medium">
-              Records
-            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-stone-200">
@@ -192,15 +165,6 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
               </td>
               <td className="px-4 py-3 align-top">
                 <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
-              </td>
-              <td className="px-4 py-3 align-top">
-                <div className="text-stone-800">{person.sourceLabel}</div>
-              </td>
-              <td className="px-4 py-3 align-top text-stone-700">
-                {person.recordYears || "-"}
-              </td>
-              <td className="px-4 py-3 text-right align-top text-stone-700">
-                {person.sourceCount.toLocaleString()}
               </td>
             </tr>
           ))}
@@ -226,7 +190,7 @@ function relationshipLabel(value: string): string {
     case "testified_for":
       return "Testified";
     case "signed_in_for":
-      return "Signed in";
+      return "Hearing sign in";
     case "lobbying_firm_for":
       return "Lobbying firm";
     case "paid_lobbying_for":

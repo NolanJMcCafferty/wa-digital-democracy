@@ -114,11 +114,16 @@ DELETE FROM legislator
 WHERE lws_sponsor_id = '990001'
   AND name = 'Representative Fixture Sponsor';
 
-DELETE FROM source_record
-WHERE source_system = 'lws'
-  AND source_endpoint = 'Fixture.Minimal'
-  AND source_url = 'fixture://wa-dd/minimal'
-  AND content_hash = 'fixture-minimal-v1'
-  AND transform_version = 'fixture-v1';
+DO $$
+BEGIN
+  IF to_regclass('public.source_record') IS NOT NULL THEN
+    DELETE FROM source_record
+    WHERE source_system = 'lws'
+      AND source_endpoint = 'Fixture.Minimal'
+      AND source_url = 'fixture://wa-dd/minimal'
+      AND content_hash = 'fixture-minimal-v1'
+      AND transform_version = 'fixture-v1';
+  END IF;
+END $$;
 
 COMMIT;

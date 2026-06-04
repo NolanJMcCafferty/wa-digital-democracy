@@ -60,6 +60,7 @@ export type TestifierSummary = {
   testified: boolean;
   time_signed_in?: string | null;
   organization_id?: number | null;
+  organization_name?: string;
 };
 
 export type TranscriptSection = {

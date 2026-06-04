@@ -24,7 +24,7 @@ func runDaily(args []string) int {
 		dsn            = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		outDir         = fs.String("out-dir", "data/processed", "where run summary JSON files are written")
 		rateLimit      = fs.Float64("rate", 10.0, "max requests/sec per legislative host for hearing/source-context steps")
-		sessionRate    = fs.Float64("session-rate", 25.0, "max requests/sec for LWS session metadata")
+		sessionRate    = fs.Float64("session-rate", 50.0, "max requests/sec for LWS session metadata")
 		sessionWorkers = fs.Int("session-workers", 4, "number of ingest-session workers")
 		sessionLimit   = fs.Int("session-limit", 0, "stop ingest-session after N bills (0 = no limit)")
 		hearingLimit   = fs.Int("hearing-limit", 0, "stop ingest-hearings after N hearings (0 = no limit)")

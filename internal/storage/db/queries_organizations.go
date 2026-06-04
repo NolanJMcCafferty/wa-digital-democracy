@@ -381,7 +381,7 @@ WITH ctx AS (
       SELECT *
         FROM pdc_employer pe2
        WHERE pe2.employer_id = m.source_row_id
-       ORDER BY pe2.last_employment_year DESC NULLS LAST, pe2.id DESC
+       ORDER BY pe2.last_employment_year DESC NULLS LAST, pe2.employer_id DESC
        LIMIT 1
     ) pe ON TRUE
   UNION ALL
@@ -394,7 +394,6 @@ WITH ctx AS (
          COALESCE(c.fiscal_year, 0),
          '',
          '',
-         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -411,7 +410,6 @@ WITH ctx AS (
          COALESCE(s.report_year, 0),
          '',
          '',
-         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -428,7 +426,6 @@ WITH ctx AS (
          COALESCE(c.report_fiscal_year, 0),
          '',
          '',
-         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -445,7 +442,6 @@ WITH ctx AS (
          0,
          '',
          COALESCE(v.web_address, ''),
-         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -462,7 +458,6 @@ WITH ctx AS (
          COALESCE(p.fiscal_year, 0),
          '',
          '',
-         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m
@@ -479,7 +474,6 @@ WITH ctx AS (
          COALESCE(EXTRACT(YEAR FROM a.start_date)::int, 0),
          COALESCE(a.start_date::text, ''),
          '',
-         0,
          m.match_confidence::text,
          m.evidence
     FROM reviewed_vendor_entity_match m

@@ -30,7 +30,7 @@ func runIngestSession(args []string) int {
 		biennium  = fs.String("biennium", "2025-26", "Biennium to ingest, e.g. 2025-26")
 		dsn       = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
 		outDir    = fs.String("out-dir", "data/processed", "where _session.json and _discovery.json are written")
-		rateLimit = fs.Float64("rate", 25.0, "max requests/sec for the LWS host")
+		rateLimit = fs.Float64("rate", 50.0, "max requests/sec for the LWS host")
 		workers   = fs.Int("workers", 4, "number of concurrent bill workers. HTTP calls still respect --rate per LWS host.")
 		limit     = fs.Int("limit", 0, "stop after N bills (0 = no limit). For smoke tests.")
 		onlyTypes = fs.String("only-types", "", "comma-separated list of bill prefixes to keep (e.g. \"HB,SB\"). Empty = all.")

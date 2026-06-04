@@ -33,7 +33,7 @@ INSERT INTO speaker_identity_evidence (evidence_key, diarization_job_id, speaker
                                        candidate_kind, candidate_id, candidate_label, confidence,
                                        start_ms, end_ms, raw)
 VALUES ($1,$2,$3,NULLIF($4,0),$5::speaker_evidence_type,$6,$7::speaker_candidate_kind,
-        NULLIF($8,0),$9,NULLIF($10,0),NULLIF($11,0),NULLIF($12,0),$13::jsonb)
+        NULLIF($8,0),$9,NULLIF($10::numeric,0),NULLIF($11,0),NULLIF($12,0),$13::jsonb)
 ON CONFLICT (evidence_key) DO UPDATE SET
   evidence_text = EXCLUDED.evidence_text,
   confidence = EXCLUDED.confidence,
@@ -64,7 +64,7 @@ func (s *Store) UpsertSpeakerReviewTask(ctx context.Context, p SpeakerReviewTask
 INSERT INTO speaker_review_task (diarization_job_id, speaker_cluster_id, priority,
                                  proposed_candidate_kind, proposed_candidate_id,
                                  proposed_label, proposed_confidence, evidence_ids)
-VALUES ($1,$2,$3,$4::speaker_candidate_kind,NULLIF($5,0),$6,NULLIF($7,0),$8)
+VALUES ($1,$2,$3,$4::speaker_candidate_kind,NULLIF($5,0),$6,NULLIF($7::numeric,0),$8)
 ON CONFLICT (diarization_job_id, speaker_cluster_id, proposed_candidate_kind, COALESCE(proposed_candidate_id, 0), proposed_label)
 DO UPDATE SET
   priority = GREATEST(speaker_review_task.priority, EXCLUDED.priority),

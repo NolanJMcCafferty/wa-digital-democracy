@@ -69,12 +69,13 @@ type HearingSummary struct {
 }
 
 type TestifierSummary struct {
-	RawName         string     `json:"raw_name"`
-	RawOrganization string     `json:"raw_organization,omitempty"`
-	Position        string     `json:"position"`
-	Testified       bool       `json:"testified"`
-	TimeSignedIn    *time.Time `json:"time_signed_in,omitempty"`
-	OrganizationID  *int64     `json:"organization_id,omitempty"`
+	RawName          string     `json:"raw_name"`
+	RawOrganization  string     `json:"raw_organization,omitempty"`
+	Position         string     `json:"position"`
+	Testified        bool       `json:"testified"`
+	TimeSignedIn     *time.Time `json:"time_signed_in,omitempty"`
+	OrganizationID   *int64     `json:"organization_id,omitempty"`
+	OrganizationName string     `json:"organization_name,omitempty"`
 }
 
 type TranscriptSection struct {
@@ -323,9 +324,10 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 func loadTestifiers(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) ([]TestifierSummary, error) {
 	const q = `
 SELECT t.raw_name, t.raw_organization, t.position, t.testified,
-       t.time_signed_in, t.normalized_org_id
+       t.time_signed_in, t.normalized_org_id, o.canonical_name
   FROM testifier t
   JOIN agenda_item a ON a.id = t.agenda_item_id
+  LEFT JOIN organization o ON o.id = t.normalized_org_id
  WHERE a.csi_agenda_item_id = $1
  ORDER BY
    CASE t.position::text WHEN 'Pro' THEN 0 WHEN 'Con' THEN 1 WHEN 'Other' THEN 2 ELSE 3 END,
@@ -343,13 +345,15 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 			rawOrg   *string
 			signedAt *time.Time
 			orgID    *int64
+			orgName  *string
 		)
-		if err := rows.Scan(&t.RawName, &rawOrg, &t.Position, &t.Testified, &signedAt, &orgID); err != nil {
+		if err := rows.Scan(&t.RawName, &rawOrg, &t.Position, &t.Testified, &signedAt, &orgID, &orgName); err != nil {
 			return nil, err
 		}
 		t.RawOrganization = deref(rawOrg)
 		t.TimeSignedIn = signedAt
 		t.OrganizationID = orgID
+		t.OrganizationName = deref(orgName)
 		out = append(out, t)
 	}
 	return out, rows.Err()

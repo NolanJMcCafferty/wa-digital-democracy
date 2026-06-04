@@ -90,7 +90,7 @@ path); when it's empty, it stores every hearing LWS reports
 uses concurrent workers while the shared HTTP client enforces the LWS
 host rate limit, so runtime depends on upstream latency and the selected
 `--workers` / `--rate` values. The hosted `wa-dd daily` wrapper defaults
-session metadata to `--session-workers=4` and `--session-rate=25`.
+session metadata to `--session-workers=4` and `--session-rate=50`.
 
 **Resume / smoke-test flags:**
 

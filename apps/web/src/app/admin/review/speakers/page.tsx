@@ -35,7 +35,7 @@ export default async function SpeakerReviewIndex({
         <p className="text-sm uppercase tracking-wider text-stone-500">Internal review</p>
         <h1 className="text-3xl font-bold text-stone-900">Speaker identity review</h1>
         <p className="mt-2 text-stone-600">
-          Resolve Deepgram speaker clusters hearing-by-hearing before publishing named speaker assignments.
+          Resolve speaker clusters hearing-by-hearing before publishing named speaker assignments.
         </p>
       </div>
 
