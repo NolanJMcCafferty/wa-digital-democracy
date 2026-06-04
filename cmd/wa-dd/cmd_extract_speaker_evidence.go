@@ -112,6 +112,12 @@ func extractSpeakerEvidenceForJob(ctx context.Context, store *db.Store, jobID in
 			createdTasks++
 		}
 	}
+	csiEvidence, csiTasks, err := generateCSISpeakerEvidence(ctx, store, jobID, eventID, segments)
+	if err != nil {
+		return len(segments), createdEvidence, createdTasks, err
+	}
+	createdEvidence += csiEvidence
+	createdTasks += csiTasks
 	return len(segments), createdEvidence, createdTasks, nil
 }
 
@@ -187,7 +193,14 @@ SELECT t.id, t.raw_name
   FROM testifier t
   JOIN agenda_item a ON a.id = t.agenda_item_id
   JOIN hearing h ON h.id = a.hearing_id
- WHERE h.tvw_event_id = $1 AND lower(t.raw_name) = lower($2)
+ WHERE h.tvw_event_id = $1
+   AND COALESCE(t.active, TRUE)
+   AND lower(regexp_replace(
+         CASE WHEN position(',' in t.raw_name) > 0
+              THEN trim(split_part(t.raw_name, ',', 2)) || ' ' || trim(split_part(t.raw_name, ',', 1))
+              ELSE t.raw_name END,
+         '[^a-zA-Z0-9 ]', ' ', 'g')) = lower(regexp_replace($2, '[^a-zA-Z0-9 ]', ' ', 'g'))
+ ORDER BY t.testified DESC, t.csi_order NULLS LAST, t.id
  LIMIT 1;`
 	var id int64
 	var display string

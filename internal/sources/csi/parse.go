@@ -253,11 +253,15 @@ func parseSignInTime(s string) time.Time {
 			s = s[:dot+1+9] + s[end:]
 		}
 	}
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		loc = time.UTC
+	}
 	for _, layout := range []string{
 		"2006-01-02T15:04:05.999999999",
 		"2006-01-02T15:04:05",
 	} {
-		if t, err := time.Parse(layout, s); err == nil {
+		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
 			return t.UTC()
 		}
 	}

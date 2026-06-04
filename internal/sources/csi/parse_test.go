@@ -103,7 +103,8 @@ func TestParseTestifiers(t *testing.T) {
 	if rows[2].Organization != "ACLU of Washington" {
 		t.Errorf("rows[2].Organization = %q", rows[2].Organization)
 	}
-	want0 := time.Date(2026, 3, 4, 14, 40, 15, 553000000, time.UTC)
+	loc, _ := time.LoadLocation("America/Los_Angeles")
+	want0 := time.Date(2026, 3, 4, 14, 40, 15, 553000000, loc)
 	if !rows[0].TimeSignedIn.Equal(want0) {
 		t.Errorf("rows[0].TimeSignedIn = %v, want %v", rows[0].TimeSignedIn, want0)
 	}

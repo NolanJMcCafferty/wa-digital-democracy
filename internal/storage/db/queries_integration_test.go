@@ -289,7 +289,7 @@ SELECT count(*)
 	}
 }
 
-func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
+func TestReplaceTestifiers_DeactivatesStaleRowsOnSecondCall(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
@@ -317,7 +317,7 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 	}
 	count := func() int {
 		var n int
-		store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1`, agendaID).Scan(&n)
+		store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1 AND COALESCE(active, TRUE)`, agendaID).Scan(&n)
 		return n
 	}
 	if got := count(); got != 2 {
@@ -330,7 +330,14 @@ func TestReplaceTestifiers_ReplacesOnSecondCall(t *testing.T) {
 		t.Fatalf("replace 2: %v", err)
 	}
 	if got := count(); got != 1 {
-		t.Errorf("count after replace = %d, want 1 (Alice/Bob removed, Carol present)", got)
+		t.Errorf("active count after replace = %d, want 1 (Alice/Bob inactive, Carol active)", got)
+	}
+	var total int
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM testifier WHERE agenda_item_id = $1`, agendaID).Scan(&total); err != nil {
+		t.Fatalf("total count: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("total count after replace = %d, want 3 (historical rows preserved)", total)
 	}
 }
 

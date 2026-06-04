@@ -170,7 +170,7 @@ SELECT o.id, o.canonical_name, o.aliases,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Other') AS other_count,
        COUNT(DISTINCT t.id) FILTER (WHERE t.position = 'Unknown') AS unknown_count
   FROM organization o
-  LEFT JOIN testifier t ON t.normalized_org_id = o.id` + testifierWhere + `
+  LEFT JOIN testifier t ON t.normalized_org_id = o.id AND COALESCE(t.active, TRUE)` + testifierWhere + `
  GROUP BY o.id`
 	if len(keywords) > 0 {
 		q += "\nHAVING COUNT(DISTINCT t.id) > 0"
@@ -258,6 +258,7 @@ SELECT b.biennium, b.bill_number, b.prefix, b.number,
   JOIN hearing     h ON h.id = a.hearing_id
   LEFT JOIN bill   b ON b.id = a.bill_id
  WHERE t.normalized_org_id = $1
+   AND COALESCE(t.active, TRUE)
  GROUP BY b.biennium, b.bill_number, b.prefix, b.number,
           a.csi_agenda_item_id, h.id, a.label, h.committee_name, h.chamber, h.meeting_datetime
  ORDER BY h.meeting_datetime DESC;`

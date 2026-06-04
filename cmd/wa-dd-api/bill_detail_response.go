@@ -76,6 +76,8 @@ type TestifierSummary struct {
 	TimeSignedIn     *time.Time `json:"time_signed_in,omitempty"`
 	OrganizationID   *int64     `json:"organization_id,omitempty"`
 	OrganizationName string     `json:"organization_name,omitempty"`
+	CSIOrder         *int       `json:"csi_order,omitempty"`
+	CSIPanelClass    string     `json:"csi_panel_class,omitempty"`
 }
 
 type TranscriptSection struct {
@@ -324,12 +326,15 @@ SELECT h.id, h.committee_name, h.committee_acronym, h.chamber, h.meeting_datetim
 func loadTestifiers(ctx context.Context, store *db.Store, billAgendaTarget *common.BillAgendaTarget) ([]TestifierSummary, error) {
 	const q = `
 SELECT t.raw_name, t.raw_organization, t.position, t.testified,
-       t.time_signed_in, t.normalized_org_id, o.canonical_name
+       t.time_signed_in, t.normalized_org_id, o.canonical_name, t.csi_order, t.csi_panel_class
   FROM testifier t
   JOIN agenda_item a ON a.id = t.agenda_item_id
   LEFT JOIN organization o ON o.id = t.normalized_org_id
  WHERE a.csi_agenda_item_id = $1
+   AND COALESCE(t.active, TRUE)
  ORDER BY
+   t.testified DESC,
+   t.csi_order NULLS LAST,
    CASE t.position::text WHEN 'Pro' THEN 0 WHEN 'Con' THEN 1 WHEN 'Other' THEN 2 ELSE 3 END,
    t.raw_organization NULLS LAST,
    t.raw_name;`
@@ -341,19 +346,23 @@ SELECT t.raw_name, t.raw_organization, t.position, t.testified,
 	out := []TestifierSummary{}
 	for rows.Next() {
 		var (
-			t        TestifierSummary
-			rawOrg   *string
-			signedAt *time.Time
-			orgID    *int64
-			orgName  *string
+			t          TestifierSummary
+			rawOrg     *string
+			signedAt   *time.Time
+			orgID      *int64
+			orgName    *string
+			order      *int
+			panelClass *string
 		)
-		if err := rows.Scan(&t.RawName, &rawOrg, &t.Position, &t.Testified, &signedAt, &orgID, &orgName); err != nil {
+		if err := rows.Scan(&t.RawName, &rawOrg, &t.Position, &t.Testified, &signedAt, &orgID, &orgName, &order, &panelClass); err != nil {
 			return nil, err
 		}
 		t.RawOrganization = deref(rawOrg)
 		t.TimeSignedIn = signedAt
 		t.OrganizationID = orgID
 		t.OrganizationName = deref(orgName)
+		t.CSIOrder = order
+		t.CSIPanelClass = deref(panelClass)
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -452,6 +461,7 @@ SELECT o.id, o.canonical_name, o.aliases, o.match_confidence::text, o.match_note
   JOIN testifier t ON t.normalized_org_id = o.id
   JOIN agenda_item a ON a.id = t.agenda_item_id
  WHERE a.csi_agenda_item_id = $1
+   AND COALESCE(t.active, TRUE)
  GROUP BY o.id;`
 	rows, err := store.Pool.Query(ctx, q, billAgendaTarget.AgendaItem.CSIAgendaItemID)
 	if err != nil {

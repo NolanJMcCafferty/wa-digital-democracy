@@ -128,12 +128,14 @@ type InsertTestifierParams struct {
 	Position        string // testifier_position enum value
 	Testified       bool
 	TimeSignedIn    time.Time
+	CSIOrder        int
+	CSIPanelClass   string
 }
 
-// ReplaceTestifiersForAgenda is the idempotent upsert pattern: delete the
-// agenda's current testifier rows and re-insert the fresh batch. CSI is the
-// authoritative source for the *current* state; preserving stale rows would
-// drift.
+// ReplaceTestifiersForAgenda refreshes the agenda's current CSI roster while
+// preserving stable testifier IDs. CSI is authoritative for current rows, but
+// speaker review tasks can point at testifier.id, so we mark disappeared rows
+// inactive instead of deleting/re-inserting the whole roster.
 func (s *Store) ReplaceTestifiersForAgenda(ctx context.Context, agendaItemID int64, rows []InsertTestifierParams) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -141,41 +143,48 @@ func (s *Store) ReplaceTestifiersForAgenda(ctx context.Context, agendaItemID int
 	}
 	defer tx.Rollback(ctx)
 
-	// ReplaceTestifiersForAgenda deletes and re-inserts testifier rows. Clean up
-	// the derived person mention/affiliation rows tied to the old testifier IDs
-	// first so repeated CSI ingest does not accumulate stale person facts.
-	if _, err := tx.Exec(ctx, `
-DELETE FROM person_organization_affiliation
- WHERE source_kind = 'csi_testifier'
-   AND source_table = 'testifier'
-   AND source_pk IN (SELECT id FROM testifier WHERE agenda_item_id = $1);`, agendaItemID); err != nil {
-		return fmt.Errorf("delete CSI person affiliations: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-DELETE FROM person_source_mention
- WHERE source_kind = 'csi_testifier'
-   AND source_table = 'testifier'
-   AND source_pk IN (SELECT id FROM testifier WHERE agenda_item_id = $1);`, agendaItemID); err != nil {
-		return fmt.Errorf("delete CSI person mentions: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM testifier WHERE agenda_item_id = $1`, agendaItemID); err != nil {
-		return fmt.Errorf("delete testifiers: %w", err)
-	}
-	const insQ = `
+	seen := make([]string, 0, len(rows))
+	const upsertQ = `
 INSERT INTO testifier (agenda_item_id, raw_name, raw_organization, position,
-                       testified, time_signed_in)
-VALUES ($1, $2, $3, $4::testifier_position, $5, $6)
+                       testified, time_signed_in, csi_order, csi_panel_class,
+                       source_key, active, last_seen_at, updated_at)
+VALUES ($1, $2, $3, $4::testifier_position, $5, $6, NULLIF($7,0), $8,
+        $9, TRUE, NOW(), NOW())
+ON CONFLICT (agenda_item_id, source_key) WHERE source_key IS NOT NULL DO UPDATE SET
+  raw_name = EXCLUDED.raw_name,
+  raw_organization = EXCLUDED.raw_organization,
+  position = EXCLUDED.position,
+  testified = EXCLUDED.testified,
+  time_signed_in = EXCLUDED.time_signed_in,
+  csi_order = EXCLUDED.csi_order,
+  csi_panel_class = EXCLUDED.csi_panel_class,
+  active = TRUE,
+  last_seen_at = NOW(),
+  updated_at = NOW()
 RETURNING id;`
 	for _, r := range rows {
+		r.AgendaItemID = agendaItemID
+		sourceKey := testifierSourceKey(r)
+		seen = append(seen, sourceKey)
 		var testifierID int64
-		if err := tx.QueryRow(ctx, insQ,
-			r.AgendaItemID, r.RawName, strOrNull(r.RawOrganization),
+		if err := tx.QueryRow(ctx, upsertQ,
+			agendaItemID, r.RawName, strOrNull(r.RawOrganization),
 			r.Position, r.Testified, timeOrNull(r.TimeSignedIn),
+			r.CSIOrder, strOrNull(r.CSIPanelClass), sourceKey,
 		).Scan(&testifierID); err != nil {
-			return fmt.Errorf("insert testifier: %w", err)
+			return fmt.Errorf("upsert testifier: %w", err)
 		}
 		if err := insertCSIPersonMentionAndAffiliation(ctx, tx, testifierID, r); err != nil {
 			return err
+		}
+	}
+	if len(seen) == 0 {
+		if _, err := tx.Exec(ctx, `UPDATE testifier SET active = FALSE, updated_at = NOW() WHERE agenda_item_id = $1 AND active`, agendaItemID); err != nil {
+			return fmt.Errorf("deactivate stale testifiers: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `UPDATE testifier SET active = FALSE, updated_at = NOW() WHERE agenda_item_id = $1 AND active AND NOT (source_key = ANY($2))`, agendaItemID, seen); err != nil {
+			return fmt.Errorf("deactivate stale testifiers: %w", err)
 		}
 	}
 	return tx.Commit(ctx)
@@ -191,6 +200,17 @@ func insertCSIPersonMentionAndAffiliation(ctx context.Context, tx pgx.Tx, testif
 		Testified:       r.Testified,
 		TimeSignedIn:    r.TimeSignedIn,
 	})
+}
+
+func testifierSourceKey(r InsertTestifierParams) string {
+	parts := []string{
+		fmt.Sprintf("order:%d", r.CSIOrder),
+		"name:" + normalizePersonName(r.RawName),
+		"org:" + lowerTrim(r.RawOrganization),
+		"pos:" + strings.ToUpper(strings.TrimSpace(r.Position)),
+		fmt.Sprintf("testified:%t", r.Testified),
+	}
+	return strings.Join(parts, "|")
 }
 
 type csiPersonAffiliationInput struct {
@@ -493,6 +513,7 @@ func (s *Store) SearchHearings(ctx context.Context, p HearingSearchParams) ([]He
 			SELECT 1 FROM agenda_item a
 			JOIN testifier t ON t.agenda_item_id = a.id
 			WHERE a.hearing_id = h.id
+			  AND COALESCE(t.active, TRUE)
 			  AND t.raw_name ILIKE '%%' || $%d || '%%'
 		)`, idx))
 	}
@@ -583,7 +604,7 @@ SELECT a.hearing_id, COALESCE(a.csi_agenda_item_id, ''), a.label,
        COUNT(t.id) FILTER (WHERE t.testified) AS testified_count
   FROM agenda_item a
   LEFT JOIN bill b ON b.id = a.bill_id
-  LEFT JOIN testifier t ON t.agenda_item_id = a.id
+  LEFT JOIN testifier t ON t.agenda_item_id = a.id AND COALESCE(t.active, TRUE)
  WHERE a.hearing_id = ANY($1)
  GROUP BY a.hearing_id, a.id, b.biennium, b.bill_number, b.prefix, b.number
  ORDER BY a.hearing_id, a.order_index NULLS LAST, a.id`, hearingIDs)

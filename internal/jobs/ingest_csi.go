@@ -96,6 +96,8 @@ func (p *Pipeline) IngestCSI(ctx context.Context, ids *IDs) error {
 			Position:        csi.CanonicalPosition(t.Position),
 			Testified:       t.Testified,
 			TimeSignedIn:    t.TimeSignedIn,
+			CSIOrder:        t.Count,
+			CSIPanelClass:   t.CssClass,
 		})
 	}
 	if err := p.Store.ReplaceTestifiersForAgenda(ctx, aiID, params); err != nil {
