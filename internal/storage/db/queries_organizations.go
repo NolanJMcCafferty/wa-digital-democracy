@@ -517,6 +517,102 @@ SELECT DISTINCT ON (source_kind, source_name, detail)
 	return out, rows.Err()
 }
 
+// OrganizationTranscriptQuote represents a reviewed transcript quote attributed to an organization.
+type OrganizationTranscriptQuote struct {
+	ID               int64     `json:"id"`
+	Biennium         string    `json:"biennium,omitempty"`
+	BillID           string    `json:"bill_id,omitempty"`
+	BillPrefix       string    `json:"bill_prefix,omitempty"`
+	BillNumber       int       `json:"bill_number,omitempty"`
+	AgendaItemLabel  string    `json:"agenda_item_label,omitempty"`
+	CommitteeName    string    `json:"committee_name,omitempty"`
+	MeetingDateTime  time.Time `json:"meeting_datetime,omitempty"`
+	StartMS          int       `json:"start_ms"`
+	EndMS            int       `json:"end_ms"`
+	Text             string    `json:"text"`
+	SpeakerLabel     string    `json:"speaker_label"`
+	SpeakerKind      string    `json:"speaker_kind"`
+	TVWEventID       string    `json:"tvw_event_id,omitempty"`
+	TestifierName    string    `json:"testifier_name,omitempty"`
+	TestifierID      int64     `json:"testifier_id,omitempty"`
+	ReviewStatus     string    `json:"review_status"`
+}
+
+// GetOrganizationTranscriptQuotes returns transcript quotes linked to an organization
+// through reviewed speaker assignments. Only includes quotes from accepted speaker
+// assignments where the speaker was identified as a testifier for that organization.
+func (s *Store) GetOrganizationTranscriptQuotes(ctx context.Context, organizationID int64) ([]OrganizationTranscriptQuote, error) {
+	const q = `
+WITH org_testifiers AS (
+  -- Get all testifiers linked to this organization
+  SELECT t.id AS testifier_id, t.raw_name, t.agenda_item_id
+    FROM testifier t
+   WHERE t.normalized_org_id = $1
+),
+quote_segments AS (
+  -- Get diarized segments with accepted speaker assignments matching org testifiers
+  SELECT d.id, d.start_ms, d.end_ms, d.text, d.tvw_event_id,
+         sa.speaker_label, sa.speaker_kind, sa.review_status,
+         ot.testifier_id, ot.raw_name AS testifier_name,
+         ot.agenda_item_id
+    FROM diarized_speech_segment d
+    JOIN speaker_assignment sa 
+      ON sa.diarization_job_id = d.diarization_job_id 
+     AND sa.speaker_cluster_id = d.speaker_cluster_id
+     AND sa.review_status = 'accepted'
+     AND sa.speaker_kind = 'testifier'
+    JOIN org_testifiers ot
+      ON sa.speaker_id = ot.testifier_id
+   WHERE d.text IS NOT NULL
+)
+SELECT 
+  qs.id,
+  COALESCE(b.biennium, '') AS biennium,
+  COALESCE(b.bill_number, '') AS bill_id,
+  COALESCE(b.prefix, '') AS bill_prefix,
+  COALESCE(b.number, 0) AS bill_number,
+  COALESCE(a.label, '') AS agenda_item_label,
+  COALESCE(h.committee_name, '') AS committee_name,
+  h.meeting_datetime,
+  qs.start_ms,
+  qs.end_ms,
+  qs.text,
+  qs.speaker_label,
+  qs.speaker_kind,
+  qs.tvw_event_id,
+  qs.testifier_name,
+  qs.testifier_id,
+  qs.review_status
+FROM quote_segments qs
+LEFT JOIN hearing h ON h.tvw_event_id = qs.tvw_event_id
+LEFT JOIN agenda_item a ON a.id = qs.agenda_item_id
+LEFT JOIN bill b ON b.id = a.bill_id
+ORDER BY h.meeting_datetime DESC NULLS LAST, qs.start_ms ASC;`
+
+	rows, err := s.Pool.Query(ctx, q, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("organization transcript quotes: %w", err)
+	}
+	defer rows.Close()
+	
+	out := []OrganizationTranscriptQuote{}
+	for rows.Next() {
+		var q OrganizationTranscriptQuote
+		var meetingTS *time.Time
+		if err := rows.Scan(&q.ID, &q.Biennium, &q.BillID, &q.BillPrefix, &q.BillNumber,
+			&q.AgendaItemLabel, &q.CommitteeName, &meetingTS,
+			&q.StartMS, &q.EndMS, &q.Text, &q.SpeakerLabel, &q.SpeakerKind,
+			&q.TVWEventID, &q.TestifierName, &q.TestifierID, &q.ReviewStatus); err != nil {
+			return nil, fmt.Errorf("scan organization transcript quote: %w", err)
+		}
+		if meetingTS != nil {
+			q.MeetingDateTime = *meetingTS
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
 type PopulateOrganizationsStats struct {
 	CandidatesProcessed   int
 	OrganizationsUpserted int

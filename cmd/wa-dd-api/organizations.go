@@ -96,6 +96,25 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		SourceCount         int    `json:"source_count"`
 		Confidence          string `json:"confidence"`
 	}
+	type transcriptQuote struct {
+		ID               int64  `json:"id"`
+		Biennium         string `json:"biennium,omitempty"`
+		BillID           string `json:"bill_id,omitempty"`
+		BillPrefix       string `json:"bill_prefix,omitempty"`
+		BillNumber       int    `json:"bill_number,omitempty"`
+		AgendaItemLabel  string `json:"agenda_item_label,omitempty"`
+		CommitteeName    string `json:"committee_name,omitempty"`
+		MeetingDateTime  string `json:"meeting_datetime,omitempty"`
+		StartMS          int    `json:"start_ms"`
+		EndMS            int    `json:"end_ms"`
+		Text             string `json:"text"`
+		SpeakerLabel     string `json:"speaker_label"`
+		SpeakerKind      string `json:"speaker_kind"`
+		TVWEventID       string `json:"tvw_event_id,omitempty"`
+		TestifierName    string `json:"testifier_name,omitempty"`
+		TestifierID      int64  `json:"testifier_id,omitempty"`
+		ReviewStatus     string `json:"review_status"`
+	}
 	type body struct {
 		Slug               string              `json:"slug"`
 		CanonicalName      string              `json:"canonical_name"`
@@ -107,6 +126,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		Appearances        []appearance        `json:"appearances"`
 		Contexts           []publicContext     `json:"contexts"`
 		PersonAffiliations []personAffiliation `json:"person_affiliations"`
+		TranscriptQuotes   []transcriptQuote   `json:"transcript_quotes"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		slug := chi.URLParam(req, "slug")
@@ -137,6 +157,11 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 		affiliationsRaw, err := store.GetOrganizationPersonAffiliations(req.Context(), match.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		quotesRaw, err := store.GetOrganizationTranscriptQuotes(req.Context(), match.ID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -191,6 +216,32 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				Confidence:          a.Confidence,
 			})
 		}
+		quotes := make([]transcriptQuote, 0, len(quotesRaw))
+		for _, q := range quotesRaw {
+			meetingTime := ""
+			if !q.MeetingDateTime.IsZero() {
+				meetingTime = q.MeetingDateTime.Format(time.RFC3339)
+			}
+			quotes = append(quotes, transcriptQuote{
+				ID:               q.ID,
+				Biennium:         q.Biennium,
+				BillID:           q.BillID,
+				BillPrefix:       q.BillPrefix,
+				BillNumber:       q.BillNumber,
+				AgendaItemLabel:  q.AgendaItemLabel,
+				CommitteeName:    q.CommitteeName,
+				MeetingDateTime:  meetingTime,
+				StartMS:          q.StartMS,
+				EndMS:            q.EndMS,
+				Text:             q.Text,
+				SpeakerLabel:     q.SpeakerLabel,
+				SpeakerKind:      q.SpeakerKind,
+				TVWEventID:       q.TVWEventID,
+				TestifierName:    q.TestifierName,
+				TestifierID:      q.TestifierID,
+				ReviewStatus:     q.ReviewStatus,
+			})
+		}
 		aliases := match.Aliases
 		if aliases == nil {
 			aliases = []string{}
@@ -209,6 +260,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 			Appearances:        apps,
 			Contexts:           contexts,
 			PersonAffiliations: affiliations,
+			TranscriptQuotes:   quotes,
 		})
 	}
 }

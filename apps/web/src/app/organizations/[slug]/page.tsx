@@ -4,6 +4,7 @@ import {
   loadOrganizationPage,
   type HearingPage,
   type OrganizationPersonAffiliation,
+  type OrganizationTranscriptQuote,
 } from "@/lib/api";
 import type { Position } from "@/lib/pageTypes";
 import {
@@ -56,10 +57,11 @@ export default async function OrganizationPage({
         </div>
       </section>
 
-      <section className="grid grid-cols-3 gap-3 text-sm">
+      <section className="grid grid-cols-4 gap-3 text-sm">
         <Metric label="Linked testifiers" value={org.testifierCount.toLocaleString()} />
         <Metric label="Appearances" value={org.appearances.length.toLocaleString()} />
         <Metric label="Public records" value={org.contexts.length.toLocaleString()} />
+        <Metric label="Transcript quotes" value={org.transcriptQuotes.length.toLocaleString()} />
       </section>
 
       {org.personAffiliations.length > 0 ? (
@@ -76,6 +78,32 @@ export default async function OrganizationPage({
           <AffiliatedPeopleTable people={org.personAffiliations} />
         </section>
       ) : null}
+
+      {org.transcriptQuotes.length > 0 ? (
+        <section aria-labelledby="quotes-heading" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="quotes-heading" className="text-xl font-semibold text-stone-900">
+              Transcript quotes
+            </h2>
+            <p className="text-sm text-stone-600">
+              Reviewed transcript quotes from organization representatives with source timestamps.
+              Only includes quotes with accepted speaker identity assignments.
+            </p>
+          </div>
+          <TranscriptQuotesSection quotes={org.transcriptQuotes} />
+        </section>
+      ) : (
+        <section aria-labelledby="quotes-heading" className="space-y-4">
+          <div className="space-y-1">
+            <h2 id="quotes-heading" className="text-xl font-semibold text-stone-900">
+              Transcript quotes
+            </h2>
+            <p className="text-sm text-stone-600">
+              No reviewed transcript quotes are available for this organization.
+            </p>
+          </div>
+        </section>
+      )}
 
       {org.contexts.length > 0 ? (
         <section aria-labelledby="context-heading" className="space-y-4">
@@ -158,6 +186,89 @@ export default async function OrganizationPage({
       </section>
 
     </article>
+  );
+}
+
+function TranscriptQuotesSection({ quotes }: { quotes: OrganizationTranscriptQuote[] }) {
+  // Group quotes by bill for better organization
+  const quotesByBill = new Map<string, OrganizationTranscriptQuote[]>();
+  for (const quote of quotes) {
+    const billKey = quote.billId || "No bill context";
+    const existing = quotesByBill.get(billKey) || [];
+    existing.push(quote);
+    quotesByBill.set(billKey, existing);
+  }
+
+  return (
+    <div className="space-y-6">
+      {Array.from(quotesByBill.entries()).map(([billKey, billQuotes]) => (
+        <div key={billKey} className="space-y-3">
+          <h3 className="font-medium text-stone-900">{billKey}</h3>
+          <div className="space-y-3">
+            {billQuotes.map((quote) => (
+              <QuoteCard key={quote.id} quote={quote} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function QuoteCard({ quote }: { quote: OrganizationTranscriptQuote }) {
+  const startSeconds = Math.floor(quote.startMs / 1000);
+  const endSeconds = Math.floor(quote.endMs / 1000);
+  const duration = endSeconds - startSeconds;
+
+  return (
+    <div className="rounded border border-stone-300 bg-white p-4">
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded bg-blue-100 px-2 py-0.5 font-medium text-blue-700">
+            {quote.speakerLabel}
+          </span>
+          {quote.committeeName && (
+            <span className="rounded bg-stone-100 px-2 py-0.5 text-stone-600">
+              {quote.committeeName}
+            </span>
+          )}
+          {quote.meetingDatetime && (
+            <span className="rounded bg-stone-100 px-2 py-0.5 text-stone-600">
+              {formatMeetingDate(quote.meetingDatetime)}
+            </span>
+          )}
+          <span className="rounded bg-stone-100 px-2 py-0.5 text-stone-600">
+            {formatDuration(duration)}
+          </span>
+        </div>
+        
+        <blockquote className="text-stone-800 italic">
+          &ldquo;{quote.text}&rdquo;
+        </blockquote>
+        
+        {quote.tvwEventId && (
+          <div className="flex items-center gap-2">
+            <a
+              href={formatTVWTimestampLink(quote.tvwEventId, quote.startMs)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-blue-700 underline hover:text-blue-900"
+            >
+              View timestamp at {formatTimestamp(quote.startMs)}
+            </a>
+            <span className="text-xs text-stone-500">
+              ({quote.reviewStatus} speaker assignment)
+            </span>
+          </div>
+        )}
+        
+        {quote.agendaItemLabel && (
+          <p className="text-xs text-stone-500">
+            Context: {quote.agendaItemLabel}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -312,4 +423,33 @@ function formatAmount(amount?: string): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(n);
+}
+
+function formatMeetingDate(dateString: string): string {
+  const date = new Date(dateString);
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatTimestamp(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (remainingSeconds === 0) return `${minutes}m`;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatTVWTimestampLink(tvwEventId: string, startMs: number): string {
+  const seconds = Math.floor(startMs / 1000);
+  return `https://www.tvw.org/watch/?eventID=${tvwEventId}&startStreamAt=${seconds}`;
 }

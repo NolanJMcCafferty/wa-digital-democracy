@@ -93,3 +93,66 @@ func TestListOrganizationsHandler_TopicKeywordFilter(t *testing.T) {
 		t.Errorf("Fixture Housing Coalition should be excluded for non-matching keyword")
 	}
 }
+
+// TestGetOrganizationHandler_TranscriptQuotes verifies that the organization
+// detail handler includes transcript quotes with proper structure and only
+// includes reviewed speaker assignments.
+func TestGetOrganizationHandler_TranscriptQuotes(t *testing.T) {
+	store := openTestStore(t)
+	r := chi.NewRouter()
+	r.Get("/api/v1/organizations/{slug}", getOrganizationHandler(store))
+
+	type transcriptQuote struct {
+		ID             int64  `json:"id"`
+		Text           string `json:"text"`
+		SpeakerLabel   string `json:"speaker_label"`
+		SpeakerKind    string `json:"speaker_kind"`
+		ReviewStatus   string `json:"review_status"`
+		StartMS        int    `json:"start_ms"`
+		EndMS          int    `json:"end_ms"`
+		TVWEventID     string `json:"tvw_event_id,omitempty"`
+		TestifierName  string `json:"testifier_name,omitempty"`
+	}
+
+	type orgResponse struct {
+		CanonicalName    string            `json:"canonical_name"`
+		TranscriptQuotes []transcriptQuote `json:"transcript_quotes"`
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/organizations/fixture-housing-coalition", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var org orgResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &org); err != nil {
+		t.Fatalf("unmarshal: %v; body=%s", err, w.Body.String())
+	}
+
+	// Verify transcript_quotes field exists and is an array (not null)
+	if org.TranscriptQuotes == nil {
+		t.Error("transcript_quotes field must be initialized array, not null")
+	}
+
+	// If there are quotes in the test fixtures, verify their structure
+	for i, quote := range org.TranscriptQuotes {
+		if quote.Text == "" {
+			t.Errorf("quote[%d].text must not be empty", i)
+		}
+		if quote.SpeakerLabel == "" {
+			t.Errorf("quote[%d].speaker_label must not be empty", i)
+		}
+		if quote.ReviewStatus != "accepted" {
+			t.Errorf("quote[%d].review_status must be 'accepted', got %q", i, quote.ReviewStatus)
+		}
+		if quote.SpeakerKind != "testifier" {
+			t.Errorf("quote[%d].speaker_kind must be 'testifier', got %q", i, quote.SpeakerKind)
+		}
+		if quote.EndMS <= quote.StartMS {
+			t.Errorf("quote[%d].end_ms (%d) must be > start_ms (%d)", i, quote.EndMS, quote.StartMS)
+		}
+	}
+}

@@ -239,6 +239,27 @@ export type OrganizationPage = OrganizationListEntry & {
   }>;
   contexts: PublicRecordContext[];
   personAffiliations: OrganizationPersonAffiliation[];
+  transcriptQuotes: OrganizationTranscriptQuote[];
+};
+
+export type OrganizationTranscriptQuote = {
+  id: number;
+  biennium?: string;
+  billId?: string;
+  billPrefix?: string;
+  billNumber?: number;
+  agendaItemLabel?: string;
+  committeeName?: string;
+  meetingDatetime?: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  speakerLabel: string;
+  speakerKind: string;
+  tvwEventId?: string;
+  testifierName?: string;
+  testifierId?: number;
+  reviewStatus: string;
 };
 
 export type OrganizationPersonAffiliation = {
@@ -840,6 +861,25 @@ type orgDetailResponse = orgListItem & {
     source_count: number;
     confidence: OrganizationSummary["match_confidence"];
   }>;
+  transcript_quotes: Array<{
+    id: number;
+    biennium?: string;
+    bill_id?: string;
+    bill_prefix?: string;
+    bill_number?: number;
+    agenda_item_label?: string;
+    committee_name?: string;
+    meeting_datetime?: string;
+    start_ms: number;
+    end_ms: number;
+    text: string;
+    speaker_label: string;
+    speaker_kind: string;
+    tvw_event_id?: string;
+    testifier_name?: string;
+    testifier_id?: number;
+    review_status: string;
+  }>;
 };
 
 function mapOrganizationListItem(o: orgListItem): OrganizationListEntry {
@@ -918,6 +958,25 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       recordYears: a.record_years,
       sourceCount: a.source_count,
       confidence: a.confidence,
+    })),
+    transcriptQuotes: (detail.transcript_quotes ?? []).map((q) => ({
+      id: q.id,
+      biennium: q.biennium,
+      billId: q.bill_id,
+      billPrefix: q.bill_prefix,
+      billNumber: q.bill_number,
+      agendaItemLabel: q.agenda_item_label,
+      committeeName: q.committee_name,
+      meetingDatetime: q.meeting_datetime,
+      startMs: q.start_ms,
+      endMs: q.end_ms,
+      text: q.text,
+      speakerLabel: q.speaker_label,
+      speakerKind: q.speaker_kind,
+      tvwEventId: q.tvw_event_id,
+      testifierName: q.testifier_name,
+      testifierId: q.testifier_id,
+      reviewStatus: q.review_status,
     })),
   };
 }
