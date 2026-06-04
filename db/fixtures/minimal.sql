@@ -50,6 +50,65 @@ ON CONFLICT (lws_sponsor_id) DO UPDATE SET
   acronym = EXCLUDED.acronym,
   updated_at = NOW();
 
+WITH existing_person AS (
+  SELECT id
+  FROM person
+  WHERE display_name = 'Representative Fixture Sponsor'
+    AND COALESCE(first_name, '') = 'Fixture'
+    AND COALESCE(last_name, '') = 'Sponsor'
+  ORDER BY id
+  LIMIT 1
+), inserted_person AS (
+  INSERT INTO person (
+    display_name, first_name, last_name, normalized_name,
+    match_confidence, match_notes
+  )
+  SELECT
+    'Representative Fixture Sponsor',
+    'Fixture',
+    'Sponsor',
+    wa_dd_normalize_entity_name('Fixture Sponsor'),
+    'confirmed',
+    'Synthetic legislator used by deterministic test fixtures.'
+  WHERE NOT EXISTS (SELECT 1 FROM existing_person)
+  RETURNING id
+), fixture_person AS (
+  SELECT id FROM inserted_person
+  UNION ALL
+  SELECT id FROM existing_person
+  LIMIT 1
+)
+INSERT INTO legislator_roster_membership (
+  person_id, biennium, chamber, district, party, lws_sponsor_id,
+  roster_name, first_name, last_name, email, phone, acronym
+)
+SELECT
+  id,
+  '2025-26',
+  'House',
+  '99',
+  'D',
+  '990001',
+  'Representative Fixture Sponsor',
+  'Fixture',
+  'Sponsor',
+  'fixture.sponsor@example.test',
+  '360-555-0100',
+  'FIX'
+FROM fixture_person
+ON CONFLICT (biennium, lws_sponsor_id) DO UPDATE SET
+  person_id = EXCLUDED.person_id,
+  chamber = EXCLUDED.chamber,
+  district = EXCLUDED.district,
+  party = EXCLUDED.party,
+  roster_name = EXCLUDED.roster_name,
+  first_name = EXCLUDED.first_name,
+  last_name = EXCLUDED.last_name,
+  email = EXCLUDED.email,
+  phone = EXCLUDED.phone,
+  acronym = EXCLUDED.acronym,
+  updated_at = NOW();
+
 INSERT INTO bill (
   biennium, prefix, number, title, description, chamber_origin,
   current_status, status_date, official_url
@@ -73,12 +132,29 @@ ON CONFLICT (biennium, prefix, number) DO UPDATE SET
   official_url = EXCLUDED.official_url,
   updated_at = NOW();
 
-INSERT INTO bill_sponsor (bill_id, legislator_id, sponsor_type)
-SELECT b.id, l.id, 'Primary'
+INSERT INTO bill_sponsor (
+  bill_id, legislator_id, person_id, legislator_roster_membership_id,
+  sponsor_type
+)
+SELECT b.id, l.id, lrm.person_id, lrm.id, 'Primary'
 FROM bill b
 JOIN legislator l ON l.lws_sponsor_id = '990001'
+JOIN legislator_roster_membership lrm
+  ON lrm.biennium = '2025-26' AND lrm.lws_sponsor_id = '990001'
 WHERE b.biennium = '2099-00' AND b.prefix = 'HB' AND b.number = 9001
 ON CONFLICT (bill_id, legislator_id, sponsor_type) DO NOTHING;
+
+UPDATE bill_sponsor bs
+SET person_id = lrm.person_id,
+    legislator_roster_membership_id = lrm.id
+FROM bill b
+JOIN legislator l ON l.lws_sponsor_id = '990001'
+JOIN legislator_roster_membership lrm
+  ON lrm.biennium = '2025-26' AND lrm.lws_sponsor_id = '990001'
+WHERE bs.bill_id = b.id
+  AND bs.legislator_id = l.id
+  AND bs.sponsor_type = 'Primary'
+  AND b.biennium = '2099-00' AND b.prefix = 'HB' AND b.number = 9001;
 
 DELETE FROM bill_status_change
 WHERE bill_id IN (SELECT id FROM bill WHERE biennium = '2099-00' AND prefix = 'HB' AND number = 9001);
@@ -117,8 +193,8 @@ INSERT INTO tvw_event (
   'https://example.test/audio-download/fixture-tvw-event-9001.mp3',
   'https://example.test/video/fixture-tvw-event-9001.mp4',
   '{}'::jsonb,
-  ARRAY['fixture', 'housing'],
-  ARRAY['fixture', 'housing'],
+  '["fixture", "housing"]'::jsonb,
+  '["fixture", "housing"]'::jsonb,
   '[]'::jsonb,
   '[]'::jsonb
 )
@@ -213,6 +289,16 @@ ON CONFLICT (csi_agenda_item_id) DO UPDATE SET
   csi_meeting_family_id = EXCLUDED.csi_meeting_family_id,
   csi_agenda_item_family_id = EXCLUDED.csi_agenda_item_family_id,
   order_index = EXCLUDED.order_index;
+
+DELETE FROM agenda_item_window
+WHERE agenda_item_id IN (
+  SELECT id FROM agenda_item WHERE csi_agenda_item_id = 'fixture-agenda-item-9001'
+);
+
+INSERT INTO agenda_item_window (agenda_item_id, start_ms, end_ms, mentions)
+SELECT id, 0, 20000, 3
+FROM agenda_item
+WHERE csi_agenda_item_id = 'fixture-agenda-item-9001';
 
 INSERT INTO organization (canonical_name, aliases, match_confidence, match_notes)
 VALUES (

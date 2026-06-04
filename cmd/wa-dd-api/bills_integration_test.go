@@ -152,10 +152,29 @@ func seedSponsorOrderingFixture(t *testing.T, store *db.Store) {
 	ctx := context.Background()
 	cleanup := func() {
 		_, _ = store.Pool.Exec(ctx, `DELETE FROM bill WHERE biennium = '2098-00' AND prefix = 'HB' AND number IN (9000, 9100)`)
+		_, _ = store.Pool.Exec(ctx, `DELETE FROM legislator_roster_membership WHERE biennium = '2025-26' AND lws_sponsor_id = '990002'`)
 		_, _ = store.Pool.Exec(ctx, `DELETE FROM legislator WHERE lws_sponsor_id = '990002'`)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
+
+	_, err := store.UpsertLegislatorRosterMembership(ctx, db.UpsertLegislatorParams{
+		Biennium:     "2025-26",
+		LWSSponsorID: "990002",
+		Name:         "Representative Lead Fixture",
+		Chamber:      "House",
+		District:     "98",
+		Party:        "D",
+		OfficialURL:  "https://example.test/legislators/lead-fixture",
+		FirstName:    "Lead",
+		LastName:     "Fixture",
+		Email:        "lead.fixture@example.test",
+		Phone:        "360-555-0101",
+		Acronym:      "LFX",
+	})
+	if err != nil {
+		t.Fatalf("upsert lead legislator membership: %v", err)
+	}
 
 	statusDate := time.Date(2098, 1, 10, 0, 0, 0, 0, time.UTC)
 	secondaryBillID, err := store.UpsertBill(ctx, db.UpsertBillParams{

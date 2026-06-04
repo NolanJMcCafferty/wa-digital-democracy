@@ -110,6 +110,12 @@ DELETE FROM legislator_roster_membership
 WHERE lws_sponsor_id = '990001'
   AND roster_name = 'Representative Fixture Sponsor';
 
+DELETE FROM person
+WHERE display_name = 'Representative Fixture Sponsor'
+  AND first_name = 'Fixture'
+  AND last_name = 'Sponsor'
+  AND match_notes = 'Synthetic legislator used by deterministic test fixtures.';
+
 DELETE FROM legislator
 WHERE lws_sponsor_id = '990001'
   AND name = 'Representative Fixture Sponsor';

@@ -95,6 +95,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		RecordYears         string `json:"record_years,omitempty"`
 		SourceCount         int    `json:"source_count"`
 		Confidence          string `json:"confidence"`
+		PDCLobbyistID       string `json:"pdc_lobbyist_id,omitempty"`
 	}
 	type body struct {
 		Slug               string              `json:"slug"`
@@ -189,6 +190,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				RecordYears:         a.RecordYears,
 				SourceCount:         a.SourceCount,
 				Confidence:          a.Confidence,
+				PDCLobbyistID:       a.PDCLobbyistID,
 			})
 		}
 		aliases := match.Aliases
