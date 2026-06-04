@@ -79,6 +79,11 @@ func runDaily(args []string) int {
 			args: append(append([]string{}, sourceBase...), "--rate", fmt.Sprintf("%g", *rateLimit)),
 		},
 		{
+			name: "ingest-pdc-lobbyist-compensation",
+			code: runIngestPDCLobbyistCompensation,
+			args: append(append([]string{}, sourceBase...), "--rate", fmt.Sprintf("%g", *rateLimit)),
+		},
+		{
 			name: "ingest-hearings",
 			code: runIngestHearings,
 			args: append(append([]string{}, base...),

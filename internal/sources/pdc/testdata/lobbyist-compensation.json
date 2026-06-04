@@ -1,0 +1,30 @@
+[
+  {
+    "id": "1",
+    "filer_id": "F-123",
+    "filer_name": "Cascadia Public Affairs",
+    "funding_source_id": "456",
+    "funding_source": "Washington State Hospital Association",
+    "filing_period": "2026-Q1",
+    "employer_id": "E-789",
+    "employer_name": "Washington State Hospital Association",
+    "compensation": "25000.00",
+    "total_expenses": "1500.50",
+    "net_total": "26500.50",
+    "url": "https://web.pdc.wa.gov/compensation/1"
+  },
+  {
+    "id": "2",
+    "filer_id": "F-456",
+    "filer_name": "Gordon & Associates",
+    "funding_source_id": "789",
+    "funding_source": "Washington Education Association",
+    "filing_period": "2026-Q1",
+    "employer_id": "E-321",
+    "employer_name": "Washington Education Association",
+    "compensation": "15000",
+    "total_expenses": "750",
+    "net_total": "15750",
+    "url": "https://web.pdc.wa.gov/compensation/2"
+  }
+]

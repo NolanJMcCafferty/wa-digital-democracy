@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/nolan-mccafferty/wa-digital-democracy/internal/sources/pdc"
 )
 
 type UpsertIRSBMFParams struct {
@@ -678,4 +679,132 @@ func (s *Store) EnsureOrganizationFromIRSBMF(ctx context.Context, ein, name, nor
 		return 0, err
 	}
 	return id, nil
+}
+
+type UpsertPDCLobbyistCompensationParams struct {
+	FilerID         string
+	FilerName       string
+	FundingSourceID string
+	FundingSource   string
+	FilingPeriod    string
+	EmployerID      string
+	EmployerName    string
+	Compensation    float64
+	TotalExpenses   float64
+	NetTotal        float64
+	URL             string
+	Raw             map[string]any
+}
+
+// UpsertPDCLobbyistCompensation inserts or updates a PDC lobbyist compensation
+// record and creates the appropriate organization affiliations.
+func (s *Store) UpsertPDCLobbyistCompensation(ctx context.Context, p UpsertPDCLobbyistCompensationParams) error {
+	// Skip invalid rows
+	if p.FilerID == "" || p.EmployerID == "" || p.FilingPeriod == "" {
+		return nil
+	}
+
+	rawJSON, err := json.Marshal(p.Raw)
+	if err != nil {
+		return fmt.Errorf("marshal pdc lobbyist compensation raw: %w", err)
+	}
+
+	// Upsert compensation record
+	const compQ = `
+INSERT INTO pdc_lobbyist_compensation (
+    filer_id, employer_id, filing_period, filer_name, funding_source_id,
+    funding_source, employer_name, compensation, total_expenses, net_total,
+    url, raw, fetched_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, NOW())
+ON CONFLICT (filer_id, employer_id, filing_period) DO UPDATE SET
+    filer_name = EXCLUDED.filer_name,
+    funding_source_id = EXCLUDED.funding_source_id,
+    funding_source = EXCLUDED.funding_source,
+    employer_name = EXCLUDED.employer_name,
+    compensation = EXCLUDED.compensation,
+    total_expenses = EXCLUDED.total_expenses,
+    net_total = EXCLUDED.net_total,
+    url = EXCLUDED.url,
+    raw = EXCLUDED.raw,
+    fetched_at = NOW();`
+
+	_, err = s.Pool.Exec(ctx, compQ,
+		p.FilerID, p.EmployerID, p.FilingPeriod, p.FilerName,
+		strOrNull(p.FundingSourceID), strOrNull(p.FundingSource), p.EmployerName,
+		p.Compensation, p.TotalExpenses, p.NetTotal, strOrNull(p.URL), string(rawJSON))
+	if err != nil {
+		return fmt.Errorf("upsert pdc_lobbyist_compensation: %w", err)
+	}
+
+	// Ensure both filer and employer organizations exist
+	filerOrgID, err := s.EnsureOrganizationFromPDCEmployer(ctx, p.FilerID, p.FilerName, pdc.NormalizeOrgName(p.FilerName))
+	if err != nil {
+		return fmt.Errorf("ensure filer organization: %w", err)
+	}
+
+	employerOrgID, err := s.EnsureOrganizationFromPDCEmployer(ctx, p.EmployerID, p.EmployerName, pdc.NormalizeOrgName(p.EmployerName))
+	if err != nil {
+		return fmt.Errorf("ensure employer organization: %w", err)
+	}
+
+	// Skip affiliation creation if either org wasn't created
+	if filerOrgID == 0 || employerOrgID == 0 {
+		return nil
+	}
+
+	// Create affiliation between filer org (lobbyist/firm) and employer org (client)
+	// This represents "filer is paid by employer" relationship
+	contextJSON, err := json.Marshal(map[string]any{
+		"filer_id":          p.FilerID,
+		"filer_name":        p.FilerName,
+		"funding_source_id": p.FundingSourceID,
+		"funding_source":    p.FundingSource,
+		"filing_period":     p.FilingPeriod,
+		"employer_id":       p.EmployerID,
+		"employer_name":     p.EmployerName,
+		"compensation":      p.Compensation,
+		"total_expenses":    p.TotalExpenses,
+		"net_total":         p.NetTotal,
+		"url":               p.URL,
+		"raw":               json.RawMessage(rawJSON),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal pdc lobbyist compensation affiliation context: %w", err)
+	}
+
+	evidenceJSON, err := json.Marshal([]string{
+		fmt.Sprintf("PDC lobbyist compensation row: filer_id=%s employer_id=%s period=%s compensation=$%.2f",
+			p.FilerID, p.EmployerID, p.FilingPeriod, p.Compensation),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal pdc lobbyist compensation affiliation evidence: %w", err)
+	}
+
+	sourceRowID := strings.Join([]string{p.FilerID, p.EmployerID, p.FilingPeriod}, "|")
+
+	const affQ = `
+INSERT INTO person_organization_affiliation (
+    person_id, organization_id, raw_person_name, raw_organization_name,
+    relationship_type, role_title, source_kind, source_table,
+    source_pk, source_row_id, context, confidence, review_status, evidence
+)
+VALUES (NULL, $1, $2, $3,
+        'paid_by', 'lobbying_client', 'pdc_lobbyist_compensation', 'data.wa.gov:9nnw-c693',
+        0, $4, $5, 'confirmed', 'auto', $6)
+ON CONFLICT (relationship_type, source_kind, source_table, source_pk, source_row_id, person_id, organization_id, raw_person_name, raw_organization_name) DO UPDATE SET
+    context = EXCLUDED.context,
+    confidence = 'confirmed',
+    evidence = EXCLUDED.evidence,
+    updated_at = NOW();`
+
+	// Create filer -> employer affiliation (filer is paid by employer)
+	if _, err := s.Pool.Exec(ctx, affQ,
+		filerOrgID, p.FilerName, p.EmployerName,
+		sourceRowID, contextJSON, evidenceJSON,
+	); err != nil {
+		return fmt.Errorf("upsert PDC lobbyist compensation affiliation: %w", err)
+	}
+
+	return nil
 }
