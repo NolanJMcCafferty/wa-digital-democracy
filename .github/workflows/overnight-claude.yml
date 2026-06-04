@@ -46,9 +46,14 @@ jobs:
 
           # Collect issue numbers referenced as closing keywords by any open PR.
           open_pr_bodies=$(gh pr list --state open --limit 100 --json body --jq '.[].body')
-          claimed_by_pr=$(echo "$open_pr_bodies" \
-            | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' \
-            | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+          claimed_by_pr=$(
+            echo "$open_pr_bodies" \
+              | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' \
+              | grep -oE '#[0-9]+' \
+              | tr -d '#' \
+              | sort -u \
+              || true
+          )
 
           picked=""
           while read -r row; do
