@@ -4,7 +4,7 @@
 -- Table for PDC lobbyist compensation data (9nnw-c693).
 -- This dataset exposes firm↔client relationships: it shows how much
 -- lobbying firms are paid by their clients per filing period.
-CREATE TABLE pdc_lobbyist_compensation (
+CREATE TABLE IF NOT EXISTS pdc_lobbyist_compensation (
     filer_id        TEXT NOT NULL,
     employer_id     TEXT NOT NULL,
     filing_period   TEXT NOT NULL,
@@ -25,16 +25,16 @@ CREATE TABLE pdc_lobbyist_compensation (
 );
 
 -- Indexes for efficient lookups
-CREATE INDEX idx_pdc_lobbyist_compensation_filer_id 
+CREATE INDEX IF NOT EXISTS idx_pdc_lobbyist_compensation_filer_id 
     ON pdc_lobbyist_compensation (filer_id);
-CREATE INDEX idx_pdc_lobbyist_compensation_employer_id 
+CREATE INDEX IF NOT EXISTS idx_pdc_lobbyist_compensation_employer_id 
     ON pdc_lobbyist_compensation (employer_id);
-CREATE INDEX idx_pdc_lobbyist_compensation_filing_period 
+CREATE INDEX IF NOT EXISTS idx_pdc_lobbyist_compensation_filing_period 
     ON pdc_lobbyist_compensation (filing_period);
 
 -- Add pdc_lobbyist_compensation to the person_source_kind enum
-ALTER TYPE person_source_kind 
-    ADD VALUE 'pdc_lobbyist_compensation' 
+ALTER TYPE person_source_kind
+    ADD VALUE IF NOT EXISTS 'pdc_lobbyist_compensation'
     AFTER 'pdc_lobbyist_employment';
 
 -- +goose StatementEnd

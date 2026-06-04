@@ -325,7 +325,8 @@ The order matters when fresh:
    so that filer and employer organizations already exist.
 6. `ingest-hearings` runs the full pipeline against discovered hearings:
    CSI testifiers per agenda item, Invintus event/media metadata once per event,
-   diarization once per event, and transcript segmentation per agenda item.
+   diarization once per event, optional OpenRouter LLM speaker evidence when
+   `OPENROUTER_API_KEY` is set, and transcript segmentation per agenda item.
    `--hearing-limit` applies to hearing ingest in `wa-dd daily` for smoke tests.
 7. `verify-organizations` re-checks existing unconfirmed organizations against
    the fresh IRS/PDC reference tables, catching older rows that were not touched
@@ -337,7 +338,7 @@ The order matters when fresh:
 For an old-school local cron, one line still works:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… OPENROUTER_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 If any pass exits non-zero, cron mail / Railway logs will surface it. Each

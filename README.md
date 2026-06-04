@@ -32,6 +32,9 @@ make api                    # run the HTTP API the Next.js frontend reads from (
 
 `INVINTUS_EMBEDDER_KEY` is required for Invintus event/media ingestion.
 `PYANNOTEAI_API_KEY` is required for the default hearing diarization path.
+`OPENROUTER_API_KEY` enables the optional LLM speaker-evidence extractor after
+diarization; omit it to skip paid LLM calls. `OPENROUTER_MODEL` can override
+the default `openai/gpt-5.5` model.
 
 The frontend reads from the API, so a full local loop is:
 
@@ -101,7 +104,7 @@ The daily chain is idempotent and safe to re-run:
 For nightly cron, one line is enough:
 
 ```cron
-30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
+30 3 * * * cd ~/workspace/wa-digital-democracy && INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… OPENROUTER_API_KEY=… make daily >> /tmp/wa-dd-daily.log 2>&1
 ```
 
 Re-running is cheap in DB writes because ingestion uses stable source IDs and

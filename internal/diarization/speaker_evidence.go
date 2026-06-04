@@ -9,11 +9,13 @@ import (
 // diarized transcript text.
 type SpeakerEvidenceCandidate struct {
 	Kind           string
+	CandidateID    int64
 	Label          string
 	EvidenceType   string
 	EvidenceText   string
 	Confidence     float64
 	MatchedPattern string
+	Reasoning      string
 }
 
 var selfIntroPatterns = []struct {

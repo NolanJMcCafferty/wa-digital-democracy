@@ -41,7 +41,7 @@ cmd/
                 ingest-legislators, ingest-contracts, ingest-pdc-*,
                 ingest-irs-bmf-wa, ingest-usaspending-wa-awards, …),
                 diarization (audio-cache, diarize-event, diarize-pending,
-                extract-speaker-evidence,
+                extract-speaker-evidence, extract-speaker-evidence-llm,
                 backfill-speaker-evidence), and entity/org workflows
                 (populate-organizations,
                 generate-vendor-entity-matches, decide-entity-match,
@@ -60,7 +60,7 @@ internal/
                 segment-transcript, populate-organizations, discover)
   diarization/  provider-neutral diarization (Provider interface, Deepgram +
                 pyannoteAI implementations, MergeConsecutiveSegments,
-                self-introduction evidence extractor).
+                regex + LLM speaker evidence extractors).
   entitymatch/  organization/vendor entity-match candidate generation +
                 decision recording.
   common/       shared civic value objects (BillKey, BillAgendaTarget)
@@ -98,10 +98,11 @@ go vet ./...
 go test ./...                                       # Go unit tests, no infra
 make integration                                    # Go integration tests (boots Postgres, seeds/cleans fixtures)
 cd apps/web && pnpm typecheck                       # Frontend typecheck
+cd apps/web && pnpm test                            # Frontend unit tests (Vitest, pure logic only)
 make e2e                                            # Playwright e2e (seeds/cleans fixtures; requires Postgres + chromium)
 
 # Ingestion (operator-driven; usually triggered via make daily)
-INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… make daily  # full nightly chain
+INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… OPENROUTER_API_KEY=… make daily  # full nightly chain
 go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
@@ -111,7 +112,7 @@ go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 
 ## Running tests
 
-Four categories. **Always use these exact commands** — don't improvise (e.g. `pnpm exec playwright` directly will fail without env vars).
+Five categories. **Always use these exact commands** — don't improvise (e.g. `pnpm exec playwright` directly will fail without env vars).
 
 ### 1. Go unit tests (no infra)
 
@@ -142,7 +143,28 @@ cd apps/web && pnpm typecheck
 cd apps/web && pnpm lint
 ```
 
-### 4. End-to-end (Playwright + axe a11y)
+### 4. Frontend unit tests (Vitest, pure logic only)
+
+```sh
+cd apps/web && pnpm test         # one-shot
+cd apps/web && pnpm test:watch   # iterating on a helper
+```
+
+**Scope discipline.** Vitest covers PURE LOGIC: helpers, parsers, formatters,
+data-shaping functions (e.g. `aggregateCompensationByYear` in
+`src/app/organizations/[slug]/compensation.ts`). Files end in `*.test.ts`
+and run in a Node environment with no DOM, no React, no `next/*` mocks.
+
+If a test needs to render a component, click something, fetch data, or
+assert on URLs, **write it as a Playwright e2e instead** (category 5).
+This boundary is intentional: e2e is the project's UI behavior layer, and
+duplicating it in jsdom drifts into double-maintenance and brittle mocks.
+
+To extract pure logic from a component: pull the function into a sibling
+`.ts` file, import it from the component, and write the test against the
+helper file. See `compensation.ts` / `compensation.test.ts` for the pattern.
+
+### 5. End-to-end (Playwright + axe a11y)
 
 E2E spins up `wa-dd-api` and `next start` against a real Postgres, seeds deterministic fixtures for the run, cleans them afterward, then drives Chromium. **First-time setup is required** or every test will fail with "browser not installed" / "module not found".
 

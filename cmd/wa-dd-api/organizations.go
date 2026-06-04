@@ -97,6 +97,18 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		Confidence          string `json:"confidence"`
 		PDCLobbyistID       string `json:"pdc_lobbyist_id,omitempty"`
 	}
+	type compensation struct {
+		Role          string `json:"role"`
+		FilerID       string `json:"filer_id"`
+		FilerName     string `json:"filer_name"`
+		EmployerID    string `json:"employer_id"`
+		EmployerName  string `json:"employer_name"`
+		FilingPeriod  string `json:"filing_period"`
+		Compensation  string `json:"compensation,omitempty"`
+		TotalExpenses string `json:"total_expenses,omitempty"`
+		NetTotal      string `json:"net_total,omitempty"`
+		URL           string `json:"url,omitempty"`
+	}
 	type body struct {
 		Slug               string              `json:"slug"`
 		CanonicalName      string              `json:"canonical_name"`
@@ -108,6 +120,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 		Appearances        []appearance        `json:"appearances"`
 		Contexts           []publicContext     `json:"contexts"`
 		PersonAffiliations []personAffiliation `json:"person_affiliations"`
+		Compensation       []compensation      `json:"compensation"`
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		slug := chi.URLParam(req, "slug")
@@ -138,6 +151,11 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 			return
 		}
 		affiliationsRaw, err := store.GetOrganizationPersonAffiliations(req.Context(), match.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		compensationRaw, err := store.GetOrganizationCompensation(req.Context(), match.ID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -177,6 +195,21 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 				Evidence:        evidence,
 			})
 		}
+		comps := make([]compensation, 0, len(compensationRaw))
+		for _, c := range compensationRaw {
+			comps = append(comps, compensation{
+				Role:          c.Role,
+				FilerID:       c.FilerID,
+				FilerName:     c.FilerName,
+				EmployerID:    c.EmployerID,
+				EmployerName:  c.EmployerName,
+				FilingPeriod:  c.FilingPeriod,
+				Compensation:  c.Compensation,
+				TotalExpenses: c.TotalExpenses,
+				NetTotal:      c.NetTotal,
+				URL:           c.URL,
+			})
+		}
 		affiliations := make([]personAffiliation, 0, len(affiliationsRaw))
 		for _, a := range affiliationsRaw {
 			affiliations = append(affiliations, personAffiliation{
@@ -211,6 +244,7 @@ func getOrganizationHandler(store *db.Store) http.HandlerFunc {
 			Appearances:        apps,
 			Contexts:           contexts,
 			PersonAffiliations: affiliations,
+			Compensation:       comps,
 		})
 	}
 }
