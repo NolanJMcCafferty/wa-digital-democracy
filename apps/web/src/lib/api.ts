@@ -252,6 +252,7 @@ export type OrganizationPersonAffiliation = {
   recordYears?: string;
   sourceCount: number;
   confidence: OrganizationSummary["match_confidence"];
+  pdcLobbyistId?: string;
 };
 
 export type PublicRecordContext = {
@@ -839,6 +840,7 @@ type orgDetailResponse = orgListItem & {
     record_years?: string;
     source_count: number;
     confidence: OrganizationSummary["match_confidence"];
+    pdc_lobbyist_id?: string;
   }>;
 };
 
@@ -918,6 +920,7 @@ export async function loadOrganizationPage(slug: string): Promise<OrganizationPa
       recordYears: a.record_years,
       sourceCount: a.source_count,
       confidence: a.confidence,
+      pdcLobbyistId: a.pdc_lobbyist_id,
     })),
   };
 }

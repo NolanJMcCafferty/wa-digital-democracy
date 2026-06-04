@@ -237,6 +237,7 @@ type OrganizationPersonAffiliation struct {
 	RecordYears         string
 	SourceCount         int
 	Confidence          string
+	PDCLobbyistID       string
 }
 
 // GetOrganizationAppearances returns every (agenda_item, org) appearance
@@ -325,11 +326,12 @@ SELECT COALESCE(p.id, 0) AS person_id,
          WHEN bool_or(poa.confidence = 'probable') THEN 'probable'
          WHEN bool_or(poa.confidence = 'possible') THEN 'possible'
          ELSE 'unmatched'
-       END AS confidence
+       END AS confidence,
+       COALESCE(p.pdc_lobbyist_id, '') AS pdc_lobbyist_id
   FROM person_organization_affiliation poa
   LEFT JOIN person p ON p.id = poa.person_id
  WHERE poa.organization_id = $1
- GROUP BY p.id, p.display_name, poa.raw_person_name, poa.relationship_type,
+ GROUP BY p.id, p.display_name, p.pdc_lobbyist_id, poa.raw_person_name, poa.relationship_type,
           poa.role_title, poa.source_kind, poa.raw_organization_name
  ORDER BY CASE poa.relationship_type::text
             WHEN 'lobbyist_for' THEN 0
@@ -348,7 +350,7 @@ SELECT COALESCE(p.id, 0) AS person_id,
 		var a OrganizationPersonAffiliation
 		if err := rows.Scan(&a.PersonID, &a.PersonName, &a.RelationshipType, &a.RoleTitle,
 			&a.SourceKind, &a.SourceLabel, &a.RawOrganizationName, &a.RecordYears,
-			&a.SourceCount, &a.Confidence); err != nil {
+			&a.SourceCount, &a.Confidence, &a.PDCLobbyistID); err != nil {
 			return nil, fmt.Errorf("scan organization person affiliation: %w", err)
 		}
 		out = append(out, a)

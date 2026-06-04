@@ -161,7 +161,20 @@ function AffiliatedPeopleTable({ people }: { people: OrganizationPersonAffiliati
           {people.map((person, idx) => (
             <tr key={`${person.personId ?? "raw"}-${person.relationshipType}-${person.sourceKind}-${idx}`}>
               <td className="px-4 py-3 align-top">
-                <div className="font-medium text-stone-900">{person.personName}</div>
+                <div className="font-medium text-stone-900">
+                  {person.pdcLobbyistId ? (
+                    <a
+                      href={`https://www.pdc.wa.gov/political-disclosure-reporting-data/browse-search-data/lobbyists/${person.pdcLobbyistId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {person.personName}
+                    </a>
+                  ) : (
+                    person.personName
+                  )}
+                </div>
               </td>
               <td className="px-4 py-3 align-top">
                 <div className="text-stone-800">{relationshipLabel(person.relationshipType)}</div>
