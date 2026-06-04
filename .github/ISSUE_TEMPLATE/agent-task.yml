@@ -1,0 +1,99 @@
+name: Agent-ready implementation task
+description: Define a task that can be safely picked up by an autonomous coding agent.
+title: "[Agent] "
+labels:
+  - agent-candidate
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for implementation work that may become `agent-ready`. Keep the task narrow enough for one PR, and make completion independently testable.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the concrete behavior change or outcome.
+      placeholder: "Example: /api/v1/organizations/{id} returns aliases as [] when the organization has no aliases."
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Link relevant docs, existing files, commands, known behavior, fixtures, or prior bugs.
+      placeholder: |
+        Relevant files:
+        - cmd/wa-dd-api/organization.go
+        - internal/storage/db/organization.go
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: List the files, packages, routes, commands, or workflows the agent may touch.
+      placeholder: |
+        In scope:
+        - cmd/wa-dd-api/...
+        - API response tests for organizations
+    validations:
+      required: true
+
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+      description: Explicitly list related changes the agent should not make.
+      placeholder: |
+        Out of scope:
+        - Schema redesign
+        - Production ingestion runs
+        - Changes to organization matching decisions
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Use task-list checkboxes. Each item must describe observable behavior.
+      placeholder: |
+        - [ ] API response includes `aliases: []` when no aliases exist.
+        - [ ] A test covers organizations with no aliases.
+        - [ ] Existing organization responses are unchanged except for nil-to-empty array behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: List exact commands the agent must run and the expected result.
+      placeholder: |
+        Run:
+        ```sh
+        go test ./cmd/wa-dd-api/...
+        ```
+
+        Expected result:
+        ```text
+        All tests pass.
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Add operational, safety, and repo-specific rules for the agent.
+      value: |
+        - Follow AGENTS.md.
+        - Do not use production credentials.
+        - Do not run paid/provider-backed ingestion.
+        - Do not change unrelated files.
+    validations:
+      required: true

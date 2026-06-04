@@ -1,0 +1,267 @@
+name: Overnight Claude
+
+on:
+  schedule:
+    # Every 30 min from 12:00am to 5:30am PT (PDT = UTC-7)
+    # Adjust to 8-13 in winter (PST = UTC-8) if needed.
+    - cron: "*/30 7-12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: overnight-claude
+  cancel-in-progress: false
+
+jobs:
+  pick-issue:
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.pick.outputs.number }}
+      title: ${{ steps.pick.outputs.title }}
+      body: ${{ steps.pick.outputs.body }}
+    steps:
+      - name: Pick highest-priority open issue without an existing claude branch
+        id: pick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Oldest open issue first (lowest number = highest priority).
+          # Skip any issue that already has a claude/issue-<n> branch.
+          issues=$(gh issue list --state open --limit 50 \
+            --json number,title,body \
+            --jq 'sort_by(.number)')
+
+          picked=""
+          while read -r row; do
+            num=$(jq -r '.number' <<<"$row")
+            if git ls-remote --exit-code --heads "https://github.com/${GH_REPO}.git" "claude/issue-${num}" >/dev/null 2>&1; then
+              continue
+            fi
+            picked="$row"
+            break
+          done < <(jq -c '.[]' <<<"$issues")
+
+          if [ -z "$picked" ]; then
+            echo "No eligible issues. Exiting."
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "number=$(jq -r '.number' <<<"$picked")"
+            echo "title<<EOF"
+            jq -r '.title' <<<"$picked"
+            echo "EOF"
+            echo "body<<EOF"
+            jq -r '.body // ""' <<<"$picked"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  work-issue:
+    needs: pick-issue
+    if: needs.pick-issue.outputs.number != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name  "claude-bot"
+          git config user.email "claude-bot@users.noreply.github.com"
+
+      - name: Create working branch
+        run: |
+          git checkout -b "claude/issue-${{ needs.pick-issue.outputs.number }}"
+
+      - name: Run Claude Code (initial implementation)
+        uses: anthropics/claude-code-base-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash,Edit,Write,Read,Glob,Grep"
+          prompt: |
+            You are working autonomously on GitHub issue #${{ needs.pick-issue.outputs.number }}
+            in repo ${{ github.repository }}.
+
+            Title: ${{ needs.pick-issue.outputs.title }}
+
+            Body:
+            ${{ needs.pick-issue.outputs.body }}
+
+            Your goal: open a PR that closes this issue and passes ALL CI checks
+            (build, unit tests, integration tests, e2e tests).
+
+            Step 1 — Understand the issue.
+              - Read AGENTS.md and CLAUDE.md for project conventions.
+              - Extract every acceptance criterion from the issue body. List them
+                explicitly to yourself before implementing. If the issue does not
+                state acceptance criteria, derive them from the title and body and
+                write them down — every one must be satisfied by your diff.
+
+            Step 2 — Implement.
+              - Keep the diff focused on what the issue asks for.
+              - Do not modify CI workflow files (.github/workflows/), secrets, or
+                files unrelated to the issue.
+              - Match existing patterns and code style in the repo.
+
+            Step 3 — Self-verify BEFORE finishing. You MUST run, locally:
+              - `make build` — must succeed.
+              - `make vet` and `make fmt` — must succeed.
+              - `make test` — unit tests must pass. (Set WADD_SKIP_DB_TESTS=1 only
+                if testcontainer Postgres is unavailable in this sandbox AND you
+                document this in your final notes.)
+              - For frontend changes under apps/web: run `pnpm install
+                --frozen-lockfile` and `pnpm -C apps/web typecheck` and
+                `pnpm -C apps/web lint` if those scripts exist.
+              - Walk through every acceptance criterion you listed in Step 1 and
+                confirm the diff satisfies it. If any criterion is not met, keep
+                working.
+
+              Integration and e2e tests require Docker + Postgres + Playwright and
+              will run in CI on the PR. You do not need to run them locally, but
+              your changes must be consistent with the fixtures in
+              db/fixtures and the e2e specs in apps/web — read those before
+              changing schema, seed data, or API contracts.
+
+            Step 4 — If blocked.
+              - If the issue is genuinely ambiguous and you cannot make a
+                confident decision, STOP. Leave the working tree clean and write
+                BLOCKED.md at the repo root explaining what's ambiguous and what
+                input you need. Do NOT half-implement.
+
+            Do not commit. The workflow will commit and push after you finish.
+
+      - name: Commit and push, or report blocked
+        id: finish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ISSUE=${{ needs.pick-issue.outputs.number }}
+
+          if [ -f BLOCKED.md ]; then
+            REASON=$(cat BLOCKED.md)
+            rm BLOCKED.md
+            gh issue comment "$ISSUE" --body "$(printf 'Overnight Claude run %s stopped — blocked.\n\n%s' "${{ github.run_id }}" "$REASON")"
+            echo "status=blocked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$(git status --porcelain)" ]; then
+            gh issue comment "$ISSUE" --body "Overnight Claude run ${{ github.run_id }} produced no changes."
+            echo "status=empty" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "claude: work on issue #${ISSUE}"
+          git push -u origin "claude/issue-${ISSUE}"
+
+          gh pr create \
+            --draft \
+            --title "claude: ${{ needs.pick-issue.outputs.title }} (#${ISSUE})" \
+            --body  "Autonomous overnight run for #${ISSUE}. Review carefully before merging.
+
+          Closes #${ISSUE}" \
+            --head "claude/issue-${ISSUE}"
+
+          echo "status=pr-opened" >> "$GITHUB_OUTPUT"
+
+      - name: CI fix-loop
+        if: steps.finish.outputs.status == 'pr-opened'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ISSUE: ${{ needs.pick-issue.outputs.number }}
+        run: |
+          set -euo pipefail
+          BRANCH="claude/issue-${ISSUE}"
+          MAX_ATTEMPTS=3
+
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "::group::Waiting for CI on $BRANCH (attempt $attempt/$MAX_ATTEMPTS)"
+            # Wait up to 45 min for all required checks to settle.
+            # `gh pr checks --watch` exits non-zero if any check fails.
+            set +e
+            gh pr checks "$BRANCH" --watch --interval 30 --fail-fast=false
+            ci_status=$?
+            set -e
+            echo "::endgroup::"
+
+            if [ $ci_status -eq 0 ]; then
+              echo "All CI checks passed."
+              gh pr ready "$BRANCH" || true
+              exit 0
+            fi
+
+            echo "CI failed. Collecting failure logs."
+            # Grab the most recent failed run for this branch and dump its logs.
+            FAILED_RUN_ID=$(gh run list --branch "$BRANCH" --status failure \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+            if [ -z "$FAILED_RUN_ID" ] || [ "$FAILED_RUN_ID" = "null" ]; then
+              echo "Could not locate a failed run; bailing out of fix-loop."
+              break
+            fi
+
+            mkdir -p /tmp/ci-logs
+            gh run view "$FAILED_RUN_ID" --log-failed > /tmp/ci-logs/failed.log 2>&1 || true
+            # Truncate to keep the prompt sane.
+            head -c 200000 /tmp/ci-logs/failed.log > /tmp/ci-logs/failed.trim.log
+
+            if [ $attempt -ge $MAX_ATTEMPTS ]; then
+              gh pr comment "$BRANCH" --body "Overnight Claude exhausted ${MAX_ATTEMPTS} CI fix attempts. Leaving as draft for human review."
+              exit 0
+            fi
+
+            # Re-invoke Claude with the failure context. Inline (not via the
+            # action) so we can pass log content easily.
+            npm i -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
+
+            FIX_PROMPT=$(cat <<EOF
+          You are continuing autonomous work on issue #${ISSUE}, branch ${BRANCH}.
+          Your prior commit was pushed and CI failed. Fix the failures.
+
+          Constraints:
+          - Stay focused on issue #${ISSUE}'s acceptance criteria. Do not expand scope.
+          - Do not modify .github/workflows/ files.
+          - When done, leave the tree with the fix applied. Do not commit; the
+            workflow will commit and push.
+          - If the failure is environmental / flaky / unrelated to your change,
+            write FLAKY.md explaining why and stop.
+
+          Failed CI logs (truncated to 200KB):
+          ----
+          $(cat /tmp/ci-logs/failed.trim.log)
+          ----
+          EOF
+          )
+
+            claude -p "$FIX_PROMPT" \
+              --allowedTools "Bash,Edit,Write,Read,Glob,Grep" \
+              --max-turns 40 || true
+
+            if [ -f FLAKY.md ]; then
+              REASON=$(cat FLAKY.md)
+              rm FLAKY.md
+              gh pr comment "$BRANCH" --body "Claude flagged failures as flaky/unrelated:
+
+          $REASON"
+              exit 0
+            fi
+
+            if [ -z "$(git status --porcelain)" ]; then
+              gh pr comment "$BRANCH" --body "Claude could not produce a fix on attempt ${attempt}. Stopping."
+              exit 0
+            fi
+
+            git add -A
+            git commit -m "claude: fix CI on issue #${ISSUE} (attempt ${attempt})"
+            git push origin "$BRANCH"
+          done
