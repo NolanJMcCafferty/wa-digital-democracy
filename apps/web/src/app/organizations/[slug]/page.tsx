@@ -11,8 +11,18 @@ import {
   type RawHearingSearchParams,
 } from "@/app/hearings/HearingSearchResults";
 import { filterHearings } from "@/app/hearings/filterHearings";
+import type { Position } from "@/lib/pageTypes";
 
 export const dynamic = "force-dynamic";
+
+const POSITION_ORDER: Position[] = ["Pro", "Con", "Other", "Unknown"];
+
+const POSITION_STYLE: Record<Position, string> = {
+  Pro: "border-emerald-400 bg-emerald-50 text-emerald-950",
+  Con: "border-rose-400 bg-rose-50 text-rose-950",
+  Other: "border-stone-300 bg-stone-50 text-stone-900",
+  Unknown: "border-stone-300 bg-stone-50 text-stone-600",
+};
 
 export async function generateStaticParams() {
   if (process.env.SKIP_BUILD_STATIC_PARAMS === "1") return [];
@@ -57,6 +67,25 @@ export default async function OrganizationPage({
         <Metric label="Hearing appearances" value={org.appearances.length.toLocaleString()} />
         <Metric label="Linked testifiers" value={org.testifierCount.toLocaleString()} />
       </section>
+
+      {positionEntries(org.positions).length > 0 ? (
+        <section aria-labelledby="positions-heading" className="space-y-4">
+          <h2 id="positions-heading" className="text-xl font-semibold text-stone-900">
+            Positions in testimony sign-ins
+          </h2>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {positionEntries(org.positions).map(([position, count]) => (
+              <div
+                key={position}
+                className={`rounded border p-3 ${POSITION_STYLE[position]}`}
+              >
+                <div className="text-xs uppercase tracking-wider">{position}</div>
+                <div className="mt-1 text-2xl font-semibold">{count.toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {org.personAffiliations.length > 0 ? (
         <section aria-labelledby="people-heading" className="space-y-4">
@@ -221,6 +250,12 @@ function relationshipLabel(value: string): string {
     default:
       return value.replaceAll("_", " ");
   }
+}
+
+function positionEntries(positions: Record<Position, number>): Array<[Position, number]> {
+  return POSITION_ORDER
+    .map((position) => [position, positions[position] ?? 0] as [Position, number])
+    .filter(([, count]) => count > 0);
 }
 
 function contextLabel(contextType: string): string {

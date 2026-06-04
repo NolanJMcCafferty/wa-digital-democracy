@@ -109,8 +109,8 @@ e2e-install: ## Install Playwright browser dependencies for end-to-end tests
 
 e2e: build ## Run frontend -> backend end-to-end tests against configured env/services
 	@dsn="$${WADD_E2E_DSN:-$(DSN)}"; \
-	scripts/seed-test-fixtures.sh --dsn "$$dsn"; \
-	trap 'scripts/cleanup-test-fixtures.sh --dsn "$$dsn"' EXIT; \
+	"$(CURDIR)/scripts/seed-test-fixtures.sh" --dsn "$$dsn"; \
+	trap '"$(CURDIR)/scripts/cleanup-test-fixtures.sh" --dsn "$$dsn"' EXIT; \
 	cd apps/web && SKIP_BUILD_STATIC_PARAMS=1 WADD_INTERNAL_API_TOKEN=$${WADD_INTERNAL_API_TOKEN:-e2e-internal-token} WADD_API_URL=$${WADD_API_URL:-http://127.0.0.1:$${WADD_E2E_API_PORT:-18080}} pnpm build && \
 	WADD_API_BIN="$(CURDIR)/bin/wa-dd-api" WADD_E2E_DSN="$$dsn" pnpm exec playwright test
 
