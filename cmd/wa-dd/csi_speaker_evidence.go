@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -262,20 +261,4 @@ func isLikelyProceduralTurn(text string) bool {
 		}
 	}
 	return false
-}
-
-var nonNameChars = regexp.MustCompile(`[^a-z0-9\s]`)
-
-func normalizeSpokenName(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if strings.Contains(s, ",") {
-		parts := strings.SplitN(s, ",", 2)
-		left := strings.TrimSpace(parts[0])
-		right := strings.TrimSpace(parts[1])
-		if left != "" && right != "" {
-			s = right + " " + left
-		}
-	}
-	s = nonNameChars.ReplaceAllString(s, " ")
-	return strings.Join(strings.Fields(s), " ")
 }

@@ -188,23 +188,43 @@ SELECT id, COALESCE(NULLIF(trim(first_name || ' ' || last_name), ''), name)
 }
 
 func findTestifierBySpokenName(ctx context.Context, store *db.Store, label, eventID string) (int64, string, bool) {
+	normLabel := normalizeSpokenName(label)
+	if normLabel == "" {
+		return 0, "", false
+	}
 	const q = `
-SELECT t.id, t.raw_name
-  FROM testifier t
-  JOIN agenda_item a ON a.id = t.agenda_item_id
-  JOIN hearing h ON h.id = a.hearing_id
- WHERE h.tvw_event_id = $1
-   AND COALESCE(t.active, TRUE)
-   AND lower(regexp_replace(
-         CASE WHEN position(',' in t.raw_name) > 0
-              THEN trim(split_part(t.raw_name, ',', 2)) || ' ' || trim(split_part(t.raw_name, ',', 1))
-              ELSE t.raw_name END,
-         '[^a-zA-Z0-9 ]', ' ', 'g')) = lower(regexp_replace($2, '[^a-zA-Z0-9 ]', ' ', 'g'))
- ORDER BY t.testified DESC, t.csi_order NULLS LAST, t.id
+WITH candidates AS (
+  SELECT t.id, t.raw_name, t.testified, t.csi_order,
+         lower(regexp_replace(
+           regexp_replace(
+             regexp_replace(
+               regexp_replace(
+                 CASE WHEN position(',' in t.raw_name) > 0
+                      THEN trim(split_part(t.raw_name, ',', 2)) || ' ' || trim(split_part(t.raw_name, ',', 1))
+                      ELSE t.raw_name END,
+                 '(?i)\m(mr|mrs|ms|miss|mx|dr|prof|rev|hon|senator|sen|representative|rep|chair|vice)\M\.?', ' ', 'g'),
+               '(?i)\m(jr|sr|ii|iii|iv|v)\M\.?', ' ', 'g'),
+             '[^a-zA-Z0-9 ]', ' ', 'g'),
+           '\s+', ' ', 'g')) AS normalized_name
+    FROM testifier t
+    JOIN agenda_item a ON a.id = t.agenda_item_id
+    JOIN hearing h ON h.id = a.hearing_id
+   WHERE h.tvw_event_id = $1
+     AND COALESCE(t.active, TRUE)
+)
+SELECT id, raw_name
+  FROM candidates
+ WHERE trim(normalized_name) = $2
+    OR similarity(trim(normalized_name), $2) >= 0.82
+ ORDER BY CASE WHEN trim(normalized_name) = $2 THEN 0 ELSE 1 END,
+          similarity(trim(normalized_name), $2) DESC,
+          testified DESC,
+          csi_order NULLS LAST,
+          id
  LIMIT 1;`
 	var id int64
 	var display string
-	if err := store.Pool.QueryRow(ctx, q, eventID, label).Scan(&id, &display); err != nil {
+	if err := store.Pool.QueryRow(ctx, q, eventID, normLabel).Scan(&id, &display); err != nil {
 		return 0, "", false
 	}
 	return id, display, true
