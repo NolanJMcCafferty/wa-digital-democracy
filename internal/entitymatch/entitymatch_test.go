@@ -4,18 +4,18 @@ import "testing"
 
 func TestNormalizedName(t *testing.T) {
 	tests := map[string]string{
-		"The Acme Technologies, Inc.":        "ACME TECHNOLOGIES",
+		"The Acme Technologies, Inc.": "ACME TECHNOLOGIES",
 		// TECH → TECHNOLOGIES via the abbreviation expansion in 0031.
 		"ACME Tech & Consulting LLC":         "ACME TECHNOLOGIES CONSULTING",
 		"  Washington Housing Alliance  ":    "WASHINGTON HOUSING ALLIANCE",
 		"Northwest Energy Association, Ltd.": "NORTHWEST ENERGY",
 		// New abbreviation pairs collapse identically.
-		"WA Retail Assn":                     "WASHINGTON RETAIL",
-		"Washington Retail Association":      "WASHINGTON RETAIL",
-		"Dept of Commerce":                   "DEPARTMENT COMMERCE",
-		"Department of Commerce":             "DEPARTMENT COMMERCE",
-		"Univ of Washington":                 "UNIVERSITY WASHINGTON",
-		"University of Washington":           "UNIVERSITY WASHINGTON",
+		"WA Retail Assn":                "WASHINGTON RETAIL",
+		"Washington Retail Association": "WASHINGTON RETAIL",
+		"Dept of Commerce":              "DEPARTMENT COMMERCE",
+		"Department of Commerce":        "DEPARTMENT COMMERCE",
+		"Univ of Washington":            "UNIVERSITY WASHINGTON",
+		"University of Washington":      "UNIVERSITY WASHINGTON",
 	}
 	for in, want := range tests {
 		if got := NormalizedName(in); got != want {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type SpeakerIdentityEvidenceParams struct {
@@ -546,8 +547,8 @@ func (s *Store) ManualAssignSpeakerCluster(ctx context.Context, clusterID int64,
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
 INSERT INTO speaker_assignment (diarization_job_id, speaker_cluster_id, speaker_kind,
-                                speaker_id, speaker_label, confidence, review_status)
-VALUES ($1,$2,$3::speaker_candidate_kind,NULL,$4,NULL,'accepted')
+                                speaker_id, speaker_label, confidence, review_status, testifier_id)
+VALUES ($1,$2,$3::speaker_candidate_kind,NULL,$4,NULL,'accepted',NULL)
 ON CONFLICT (diarization_job_id, speaker_cluster_id) DO UPDATE SET
   speaker_kind = EXCLUDED.speaker_kind,
   speaker_id = NULL,
@@ -555,6 +556,7 @@ ON CONFLICT (diarization_job_id, speaker_cluster_id) DO UPDATE SET
   confidence = NULL,
   review_task_id = NULL,
   review_status = 'accepted',
+  testifier_id = NULL,
   updated_at = NOW();`, cluster.DiarizationJobID, cluster.ClusterID, kind, label); err != nil {
 		return fmt.Errorf("manual speaker assignment: %w", err)
 	}
@@ -585,10 +587,18 @@ UPDATE speaker_review_task
  WHERE id = $1;`, taskID, reviewer, notes); err != nil {
 		return fmt.Errorf("accept speaker review task: %w", err)
 	}
+
+	// Try to link to testifier if candidate_kind is 'testifier' and we have a candidate_id
+	var testifierID *int64
+	if t.CandidateKind == "testifier" && t.CandidateID > 0 {
+		testifierID = &t.CandidateID
+	}
+
 	if _, err := tx.Exec(ctx, `
 INSERT INTO speaker_assignment (diarization_job_id, speaker_cluster_id, speaker_kind,
-                                speaker_id, speaker_label, confidence, review_task_id, review_status)
-VALUES ($1,$2,$3::speaker_candidate_kind,NULLIF($4,0),$5,NULLIF($6,0),$7,'accepted')
+                                speaker_id, speaker_label, confidence, review_task_id, 
+                                review_status, testifier_id)
+VALUES ($1,$2,$3::speaker_candidate_kind,NULLIF($4,0),$5,NULLIF($6,0),$7,'accepted',NULLIF($8,0))
 ON CONFLICT (diarization_job_id, speaker_cluster_id) DO UPDATE SET
   speaker_kind = EXCLUDED.speaker_kind,
   speaker_id = EXCLUDED.speaker_id,
@@ -596,7 +606,8 @@ ON CONFLICT (diarization_job_id, speaker_cluster_id) DO UPDATE SET
   confidence = EXCLUDED.confidence,
   review_task_id = EXCLUDED.review_task_id,
   review_status = 'accepted',
-  updated_at = NOW();`, t.DiarizationJobID, t.ClusterID, t.CandidateKind, t.CandidateID, t.CandidateLabel, t.CandidateConfidence, taskID); err != nil {
+  testifier_id = EXCLUDED.testifier_id,
+  updated_at = NOW();`, t.DiarizationJobID, t.ClusterID, t.CandidateKind, t.CandidateID, t.CandidateLabel, t.CandidateConfidence, taskID, testifierID); err != nil {
 		return fmt.Errorf("insert speaker assignment: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -631,6 +642,112 @@ UPDATE speaker_review_task
 		return fmt.Errorf("needs more evidence speaker review task: %w", err)
 	}
 	return nil
+}
+
+// OrganizationAttributedSegment represents a speech segment that has been
+// reviewed and attributed to an organization through the speaker -> testifier -> org chain.
+type OrganizationAttributedSegment struct {
+	SegmentID        int64
+	TVWEventID       string
+	StartMS          int
+	EndMS            int
+	Text             string
+	ClusterLabel     string
+	SpeakerLabel     string
+	SpeakerKind      string
+	TestifierID      int64
+	TestifierName    string
+	OrganizationID   int64
+	OrganizationName string
+	ReviewStatus     string
+	ReviewedAt       *time.Time
+	Reviewer         string
+}
+
+// ListOrganizationAttributedSegments returns speech segments that have been
+// reviewed and can be attributed to organizations through the canonical path:
+// speech segment -> speaker assignment -> testifier -> organization.
+// Only returns segments with accepted review status to ensure public safety.
+func (s *Store) ListOrganizationAttributedSegments(ctx context.Context, organizationID int64, limit, offset int) ([]OrganizationAttributedSegment, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	const q = `
+SELECT dss.id, dss.tvw_event_id, dss.start_ms, dss.end_ms, COALESCE(dss.text,'') AS text,
+       dss.cluster_label, sa.speaker_label, sa.speaker_kind::text,
+       t.id AS testifier_id, t.raw_name AS testifier_name,
+       o.id AS organization_id, o.canonical_name AS organization_name,
+       sa.review_status::text, sa.updated_at, ''
+  FROM diarized_speech_segment dss
+  JOIN speaker_assignment sa ON sa.diarization_job_id = dss.diarization_job_id
+                             AND sa.speaker_cluster_id = dss.speaker_cluster_id
+  JOIN testifier t ON t.id = sa.testifier_id
+  JOIN organization o ON o.id = t.normalized_org_id
+ WHERE sa.review_status = 'accepted'
+   AND o.id = $1
+ ORDER BY dss.tvw_event_id, dss.start_ms
+ LIMIT $2 OFFSET $3;`
+	rows, err := s.Pool.Query(ctx, q, organizationID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list organization attributed segments: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationAttributedSegment{}
+	for rows.Next() {
+		var seg OrganizationAttributedSegment
+		var reviewedAt *time.Time
+		if err := rows.Scan(&seg.SegmentID, &seg.TVWEventID, &seg.StartMS, &seg.EndMS, &seg.Text,
+			&seg.ClusterLabel, &seg.SpeakerLabel, &seg.SpeakerKind,
+			&seg.TestifierID, &seg.TestifierName, &seg.OrganizationID, &seg.OrganizationName,
+			&seg.ReviewStatus, &reviewedAt, &seg.Reviewer); err != nil {
+			return nil, fmt.Errorf("scan organization attributed segment: %w", err)
+		}
+		seg.ReviewedAt = reviewedAt
+		out = append(out, seg)
+	}
+	return out, rows.Err()
+}
+
+// ListOrganizationAttributedSegmentsByEvent returns organization-attributed
+// speech segments for a specific TVW event, useful for hearing pages that
+// want to show which organizations spoke and what they said.
+func (s *Store) ListOrganizationAttributedSegmentsByEvent(ctx context.Context, tvwEventID string) ([]OrganizationAttributedSegment, error) {
+	const q = `
+SELECT dss.id, dss.tvw_event_id, dss.start_ms, dss.end_ms, COALESCE(dss.text,'') AS text,
+       dss.cluster_label, sa.speaker_label, sa.speaker_kind::text,
+       COALESCE(t.id, 0) AS testifier_id, COALESCE(t.raw_name, '') AS testifier_name,
+       COALESCE(o.id, 0) AS organization_id, COALESCE(o.canonical_name, '') AS organization_name,
+       sa.review_status::text, sa.updated_at, COALESCE(t.reviewer, '')
+  FROM diarized_speech_segment dss
+  JOIN speaker_assignment sa ON sa.diarization_job_id = dss.diarization_job_id
+                             AND sa.speaker_cluster_id = dss.speaker_cluster_id
+  LEFT JOIN testifier t ON t.id = sa.testifier_id
+  LEFT JOIN organization o ON o.id = t.normalized_org_id
+ WHERE dss.tvw_event_id = $1
+   AND sa.review_status = 'accepted'
+ ORDER BY dss.start_ms;`
+	rows, err := s.Pool.Query(ctx, q, tvwEventID)
+	if err != nil {
+		return nil, fmt.Errorf("list organization attributed segments by event: %w", err)
+	}
+	defer rows.Close()
+	out := []OrganizationAttributedSegment{}
+	for rows.Next() {
+		var seg OrganizationAttributedSegment
+		var reviewedAt *time.Time
+		if err := rows.Scan(&seg.SegmentID, &seg.TVWEventID, &seg.StartMS, &seg.EndMS, &seg.Text,
+			&seg.ClusterLabel, &seg.SpeakerLabel, &seg.SpeakerKind,
+			&seg.TestifierID, &seg.TestifierName, &seg.OrganizationID, &seg.OrganizationName,
+			&seg.ReviewStatus, &reviewedAt, &seg.Reviewer); err != nil {
+			return nil, fmt.Errorf("scan organization attributed segment by event: %w", err)
+		}
+		seg.ReviewedAt = reviewedAt
+		out = append(out, seg)
+	}
+	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------
