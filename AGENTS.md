@@ -102,7 +102,7 @@ cd apps/web && pnpm test                            # Frontend unit tests (Vites
 make e2e                                            # Playwright e2e (seeds/cleans fixtures; requires Postgres + chromium)
 
 # Ingestion (operator-driven; usually triggered via make daily)
-INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… OPENROUTER_API_KEY=… make daily  # full nightly chain
+INVINTUS_EMBEDDER_KEY=… PYANNOTEAI_API_KEY=… ANTHROPIC_API_KEY=… OPENROUTER_API_KEY=… make daily  # full nightly chain
 go run ./cmd/wa-dd ingest-session --biennium 2025-26 --limit 25  # smoke
 go run ./cmd/wa-dd ingest-hearings  --biennium 2025-26 --limit 5
 

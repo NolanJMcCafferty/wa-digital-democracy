@@ -107,10 +107,10 @@ func TestBillDiscussionMentionPattern_DoesNotOvermatch(t *testing.T) {
 		number int
 		text   string
 	}{
-		{"HB", 1501, "HB 1502 is on the docket"},        // different number
-		{"HB", 1501, "in 1501 there was a discussion"},  // bare digits, no prefix
-		{"HB", 1501, "we are on SB 1501"},               // different chamber
-		{"HCR", 4400, "house bill 4400"},                // wrong long form
+		{"HB", 1501, "HB 1502 is on the docket"},       // different number
+		{"HB", 1501, "in 1501 there was a discussion"}, // bare digits, no prefix
+		{"HB", 1501, "we are on SB 1501"},              // different chamber
+		{"HCR", 4400, "house bill 4400"},               // wrong long form
 	}
 	for _, c := range cases {
 		cues := []segmentCue{{StartMS: 0, EndMS: 1000, Text: c.text}}

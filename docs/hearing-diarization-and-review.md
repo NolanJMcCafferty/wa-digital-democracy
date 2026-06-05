@@ -291,13 +291,21 @@ Evidence extraction does **not** publish a name. It only creates tasks.
 long tail of identity clues that are too varied for the regex extractor:
 
 ```sh
-OPENROUTER_API_KEY=... \
+# Using Anthropic Claude (preferred)
+ANTHROPIC_API_KEY=... \
   go run ./cmd/wa-dd extract-speaker-evidence-llm \
     --event-id <tvw_event_id> \
     --job-id <diarization_job_id>
+
+# Using OpenRouter as fallback
+OPENROUTER_API_KEY=... \
+  go run ./cmd/wa-dd extract-speaker-evidence-llm \
+    --event-id <tvw_event_id> \
+    --job-id <diarization_job_id> \
+    --provider openrouter
 ```
 
-It sends the configured OpenRouter model a closed context for the TVW event:
+It sends the configured LLM a closed context for the TVW event:
 
 - the current legislator roster, including names, aliases, chamber, district,
   and party;
@@ -307,9 +315,12 @@ It sends the configured OpenRouter model a closed context for the TVW event:
 - diarized transcript segments with segment IDs, cluster labels, timestamps,
   and text.
 
-The request enables OpenRouter prompt caching for providers that support it. The
-command logs cache read token counts returned by the API so per-hearing cost can
-be audited. `OPENROUTER_MODEL` can override the default `openai/gpt-5.5` model.
+The request enables prompt caching for providers that support it (Anthropic uses
+ephemeral caching, OpenRouter uses provider-specific caching). The command logs
+cache creation and read token counts returned by the API so per-hearing cost can
+be audited. `ANTHROPIC_MODEL` or `OPENROUTER_MODEL` can override the default
+models (`claude-3-5-sonnet-20241022` for Anthropic, `openai/gpt-5.5` for
+OpenRouter).
 
 The tool output is structured as
 `candidate_kind`, `candidate_label`, `candidate_id`, `evidence_type`,
@@ -320,10 +331,10 @@ alias; otherwise the candidate is stored as a freeform `person` with no source
 ID.
 
 `diarize-event` runs this LLM extractor automatically after the regex extractor
-when `OPENROUTER_API_KEY` is present. If the key is missing, it logs a warning
-and skips the LLM step without failing diarization or the daily run. To disable
-the LLM step in hosted daily ingestion, omit `OPENROUTER_API_KEY` from the
-environment.
+when `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` is present (preferring Anthropic
+when both are available). If neither key is set, it logs a warning and skips the
+LLM step without failing diarization or the daily run. To disable the LLM step
+in hosted daily ingestion, omit both API keys from the environment.
 
 ## Manual human review
 
@@ -467,12 +478,13 @@ Use manual assignment if the evidence is clear. Then consider adding a new
 high-precision extractor only if it is likely to generalize without creating
 false positives.
 
-### Missing OpenRouter API key
+### Missing LLM API key
 
 `diarize-event` and the daily hearing ingest path skip LLM speaker evidence when
-`OPENROUTER_API_KEY` is missing. This is expected for local runs that should not
-call a paid provider. Set the key to enable the step, or leave it unset to
-disable the LLM extractor.
+both `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` are missing. This is expected
+for local runs that should not call a paid provider. Set either key to enable
+the step (Anthropic is preferred when both are available), or leave both unset
+to disable the LLM extractor.
 
 ### Wrong accepted assignment
 

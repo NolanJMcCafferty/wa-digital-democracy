@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -26,11 +25,12 @@ func init() {
 func runExtractSpeakerEvidenceLLM(args []string) int {
 	fs := flag.NewFlagSet("extract-speaker-evidence-llm", flag.ContinueOnError)
 	var (
-		eventID = fs.String("event-id", "", "TVW/Invintus event ID")
-		jobID   = fs.Int64("job-id", 0, "diarization_job id")
-		dsn     = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
-		limit   = fs.Int("limit", 0, "optional max diarized segments to scan")
-		model   = fs.String("model", env("OPENROUTER_MODEL", ""), "OpenRouter model override (defaults to openai/gpt-5.5)")
+		eventID  = fs.String("event-id", "", "TVW/Invintus event ID")
+		jobID    = fs.Int64("job-id", 0, "diarization_job id")
+		dsn      = fs.String("dsn", env("WADD_DSN", "postgres://wadd:wadd@localhost:5432/wa_dd?sslmode=disable"), "Postgres DSN")
+		limit    = fs.Int("limit", 0, "optional max diarized segments to scan")
+		model    = fs.String("model", env("OPENROUTER_MODEL", ""), "OpenRouter model override (defaults to openai/gpt-5.5)")
+		provider = fs.String("provider", env("LLM_PROVIDER", "anthropic"), "LLM provider: 'anthropic' or 'openrouter'")
 	)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -48,10 +48,28 @@ func runExtractSpeakerEvidenceLLM(args []string) int {
 	}
 	defer store.Close()
 
-	client, err := waddllm.NewOpenRouterClient(waddllm.OpenRouterConfig{
-		APIKey: env("OPENROUTER_API_KEY", ""),
-		Model:  *model,
-	})
+	var client diarization.SpeakerEvidenceLLMClient
+
+	switch strings.ToLower(*provider) {
+	case "anthropic":
+		var clientErr error
+		client, clientErr = waddllm.NewAnthropicClient(waddllm.AnthropicConfig{
+			APIKey: env("ANTHROPIC_API_KEY", ""),
+			Model:  *model,
+		})
+		err = clientErr
+	case "openrouter":
+		var clientErr error
+		client, clientErr = waddllm.NewOpenRouterClient(waddllm.OpenRouterConfig{
+			APIKey: env("OPENROUTER_API_KEY", ""),
+			Model:  *model,
+		})
+		err = clientErr
+	default:
+		fmt.Fprintf(os.Stderr, "extract-speaker-evidence-llm: unsupported provider '%s', must be 'anthropic' or 'openrouter'\n", *provider)
+		return 2
+	}
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "extract-speaker-evidence-llm: %v\n", err)
 		return 1
@@ -115,7 +133,7 @@ func extractSpeakerEvidenceLLMForJob(ctx context.Context, store *db.Store, clien
 			StartMS:                 match.Segment.StartMS,
 			EndMS:                   match.Segment.EndMS,
 			Raw: map[string]any{
-				"extractor":       "openrouter",
+				"extractor":       "llm",
 				"llm_result":      match.Raw,
 				"reasoning":       cand.Reasoning,
 				"cache_created":   usage.CacheCreationInputTokens,
@@ -146,25 +164,41 @@ func extractSpeakerEvidenceLLMForJob(ctx context.Context, store *db.Store, clien
 }
 
 func runSpeakerEvidenceLLMIfConfigured(ctx context.Context, store *db.Store, jobID int64, eventID string) {
-	client, err := waddllm.NewOpenRouterClient(waddllm.OpenRouterConfig{
-		APIKey: env("OPENROUTER_API_KEY", ""),
-		Model:  env("OPENROUTER_MODEL", ""),
-	})
-	if err != nil {
-		if errors.Is(err, waddllm.ErrMissingOpenRouterAPIKey) {
-			fmt.Fprintln(os.Stderr, "speaker-evidence-llm: OPENROUTER_API_KEY not set; skipping LLM evidence extraction")
-			return
-		}
-		fmt.Fprintf(os.Stderr, "speaker-evidence-llm: client setup failed: %v\n", err)
+	var client diarization.SpeakerEvidenceLLMClient
+	var err error
+	var providerUsed string
+
+	// Try Anthropic first (preferred)
+	if env("ANTHROPIC_API_KEY", "") != "" {
+		client, err = waddllm.NewAnthropicClient(waddllm.AnthropicConfig{
+			APIKey: env("ANTHROPIC_API_KEY", ""),
+			Model:  env("ANTHROPIC_MODEL", ""),
+		})
+		providerUsed = "anthropic"
+	} else if env("OPENROUTER_API_KEY", "") != "" {
+		// Fall back to OpenRouter
+		client, err = waddllm.NewOpenRouterClient(waddllm.OpenRouterConfig{
+			APIKey: env("OPENROUTER_API_KEY", ""),
+			Model:  env("OPENROUTER_MODEL", ""),
+		})
+		providerUsed = "openrouter"
+	} else {
+		fmt.Fprintln(os.Stderr, "speaker-evidence-llm: neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY set; skipping LLM evidence extraction")
 		return
 	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "speaker-evidence-llm: %s client setup failed: %v\n", providerUsed, err)
+		return
+	}
+
 	stats, err := extractSpeakerEvidenceLLMForJob(ctx, store, client, jobID, eventID, 0)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "speaker-evidence-llm: extraction failed for job_id=%d: %v\n", jobID, err)
+		fmt.Fprintf(os.Stderr, "speaker-evidence-llm: %s extraction failed for job_id=%d: %v\n", providerUsed, jobID, err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "speaker-evidence-llm: scanned %d segments, upserted %d evidence rows and %d review tasks (cache_create_tokens=%d cache_read_tokens=%d)\n",
-		stats.SegmentsScanned, stats.EvidenceRows, stats.ReviewTasks, stats.Usage.CacheCreationInputTokens, stats.Usage.CacheReadInputTokens)
+	fmt.Fprintf(os.Stderr, "speaker-evidence-llm (%s): scanned %d segments, upserted %d evidence rows and %d review tasks (cache_create_tokens=%d cache_read_tokens=%d)\n",
+		providerUsed, stats.SegmentsScanned, stats.EvidenceRows, stats.ReviewTasks, stats.Usage.CacheCreationInputTokens, stats.Usage.CacheReadInputTokens)
 }
 
 func speakerEvidenceLLMPriority(cand diarization.SpeakerEvidenceCandidate) int {
